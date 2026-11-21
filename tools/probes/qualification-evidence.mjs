@@ -5,6 +5,17 @@ import { join } from 'node:path';
 
 import { nativeModes, setupModes } from './qualification-modes.mjs';
 
+export function normalizeProviderVersion(provider, version) {
+  const trimmed = typeof version === 'string' ? version.trim() : '';
+  return provider === 'opencode' ? trimmed.replace(/^opencode v/, '') : trimmed;
+}
+
+const WORKER_PLUGIN_FOLDER_FILES = [
+  'worker-opencode-plugin/index.js',
+  'worker-opencode-plugin/v1.js',
+  'worker-opencode-plugin/package.json',
+];
+
 export function artifactHashes(source) {
   const hash = (path) =>
     createHash('sha256').update(readFileSync(path)).digest('hex');
@@ -14,10 +25,20 @@ export function artifactHashes(source) {
         .filter(include)
         .map((name) => [name, hash(join(source, directory, name))]),
     );
+  const topLevelModules = directoryHashes('packages/fleet-tools/bin', (name) =>
+    /^(worker-|fleet-identity).*\.(cjs|mjs)$/.test(name),
+  );
+  const pluginFolderModules = Object.fromEntries(
+    WORKER_PLUGIN_FOLDER_FILES.map((rel) => [
+      rel,
+      hash(join(source, 'packages/fleet-tools/bin', rel)),
+    ]),
+  );
   return {
-    moduleHashes: directoryHashes('packages/fleet-tools/bin', (name) =>
-      /^(worker-|fleet-identity).*\.(cjs|mjs)$/.test(name),
-    ),
+    moduleHashes: {
+      ...topLevelModules,
+      ...pluginFolderModules,
+    },
     probeHashes: directoryHashes('tools/probes', (name) =>
       name.endsWith('.mjs'),
     ),
@@ -65,7 +86,11 @@ export function evaluateImageEvidence(expected, native, setup) {
       report.imageId !== expected.imageId ||
       report.provider !== expected.provider ||
       report.nativeReport?.provider !== expected.provider ||
-      report.nativeReport?.providerVersion !== expected.providerVersion
+      normalizeProviderVersion(
+        expected.provider,
+        report.nativeReport?.providerVersion,
+      ) !==
+        normalizeProviderVersion(expected.provider, expected.providerVersion)
     )
       fail(kind + ':identity-or-execution');
     for (const field of ['moduleHashes', 'probeHashes', 'runtimeHashes']) {

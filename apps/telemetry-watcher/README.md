@@ -68,7 +68,7 @@ publish-then-pin scheme whose pin silently went stale for months (#29).
 1. **Mid-run, live (provider hooks — hooks telemetry phase 3):**
    `direct-runner.sh` installs the provider's hook entries for every
    pipeline (Claude Code, Codex, and Antigravity through `lcars integration install`;
-   OpenCode through the `lcars-telemetry.js` plugin already in the image's
+   OpenCode through the `lcars-telemetry/` plugin already in the image's
    OpenCode config) and exports the run context the hook client stamps on
    each event. There is no selector and no polling fallback: if the hook
    install fails (for example, unreadable writer credentials) the run prints
@@ -170,7 +170,7 @@ The hook client is the live telemetry path for workstations and dispatched
 workers, described in
 [docs/hooks-telemetry-design.md](../../docs/hooks-telemetry-design.md):
 each coding agent's own hooks run `lcars hook <runtime>` (Claude Code and
-Codex; OpenCode reports through its `lcars-telemetry.js` plugin), which reads one hook payload on stdin, reduces the session's
+Codex; OpenCode reports through its `lcars-telemetry/` plugin), which reads one hook payload on stdin, reduces the session's
 transcript with the same summary-only reducer, and appends a
 `SessionEventV1` to a local spool. A detached `lcars hook flush` then writes
 each event to the `sessions` collection as the `telemetry-writer` service

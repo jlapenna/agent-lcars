@@ -13,18 +13,28 @@ const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
 const object = (value) =>
   value && typeof value === 'object' && !Array.isArray(value);
 
+function moduleFilesFor(targetPath) {
+  if (!path.isAbsolute(targetPath))
+    throw new Error('Worker setup requires absolute module paths');
+  const stat = fs.statSync(targetPath);
+  if (stat.isDirectory()) {
+    return [path.join(targetPath, 'index.js'), path.join(targetPath, 'v1.js')];
+  }
+  return [targetPath];
+}
+
 function verifyModules(files) {
-  for (const file of files) {
-    if (!path.isAbsolute(file))
-      throw new Error('Worker setup requires absolute module paths');
-    fs.accessSync(file, fs.constants.R_OK);
-    const checked = spawnSync(process.execPath, ['--check', file], {
-      timeout: 5000,
-      encoding: 'utf8',
-      maxBuffer: 1024 * 1024,
-    });
-    if (checked.error || checked.status !== 0)
-      throw new Error('Worker hook setup: invalid executable module');
+  for (const entry of files) {
+    for (const file of moduleFilesFor(entry)) {
+      fs.accessSync(file, fs.constants.R_OK);
+      const checked = spawnSync(process.execPath, ['--check', file], {
+        timeout: 5000,
+        encoding: 'utf8',
+        maxBuffer: 1024 * 1024,
+      });
+      if (checked.error || checked.status !== 0)
+        throw new Error('Worker hook setup: invalid executable module');
+    }
   }
 }
 
@@ -110,7 +120,7 @@ function installRegistration(configPath, handlerPath) {
 
 function installOpenCode(
   configPath,
-  pluginPath = path.join(__dirname, 'worker-opencode-plugin.mjs'),
+  pluginPath = path.join(__dirname, 'worker-opencode-plugin'),
 ) {
   verifyModules([
     pluginPath,
@@ -118,6 +128,8 @@ function installOpenCode(
     path.join(__dirname, 'worker-hook-bridge.cjs'),
   ]);
   const plugin = pathToFileURL(pluginPath).href;
+  const legacyFile = path.join(__dirname, 'worker-opencode-plugin.mjs');
+  const legacyUrl = pathToFileURL(legacyFile).href;
   return updateJson(configPath, (config) => {
     if (config.plugin !== undefined && !Array.isArray(config.plugin))
       throw new Error('Invalid OpenCode plugin configuration');
@@ -125,7 +137,11 @@ function installOpenCode(
     // plugins merely because their basename resembles ours.
     config.plugin = [
       ...(config.plugin ?? []).filter(
-        (entry) => entry !== plugin && entry !== pluginPath,
+        (entry) =>
+          entry !== plugin &&
+          entry !== pluginPath &&
+          entry !== legacyUrl &&
+          entry !== legacyFile,
       ),
       plugin,
     ];
@@ -265,9 +281,8 @@ async function executeControl(provider, configPath, contextPath) {
     },
   ];
   if (provider === 'opencode') {
-    const plugin = pathToFileURL(
-      path.join(__dirname, 'worker-opencode-plugin.mjs'),
-    ).href;
+    const pluginDir = path.join(__dirname, 'worker-opencode-plugin');
+    const plugin = pathToFileURL(pluginDir).href;
     if (!config.plugin?.includes(plugin))
       throw new Error('Missing installed OpenCode registration');
     const previousRun = process.env.LCARS_RUN_ID,
@@ -277,20 +292,49 @@ async function executeControl(provider, configPath, contextPath) {
       process.env.LCARS_RUN_ID = context.runId;
       process.env.LCARS_WORKER_CONTEXT = contextPath;
       process.env.ATTEMPT_ID = context.attemptId;
-      const factory = (await import(plugin)).default;
-      const hooks = await factory({ directory: process.cwd() });
+      const v1Factory = (
+        await import(pathToFileURL(path.join(pluginDir, 'v1.js')).href)
+      ).default;
+      const v1Hooks = await v1Factory({ directory: process.cwd() });
       for (let i = 0; i < inputs.length; i++) {
         let denied = false;
         try {
-          await hooks['tool.execute.before'](
+          await v1Hooks['tool.execute.before'](
             { tool: 'bash', sessionID: 'lcars-control-smoke' },
-            { args: inputs[i].tool_input },
+            { args: { ...inputs[i].tool_input } },
           );
         } catch {
           denied = true;
         }
         if (denied !== (i === 1))
-          throw new Error('OpenCode control execution smoke failed');
+          throw new Error('OpenCode v1 control execution smoke failed');
+      }
+      const v2Plugin = (
+        await import(pathToFileURL(path.join(pluginDir, 'index.js')).href)
+      ).default;
+      let v2Before;
+      await v2Plugin.setup({
+        location: { directory: process.cwd() },
+        session: {},
+        tool: {
+          hook: async (_name, fn) => {
+            v2Before = fn;
+          },
+        },
+      });
+      for (let i = 0; i < inputs.length; i++) {
+        let denied = false;
+        try {
+          await v2Before({
+            tool: 'shell',
+            sessionID: 'lcars-control-smoke',
+            input: { ...inputs[i].tool_input },
+          });
+        } catch {
+          denied = true;
+        }
+        if (denied !== (i === 1))
+          throw new Error('OpenCode v2 control execution smoke failed');
       }
     } finally {
       if (previousRun === undefined) delete process.env.LCARS_RUN_ID;

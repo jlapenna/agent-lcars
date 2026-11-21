@@ -71,11 +71,12 @@ printf '{}\n' > "$tmp/models.json"
 # does not exist while building the image. Keep the exact global instructions
 # and plugins but remove that unrelated provider from the isolated test home.
 jq 'del(.provider.homelab)' "$source_config_dir/opencode.json" > "$tmp/home/.config/opencode/opencode.json"
-cp "$source_config_dir/instructions.md" \
-  "$source_config_dir/context-lifecycle.js" \
-  "$source_config_dir/lcars-session.js" \
-  "$source_config_dir/lcars-telemetry.js" \
-  "$source_config_dir/hindsight.js" \
+cp "$source_config_dir/instructions.md" "$tmp/home/.config/opencode/"
+cp -R \
+  "$source_config_dir/context-lifecycle" \
+  "$source_config_dir/lcars-session" \
+  "$source_config_dir/lcars-telemetry" \
+  "$source_config_dir/hindsight" \
   "$tmp/home/.config/opencode/"
 # Match the runner's configuration copy, including build-installed SDK deps.
 # Missing preparation fails here rather than being repaired over the network.
@@ -114,6 +115,18 @@ while [ ! -s "$tmp/port" ]; do
 done
 port="$(cat "$tmp/port")"
 
+opencode_run_args=(--model continuation-contract/test --auto)
+case "${actual_version#v}" in
+  1.*)
+    opencode_run_args+=(--dir "$tmp/workspace")
+    model_input_limit=4000
+    ;;
+  *)
+    opencode_run_args=(--standalone "${opencode_run_args[@]}")
+    model_input_limit=64000
+    ;;
+esac
+
 cat > "$tmp/workspace/opencode.json" <<JSON
 {
   "permission": {
@@ -137,8 +150,8 @@ cat > "$tmp/workspace/opencode.json" <<JSON
         "test": {
           "name": "Local deterministic continuation contract",
           "limit": {
-            "context": 4000,
-            "input": 4000,
+            "context": $model_input_limit,
+            "input": $model_input_limit,
             "output": 8192
           }
         }
@@ -150,7 +163,7 @@ JSON
 
 framework_started_seconds=$SECONDS
 framework_status=0
-# OpenCode 2 has no `run --dir`; the workspace is the working directory.
+# OpenCode 2 has no `run --dir`; run inside the workspace in both versions.
 (cd "$tmp/workspace" && env -i \
   PATH="$tmp/bin:$PATH" \
   LCARS_RUN_ID=hook-test-run LCARS_REPO=hook-test/repo LCARS_ISSUE_NUMBER=7 \
@@ -166,9 +179,7 @@ framework_status=0
   XDG_DATA_HOME="$tmp/data" \
   XDG_STATE_HOME="$tmp/state" \
   timeout -k 2s "${framework_timeout_seconds}s" "$opencode_bin" run \
-  --standalone \
-  --model continuation-contract/test \
-  --auto \
+  "${opencode_run_args[@]}" \
   "Read fixture.txt, preserve the task state, and continue after compaction.") \
   >"$tmp/opencode.out" 2>&1 || framework_status=$?
 printf '%s\n' "$framework_status" > "$tmp/opencode.exit"
@@ -196,7 +207,7 @@ observations = [
 working_index = next(
     index
     for index, item in enumerate(observations)
-    if item["tools"] and not item["hasSummary"]
+    if item["tools"] and not item["hasSummary"] and not item["isCompaction"]
 )
 compaction_index = next(
     index
@@ -224,27 +235,69 @@ compaction = observations[compaction_index]
 continuation = observations[continuation_index]
 finished = observations[finished_index]
 assert working["tools"] and working["hasStandingInstructions"], working
-assert compaction["isCompaction"] and not compaction["tools"], compaction
+assert compaction["isCompaction"], compaction
 assert continuation["tools"] and continuation["hasSummary"], continuation
 assert continuation["hasSyntheticContinuation"], continuation
 assert continuation["hasStandingInstructions"], continuation
 assert finished["toolMessageCount"] == 1, finished
 assert finished["toolHasLine120"] and finished["toolHasLine121"], finished
 assert finished["toolHasLine200"], finished
-assert compaction["maxTokens"] == 4096, compaction
+assert compaction["maxTokens"] is not None and compaction["maxTokens"] <= 4096, compaction
 for item in observations:
-    if item["tools"]:
+    if item["tools"] and not item["isCompaction"]:
         assert item["rootInstructionCount"] == 1, item
         if item["toolMessageCount"]:
             assert item["hasChildInstructions"], item
 # Request-local transformations must never erase archived instruction content.
 with sqlite3.connect(f"file:{sys.argv[2]}?mode=ro", uri=True) as db:
-    parts = [json.loads(row[0]) for row in db.execute("select data from part")]
-reads = [part["state"] for part in parts
-         if part.get("type") == "tool" and part.get("tool") == "read"
-         and part.get("state", {}).get("status") == "completed"]
-assert any("ROOT_INSTRUCTION_SENTINEL" in state["output"] for state in reads)
-assert all(state["input"]["limit"] == 200 for state in reads)
+    tables = {
+        row[0]
+        for row in db.execute(
+            "select name from sqlite_master where type = 'table'"
+        )
+    }
+    has_v2_messages = (
+        "session_message" in tables
+        and db.execute("select count(*) from session_message").fetchone()[0] > 0
+    )
+    if has_v2_messages:
+        rows = [
+            (row[0], json.loads(row[1]))
+            for row in db.execute("select type, data from session_message")
+        ]
+        reads = [
+            part["state"]
+            for msg_type, data in rows
+            if msg_type == "assistant"
+            for part in data.get("content", [])
+            if part.get("type") == "tool"
+            and part.get("name") == "read"
+            and part.get("state", {}).get("status") == "completed"
+        ]
+        synthetics = [
+            data.get("text", "")
+            for msg_type, data in rows
+            if msg_type == "synthetic"
+        ]
+        assert reads and all(
+            state["input"]["limit"] == 200 for state in reads
+        ), reads
+        assert any(
+            "ROOT_INSTRUCTION_SENTINEL" in text for text in synthetics
+        ), synthetics
+    else:
+        parts = [json.loads(row[0]) for row in db.execute("select data from part")]
+        reads = [
+            part["state"]
+            for part in parts
+            if part.get("type") == "tool"
+            and part.get("tool") == "read"
+            and part.get("state", {}).get("status") == "completed"
+        ]
+        assert reads and any(
+            "ROOT_INSTRUCTION_SENTINEL" in state["output"] for state in reads
+        )
+        assert all(state["input"]["limit"] == 200 for state in reads)
 
 PY
 

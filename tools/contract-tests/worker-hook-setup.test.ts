@@ -205,9 +205,8 @@ it('installs OpenCode without dropping existing plugins and repeats without dupl
   const installed = JSON.parse(readFileSync(config, 'utf8'));
   expect(installed.plugin).toEqual([
     './existing.mjs',
-    pathToFileURL(
-      resolve('packages/fleet-tools/bin/worker-opencode-plugin.mjs'),
-    ).href,
+    pathToFileURL(resolve('packages/fleet-tools/bin/worker-opencode-plugin'))
+      .href,
   ]);
   expect(installed.permission.bash).toBe('ask');
   expect(setup.installOpenCode(config).changed).toBe(false);

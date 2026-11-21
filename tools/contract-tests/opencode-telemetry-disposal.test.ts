@@ -5,7 +5,8 @@ import { PassThrough } from 'node:stream';
 
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import telemetry from '../../agents/opencode/lcars-telemetry.js';
+import telemetryV2 from '../../agents/opencode/lcars-telemetry/index.js';
+import telemetry from '../../agents/opencode/lcars-telemetry/v1.js';
 
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
 vi.mock('node:fs/promises', () => ({
@@ -57,7 +58,7 @@ function blockedSession() {
 }
 
 it.each([false, true])(
-  'hands the final Stop to the detached client before disposal resolves (queued=%s)',
+  'hands the final Stop to the detached client before v1 disposal resolves (queued=%s)',
   async (queued) => {
     const f = blockedSession();
     const hooks = await telemetry({
@@ -116,6 +117,60 @@ it.each([false, true])(
     }
   },
 );
+
+it('hands the final Stop to the detached client before v2 setup cleanup resolves', async () => {
+  let releaseGet!: (value?: {
+    id: string;
+    location: { directory: string };
+  }) => void;
+  const blocked = new Promise<{
+    id: string;
+    location: { directory: string };
+  }>((resolve) => {
+    releaseGet = resolve as never;
+  });
+  const info = {
+    id: 'owned-v2-session',
+    location: { directory: '/owned/v2-work' },
+  };
+  const get = vi
+    .fn()
+    .mockResolvedValue(info)
+    .mockImplementationOnce(() => blocked);
+  const context = vi.fn(async () => []);
+  const queuedEvents = [
+    { type: 'session.execution.started', data: { sessionID: info.id } },
+    { type: 'session.execution.succeeded', data: { sessionID: info.id } },
+  ];
+  const cleanup = await telemetryV2.setup({
+    location: { directory: '/owned/v2-work' },
+    session: { get, context },
+    event: {
+      subscribe: async function* ({ signal }: { signal?: AbortSignal }) {
+        for (const ev of queuedEvents) {
+          if (signal?.aborted) return;
+          yield ev;
+        }
+      },
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(get).toHaveBeenCalledTimes(1);
+  let settled = false;
+  const disposal = Promise.resolve(cleanup?.()).then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  releaseGet(info);
+  await disposal;
+  expect(settled).toBe(true);
+  expect(payloads.map((text) => JSON.parse(text).hook_event_name)).toEqual([
+    'SessionStart',
+    'Stop',
+  ]);
+  expect(JSON.parse(payloads[1]).cwd).toBe('/owned/v2-work');
+});
 
 it('bounds disposal when the session lookup never answers', async () => {
   vi.useFakeTimers();

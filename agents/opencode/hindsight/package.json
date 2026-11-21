@@ -1,0 +1,10 @@
+{
+  "name": "@agent-lcars/opencode-hindsight",
+  "private": true,
+  "type": "module",
+  "main": "./v1.js",
+  "exports": {
+    ".": "./v1.js",
+    "./server": "./index.js"
+  }
+}

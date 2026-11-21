@@ -102,6 +102,7 @@
       "description": "Native runtime updates require candidate-image qualification. Keep version selectors, platform digests and npm CLI locks in one draft PR, outside unattended non-major updates.",
       "matchDepNames": [
         "anomalyco/opencode",
+        "@opencode/plugin",
         "google-antigravity/antigravity-cli",
         "@openai/codex",
         "@anthropic-ai/claude-code"
@@ -110,11 +111,6 @@
       "groupSlug": "runner-cli-runtimes",
       "automerge": false,
       "draftPR": true
-    },
-    {
-      "description": "OpenCode 2 is a migration, not a dependency bump: it silently drops every v1 plugin (hook telemetry, context trimming, Hindsight) and changes the CLI, export and store contracts. Stay on 1.x until #3426 ports them, then remove this rule.",
-      "matchDepNames": ["anomalyco/opencode"],
-      "allowedVersions": "<2"
     },
     {
       "description": "The Anthropic dependency supplies executable review instructions. Qualify upstream changes against the LCARS adapter and a real PR before making the update ready; keep them out of the unattended digest-update group. Drafts also prevent the fleet bot auto-merge workflow from arming them.",

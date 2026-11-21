@@ -66,9 +66,15 @@ function runInRunnerImage() {
       .map((name) => [name, sha256(join(source, 'tools/probes', name))]),
   );
   const moduleHashes = {};
-  for (const name of readdirSync(
-    join(source, 'packages/fleet-tools/bin'),
-  ).filter((name) => /^(worker-|fleet-identity).*\.(cjs|mjs)$/.test(name))) {
+  const modulePaths = [
+    ...readdirSync(join(source, 'packages/fleet-tools/bin')).filter((name) =>
+      /^(worker-|fleet-identity).*\.(cjs|mjs)$/.test(name),
+    ),
+    'worker-opencode-plugin/index.js',
+    'worker-opencode-plugin/v1.js',
+    'worker-opencode-plugin/package.json',
+  ];
+  for (const name of modulePaths) {
     const expected = sha256(join(source, 'packages/fleet-tools/bin', name));
     const actual = sha256(join(baked, 'bin', name));
     if (actual !== expected) throw new Error(`Image source mismatch: ${name}`);

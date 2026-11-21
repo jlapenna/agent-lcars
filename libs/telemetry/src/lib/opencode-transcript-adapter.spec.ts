@@ -78,4 +78,83 @@ describe('opencodeAdapter', () => {
 
     expect(summary[0]?.resolvedModel).toBe('qwen3.8-flash-next');
   });
+
+  it('reduces an OpenCode 2 session export and context snapshot to summary-only telemetry', () => {
+    expect(
+      opencodeAdapter.reduce([
+        JSON.stringify({
+          info: {
+            id: 'ses_opencode_v2',
+            title: 'Migrate OpenCode plugins',
+            location: { directory: '/home/runner/_work/agent-lcars/repo' },
+            model: { id: 'default', providerID: 'homelab' },
+            cost: 0.42,
+            tokens: {
+              input: 14500,
+              output: 320,
+              reasoning: 40,
+              cache: { read: 8000, write: 500 },
+            },
+            time: { created: 1795292399000, updated: 1795292405000 },
+          },
+          messages: [
+            {
+              id: 'msg_u1',
+              type: 'user',
+              time: { created: 1795292399500 },
+              content: [{ type: 'text', text: 'Inspect the config' }],
+            },
+            {
+              id: 'msg_a1',
+              type: 'assistant',
+              model: { id: 'default', providerID: 'homelab' },
+              time: { created: 1795292400000, completed: 1795292404000 },
+              content: [
+                {
+                  type: 'tool',
+                  id: 'call_1',
+                  name: 'shell',
+                  state: { status: 'completed' },
+                  time: {
+                    created: 1795292401000,
+                    ran: 1795292402000,
+                    completed: 1795292403500,
+                  },
+                },
+                { type: 'text', text: 'Done.' },
+              ],
+            },
+            {
+              id: 'msg_idle',
+              type: 'idle',
+              outcome: 'succeeded',
+              time: { created: 1795292405000 },
+            },
+          ],
+        }),
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        sessionId: 'ses_opencode_v2',
+        source: 'cli',
+        agent: 'opencode',
+        cwd: '/home/runner/_work/agent-lcars/repo',
+        model: 'homelab/default',
+        title: 'Migrate OpenCode plugins',
+        turns: 1,
+        toolCallCounts: { shell: 1 },
+        tokens: {
+          inputTokens: 14500,
+          outputTokens: 320,
+          cacheCreationTokens: 500,
+          cacheReadTokens: 8000,
+        },
+        lastToolCall: {
+          name: 'shell',
+          timestamp: new Date(1795292403500).toISOString(),
+        },
+        totalCostUsd: 0.42,
+      }),
+    ]);
+  });
 });

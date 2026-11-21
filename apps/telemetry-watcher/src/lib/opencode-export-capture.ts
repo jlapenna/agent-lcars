@@ -6,10 +6,11 @@ import * as path from 'path';
 
 import { extractLastAssistantText } from './opencode-last-message';
 
-/** The session list is read whole (no `--max-count`): a count cap silently
- * dropped this workspace's older sessions once other directories' sessions
- * filled it. This byte bound only protects the sidecar's memory; one JSON
- * entry is a few hundred bytes, so it holds tens of thousands of sessions. */
+/** OpenCode 2's `session list` scopes to `process.cwd()`'s project and
+ * defaults `--max-count` to 100 when omitted. Pass an explicit high count
+ * (`LIST_MAX_COUNT`) and spawn in `workspaceDir` when present on disk;
+ * `LIST_MAX_BYTES` bounds sidecar memory. */
+const LIST_MAX_COUNT = 10_000;
 const LIST_MAX_BYTES = 16 * 1024 * 1024;
 const EXPORT_MAX_BYTES = 32 * 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 10_000;
@@ -17,6 +18,7 @@ const COMMAND_TIMEOUT_MS = 10_000;
 interface CommandOptions {
   timeout: number;
   maxBytes: number;
+  cwd?: string;
 }
 
 interface CaptureLimitsOverride {
@@ -161,14 +163,25 @@ function killCommand(child: {
   child.kill('SIGKILL');
 }
 
+function existingDirectory(candidate: string | undefined): string | undefined {
+  if (!candidate) return undefined;
+  try {
+    return fs.statSync(candidate).isDirectory() ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function defaultRunOpenCode(
   executable: string,
   args: string[],
   options: CommandOptions,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    const cwd = existingDirectory(options.cwd);
     const child = spawn(executable, args, {
       detached: true,
+      ...(cwd ? { cwd } : {}),
       env: openCodeChildEnv(),
       stdio: ['ignore', 'pipe', 'ignore'],
     });
@@ -233,6 +246,7 @@ function defaultRunOpenCodeToFile(
     // unlike stat polling, a fast writer cannot overshoot it. The executable
     // and all arguments are passed after the shell program and expanded only
     // through "$@"; no session-controlled value is interpolated as shell code.
+    const cwd = existingDirectory(options.cwd);
     const child = spawn(
       '/bin/bash',
       [
@@ -245,6 +259,7 @@ function defaultRunOpenCodeToFile(
       ],
       {
         detached: true,
+        ...(cwd ? { cwd } : {}),
         env: openCodeChildEnv(),
         stdio: ['ignore', output, 'ignore'],
       },
@@ -584,8 +599,20 @@ export async function captureOpenCodeExports(
   let listOutput: string;
   try {
     listOutput = await runOpenCode(
-      ['session', 'list', '--standalone', '--format', 'json'],
-      { timeout: commandTimeoutMs, maxBytes: LIST_MAX_BYTES },
+      [
+        'session',
+        'list',
+        '--standalone',
+        '--max-count',
+        String(LIST_MAX_COUNT),
+        '--format',
+        'json',
+      ],
+      {
+        timeout: commandTimeoutMs,
+        maxBytes: LIST_MAX_BYTES,
+        cwd: options.workspaceDir,
+      },
     );
   } catch (error) {
     if (isCommandUnavailable(error)) {
@@ -633,6 +660,7 @@ export async function captureOpenCodeExports(
         {
           timeout: commandTimeoutMs,
           maxBytes: exportMaxBytes,
+          cwd: options.workspaceDir,
         },
       );
       const exportedJson = fs.readFileSync(captureFile, 'utf8');

@@ -246,7 +246,7 @@ function operations(input) {
           typeof input.workspacePaths[0] === 'string'
         ? input.workspacePaths[0]
         : process.cwd();
-  if (name === 'apply_patch') {
+  if (['apply_patch', 'patch'].includes(name)) {
     try {
       return fileOperations(
         patchPaths(
@@ -262,6 +262,30 @@ function operations(input) {
   }
   if (
     [
+      'opencode.worktree_create',
+      'opencode_worktree_create',
+      'opencode.worktree_remove',
+      'opencode_worktree_remove',
+    ].includes(name)
+  ) {
+    const target =
+      args.directory ?? args.path ?? args.worktree ?? args.filePath;
+    if (
+      name === 'opencode.worktree_remove' ||
+      name === 'opencode_worktree_remove'
+    ) {
+      if (typeof target !== 'string' || target.trim() === '') {
+        return [{ kind: 'implementation', cwd, invalidPath: true }];
+      }
+      return fileOperations([path.join(target, '.worktree-target')], cwd);
+    }
+    if (typeof target === 'string' && target.trim() !== '') {
+      return fileOperations([path.join(target, '.worktree-target')], cwd);
+    }
+    return [{ kind: 'implementation', cwd }];
+  }
+  if (
+    [
       'Edit',
       'Write',
       'MultiEdit',
@@ -273,19 +297,24 @@ function operations(input) {
     ].includes(name)
   ) {
     const files = [];
-    const file = args.file_path ?? args.filePath ?? args.Path;
+    const file = args.file_path ?? args.filePath ?? args.path ?? args.Path;
     if (file !== undefined) files.push(file);
     if (['MultiEdit', 'multiedit'].includes(name) && Array.isArray(args.edits))
       for (const edit of args.edits) {
-        const target = edit?.file_path ?? edit?.filePath;
+        const target = edit?.file_path ?? edit?.filePath ?? edit?.path;
         if (target !== undefined || file === undefined) files.push(target);
       }
     return fileOperations(files, cwd);
   }
   if (
-    !['Bash', 'exec_command', 'shell_command', 'bash', 'run_command'].includes(
-      name,
-    )
+    ![
+      'Bash',
+      'exec_command',
+      'shell_command',
+      'bash',
+      'shell',
+      'run_command',
+    ].includes(name)
   )
     return [];
   const commands = literalCommands(
@@ -567,9 +596,9 @@ function nativeOutcomeDecision(input, context) {
       ? input.workspacePaths[0]
       : undefined) ??
     process.cwd();
-  let file = args.file_path ?? args.filePath ?? args.Path;
+  let file = args.file_path ?? args.filePath ?? args.path ?? args.Path;
   let content = args.content ?? args.Content;
-  if (toolName === 'apply_patch') {
+  if (['apply_patch', 'patch'].includes(toolName)) {
     const patch =
       typeof args === 'string'
         ? args
@@ -630,6 +659,30 @@ function nativeOutcomeDecision(input, context) {
 }
 
 function evaluate(input, context, dependencies = {}) {
+  const toolName = input.tool_name ?? input.toolCall?.name;
+  const toolArgs = input.tool_input ?? input.toolCall?.args ?? {};
+  if (toolName === 'execute')
+    return decision(
+      'deny',
+      'Code Mode (execute) is disabled in dispatched workers; invoke explicit shell and file tools directly.',
+    );
+  if (
+    toolName === 'opencode.session_move' ||
+    toolName === 'opencode_session_move'
+  )
+    return decision(
+      'deny',
+      'Do not move the bound OpenCode session directory; keep the session anchored at its dispatch checkout and run worktree commands with explicit paths.',
+    );
+  if (
+    (toolName === 'opencode.worktree_remove' ||
+      toolName === 'opencode_worktree_remove') &&
+    (toolArgs?.force === true || toolArgs?.force === 'true')
+  )
+    return decision(
+      'deny',
+      'Do not force-remove a worktree; use guarded worktree cleanup without force.',
+    );
   const nativeOutcome = nativeOutcomeDecision(input, context);
   if (nativeOutcome) return nativeOutcome;
   const ops = operations(input);

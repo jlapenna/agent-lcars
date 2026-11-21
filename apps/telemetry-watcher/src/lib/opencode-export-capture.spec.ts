@@ -190,12 +190,22 @@ describe('captureOpenCodeExports', () => {
     ).toEqual({ status: 'ok', selected: 1, exported: 1, failed: 0 });
 
     expect(calls[0]).toEqual({
-      args: ['session', 'list', '--standalone', '--format', 'json'],
+      args: [
+        'session',
+        'list',
+        '--standalone',
+        '--max-count',
+        '10000',
+        '--format',
+        'json',
+      ],
+      cwd: workspace,
       maxBytes: OPENCODE_CAPTURE_LIMITS.listBytes,
       timeout: OPENCODE_CAPTURE_LIMITS.timeoutMs,
     });
     expect(calls[1]).toEqual({
       args: ['session', 'export', '--standalone', 'ses_current', '--sanitize'],
+      cwd: workspace,
       maxBytes: OPENCODE_CAPTURE_LIMITS.exportBytes,
       timeout: OPENCODE_CAPTURE_LIMITS.timeoutMs,
     });
@@ -745,14 +755,19 @@ describe('captureOpenCodeExports', () => {
     expect(isTrustedOpenCodePath(symlink, currentUid)).toBe(false);
   });
 
-  it('uses standalone mode and a credential-free child environment for real processes', async () => {
+  it('uses standalone mode, workspace cwd, and a credential-free child environment for real processes', async () => {
+    const realWorkspace = path.join(root, 'checkout');
+    fs.mkdirSync(realWorkspace, { recursive: true });
     const executable = path.join(root, 'fake-opencode');
     const argsLog = path.join(root, 'args.log');
     const envLog = path.join(root, 'env.log');
-    const sessions = JSON.stringify([{ id: 'ses_env', directory: workspace }]);
+    const cwdLog = path.join(root, 'cwd.log');
+    const sessions = JSON.stringify([
+      { id: 'ses_env', directory: realWorkspace },
+    ]);
     fs.writeFileSync(
       executable,
-      `#!/bin/bash\n/usr/bin/printf '%s\\n' '---' "$@" >> ${JSON.stringify(argsLog)}\n/usr/bin/env >> ${JSON.stringify(envLog)}\nif [ "$2" = list ]; then\n  /usr/bin/printf '%s\\n' '${sessions}'\nelse\n  /usr/bin/printf '%s\\n' '{"info":{"id":"ses_env"},"messages":[]}'\nfi\n`,
+      `#!/bin/bash\n/bin/pwd >> ${JSON.stringify(cwdLog)}\n/usr/bin/printf '%s\\n' '---' "$@" >> ${JSON.stringify(argsLog)}\n/usr/bin/env >> ${JSON.stringify(envLog)}\nif [ "$2" = list ]; then\n  /usr/bin/printf '%s\\n' '${sessions}'\nelse\n  /usr/bin/printf '%s\\n' '{"info":{"id":"ses_env"},"messages":[]}'\nfi\n`,
       { mode: 0o700 },
     );
     vi.stubEnv('GOOGLE_APPLICATION_CREDENTIALS', '/tmp/writer-secret.json');
@@ -767,15 +782,18 @@ describe('captureOpenCodeExports', () => {
 
     expect(
       await captureOpenCodeExports({
-        workspaceDir: workspace,
+        workspaceDir: realWorkspace,
         exportsDir: root,
         opencodeExecutable: executable,
       }),
     ).toEqual({ status: 'ok', selected: 1, exported: 1, failed: 0 });
 
+    const cwds = fs.readFileSync(cwdLog, 'utf8').trim().split('\n');
+    expect(cwds[0]).toBe(fs.realpathSync(realWorkspace));
+    expect(cwds[1]).toBe(fs.realpathSync(realWorkspace));
     const args = fs.readFileSync(argsLog, 'utf8');
     expect(args).toContain(
-      '---\nsession\nlist\n--standalone\n--format\njson\n---',
+      '---\nsession\nlist\n--standalone\n--max-count\n10000\n--format\njson\n---',
     );
     expect(args).toContain(
       '---\nsession\nexport\n--standalone\nses_env\n--sanitize\n',

@@ -3,10 +3,39 @@ import session from './worker-session.cjs';
 
 class IdentityRejection extends Error {}
 
-// OpenCode 1.18.25 exposes immutable parentID through the plugin's own SDK
-// client. Never accept ancestry supplied in a prompt or tool arguments.
-export function sessionResolver(context, client) {
+function createSessionLookup(clientOrSession) {
+  if (typeof clientOrSession?.session?.get === 'function') {
+    return async (id, signal) => {
+      const response = await clientOrSession.session.get({
+        path: { id },
+        signal,
+      });
+      if (!response || response.error || response.data?.id !== id) {
+        throw new Error('Native session API response failed validation');
+      }
+      return response.data;
+    };
+  }
+  if (typeof clientOrSession?.get === 'function') {
+    return async (id, signal) => {
+      const info = await clientOrSession.get({ sessionID: id }, { signal });
+      if (!info || info.error || info.id !== id) {
+        throw new Error('Native session API response failed validation');
+      }
+      return info;
+    };
+  }
+  return async () => {
+    throw new Error('Native session API is unavailable');
+  };
+}
+
+// OpenCode exposes immutable parentID through the plugin's own SDK client (v1)
+// or `ctx.session.get` domain (v2). Never accept ancestry supplied in a prompt
+// or tool arguments.
+export function sessionResolver(context, clientOrSession) {
   const descendants = new Map();
+  const fetchSession = createSessionLookup(clientOrSession);
   return async (event) => {
     const rejected = session.rejection(event, context);
     if (!rejected) return event;
@@ -44,17 +73,12 @@ export function sessionResolver(context, client) {
           )
             throw new IdentityRejection(rejected);
           visited.add(current);
-          const response = await Promise.race([
-            client.session.get({
-              path: { id: current },
-              signal: controller.signal,
-            }),
+          const info = await Promise.race([
+            fetchSession(current, controller.signal),
             expired,
           ]);
-          if (!response || response.error || response.data?.id !== current)
-            throw new Error('Native session API response failed validation');
-          if (!response.data.parentID) throw new IdentityRejection(rejected);
-          current = response.data.parentID;
+          if (!info.parentID) throw new IdentityRejection(rejected);
+          current = info.parentID;
         }
         if (current !== root || session.boundSession(context) !== root)
           throw new IdentityRejection(rejected);

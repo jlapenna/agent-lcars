@@ -207,7 +207,7 @@ their launch configuration. See
 Every pipeline reports live telemetry through provider hooks
 ([design](../../docs/hooks-telemetry-design.md), phase 3); there is no
 selector. Claude, Codex, and Antigravity workers install `lcars` hook entries
-after their own config exists; for OpenCode the image's `lcars-telemetry.js`
+after their own config exists; for OpenCode the image's `lcars-telemetry/`
 plugin activates once the writer credentials path is exported. The worker fences
 and drains the hook flusher before `runner finalize`, which writes the
 authoritative final session doc. A worker that dies first never finalizes;

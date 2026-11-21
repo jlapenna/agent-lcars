@@ -30,20 +30,26 @@ import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const TOOL_REPORT_INTERVAL_MS = 15000;
-const SNAPSHOT_PREFIX = 'lcars-opencode-';
-const STALE_SNAPSHOT_MS = 10 * 60 * 1000;
+export const TOOL_REPORT_INTERVAL_MS = 15000;
+export const SNAPSHOT_PREFIX = 'lcars-opencode-';
+export const STALE_SNAPSHOT_MS = 10 * 60 * 1000;
 // Upper bound on how long shutdown waits for in-flight reports.
-const DISPOSE_WAIT_MS = 5000;
+export const DISPOSE_WAIT_MS = 5000;
 // Lifecycle events outrank tool events when a report is queued behind one
 // already in flight.
-const PRIORITY = {
+export const PRIORITY = {
   PostToolUse: 0,
   UserPromptSubmit: 1,
   SessionStart: 1,
   Stop: 2,
   SessionEnd: 3,
 };
+
+export function isTelemetryDisabledOnRunner() {
+  return Boolean(
+    process.env.LCARS_RUN_ID && !process.env.LCARS_TELEMETRY_CREDENTIALS_FILE,
+  );
+}
 
 function lcarsBinary() {
   const local = join(homedir(), '.local', 'bin', 'lcars');
@@ -53,7 +59,7 @@ function lcarsBinary() {
 /** Hands the payload to a detached client that outlives this process and
  *  owns (deletes) the snapshot. Resolves once stdin is written; false when
  *  the client could not be started. */
-function runHook(payload) {
+export function runHook(payload) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -74,7 +80,7 @@ function runHook(payload) {
   });
 }
 
-async function sweepStaleSnapshots() {
+export async function sweepStaleSnapshots() {
   const root = tmpdir();
   const cutoff = Date.now() - STALE_SNAPSHOT_MS;
   for (const name of await readdir(root)) {
@@ -90,20 +96,13 @@ async function sweepStaleSnapshots() {
   }
 }
 
-export default async function lcarsTelemetry({ client, directory }) {
-  if (
-    process.env.LCARS_RUN_ID &&
-    !process.env.LCARS_TELEMETRY_CREDENTIALS_FILE
-  ) {
-    return {};
-  }
+export function createTelemetryReporter({ fallbackDirectory, loadSession }) {
   sweepStaleSnapshots().catch(() => undefined);
   const lastToolReport = new Map();
-  const reportedPrompts = new Set();
   const childSessions = new Set();
   const inFlight = new Set();
   const queued = new Map();
-  // Running report() calls; dispose waits for them.
+  // Running report() calls; dispose/cleanup waits for them.
   const pending = new Set();
   // session.deleted fires after OpenCode removed the session and its
   // messages, so its end report is lifecycle-only, built from the event.
@@ -113,41 +112,42 @@ export default async function lcarsTelemetry({ client, directory }) {
     if (hookEventName === 'SessionEnd' && deletedInfo.has(sessionID)) {
       const info = deletedInfo.get(sessionID);
       deletedInfo.delete(sessionID);
+      const cwd =
+        info?.directory ?? info?.location?.directory ?? fallbackDirectory;
       // No transcript: the client ships an end event without a summary.
       await runHook(
         JSON.stringify({
           hook_event_name: 'SessionEnd',
           session_id: sessionID,
-          cwd: info?.directory ?? directory,
+          cwd,
         }),
       ).catch(() => undefined);
       return;
     }
     let scratch;
     try {
-      const session = await client.session.get({ path: { id: sessionID } });
-      const info = session?.data;
+      const loaded = await loadSession(sessionID);
+      if (!loaded) return;
+      const { info, messages } = loaded;
       if (!info) return;
       if (info.parentID) {
         // The client skips subagents; do not pay for their history.
         childSessions.add(sessionID);
         return;
       }
-      const messages = await client.session.messages({
-        path: { id: sessionID },
-      });
-      const list = messages?.data;
-      if (!Array.isArray(list)) return;
+      if (!Array.isArray(messages)) return;
       scratch = await mkdtemp(join(tmpdir(), SNAPSHOT_PREFIX));
       const snapshot = join(scratch, 'export.json');
-      await writeFile(snapshot, JSON.stringify({ info, messages: list }), {
+      await writeFile(snapshot, JSON.stringify({ info, messages }), {
         mode: 0o600,
       });
+      const cwd =
+        info.directory ?? info.location?.directory ?? fallbackDirectory;
       const started = await runHook(
         JSON.stringify({
           hook_event_name: hookEventName,
           session_id: sessionID,
-          cwd: info.directory ?? directory,
+          cwd,
           transcript_path: snapshot,
         }),
       );
@@ -177,8 +177,8 @@ export default async function lcarsTelemetry({ client, directory }) {
       lastToolReport.set(sessionID, now);
     }
     if (inFlight.has(sessionID)) {
-      const pending = queued.get(sessionID);
-      if (!pending || PRIORITY[hookEventName] >= PRIORITY[pending]) {
+      const existing = queued.get(sessionID);
+      if (!existing || PRIORITY[hookEventName] >= PRIORITY[existing]) {
         queued.set(sessionID, hookEventName);
       }
       return;
@@ -202,17 +202,41 @@ export default async function lcarsTelemetry({ client, directory }) {
     void running.finally(() => pending.delete(running));
   }
 
-  return {
-    dispose: async () => {
-      let timer;
-      await Promise.race([
-        Promise.allSettled([...pending]),
-        new Promise((resolve) => {
-          timer = setTimeout(resolve, DISPOSE_WAIT_MS);
-        }),
-      ]);
-      clearTimeout(timer);
+  async function drain() {
+    let timer;
+    await Promise.race([
+      Promise.allSettled([...pending]),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, DISPOSE_WAIT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+
+  return { childSessions, deletedInfo, track, drain };
+}
+
+export default async function lcarsTelemetry({ client, directory }) {
+  if (isTelemetryDisabledOnRunner()) {
+    return {};
+  }
+  const reportedPrompts = new Set();
+  const { childSessions, deletedInfo, track, drain } = createTelemetryReporter({
+    fallbackDirectory: directory,
+    loadSession: async (sessionID) => {
+      const session = await client.session.get({ path: { id: sessionID } });
+      const info = session?.data;
+      if (!info) return undefined;
+      if (info.parentID) return { info, messages: [] };
+      const messages = await client.session.messages({
+        path: { id: sessionID },
+      });
+      return { info, messages: messages?.data };
     },
+  });
+
+  return {
+    dispose: drain,
     event: async ({ event }) => {
       const properties = event?.properties ?? {};
       switch (event?.type) {

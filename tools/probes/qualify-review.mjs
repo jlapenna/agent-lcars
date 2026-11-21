@@ -280,7 +280,7 @@ if (provider === 'codex' && process.env.LCARS_REVIEW_CODEX_ISOLATE === '1') {
 if (provider === 'opencode') {
   // Match the direct runner's effective per-review configuration.
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
-    permission: { task: 'allow' },
+    permission: { task: 'allow', subagent: 'allow' },
     provider: {
       homelab: {
         models: { default: { options: { reasoningEffort: 'medium' } } },

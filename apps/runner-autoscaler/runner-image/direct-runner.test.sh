@@ -2291,7 +2291,7 @@ grep -Fq 'the pull-request review body must contain this exact literal' "$OPENCO
   fail "github review: review prompt did not require the marker on the review body ($(cat "$OPENCODE_ARGS_LOG"))"
 grep -Fq 'the Anthropic review procedure at $AGENT_REVIEW_PATH' "$OPENCODE_ARGS_LOG" ||
   fail "github review: provider was not directed to the trusted review procedure"
-jq -e '.permission.task == "allow"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
+jq -e '.permission.task == "allow" and .permission.subagent == "allow"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
   fail "github review: OpenCode independent reviewers remain disabled"
 jq -e '.provider.homelab.models.default.options.reasoningEffort == "medium"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
   fail "github review: OpenCode review reasoning budget was not configured"
@@ -2302,8 +2302,8 @@ echo "scenario github-review: OK"
 
 run_scenario implement-delegation-policy opencode
 [ "$rc" -eq 0 ] || fail "implement delegation policy: expected exit 0, got $rc"
-jq -e '.permission.task == "deny"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
-  fail "implement delegation policy: review-only task permission leaked into implementation"
+jq -e '.permission.task == "deny" and .permission.subagent == "deny" and .permission.execute == "deny" and .permission.question == "deny" and .permission.experimental_image_generate == "deny"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
+  fail "implement delegation policy: review-only delegation, Code Mode execute, or interactive tool permissions leaked into implementation"
 jq -e '(.provider.homelab.models.default.options.reasoningEffort // null) == null' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
   fail "implement delegation policy: review reasoning budget leaked into implementation"
 

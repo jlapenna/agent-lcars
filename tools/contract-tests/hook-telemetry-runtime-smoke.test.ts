@@ -48,14 +48,19 @@ it.each([
     for (const file of [
       'opencode.json',
       'instructions.md',
-      'context-lifecycle.js',
-      'lcars-session.js',
-      'lcars-telemetry.js',
-      'hindsight.js',
       'package.json',
       'package-lock.json',
     ])
       writeFileSync(join(sdk, file), '{}');
+    for (const dir of [
+      'context-lifecycle',
+      'lcars-session',
+      'lcars-telemetry',
+      'hindsight',
+    ]) {
+      mkdirSync(join(sdk, dir), { recursive: true });
+      writeFileSync(join(sdk, dir, 'package.json'), '{}');
+    }
     writeFileSync(
       join(lib, 'lcars-session-title.cjs'),
       `const fs=require('node:fs'),path=require('node:path');
@@ -180,15 +185,20 @@ response.resume();response.on('end',resolve);
       );
       for (const file of ['package.json', 'package-lock.json'])
         writeFileSync(join(sourceSdk, file), '{}');
-      for (const file of [
-        'opencode.json',
-        'instructions.md',
-        'context-lifecycle.js',
-        'lcars-session.js',
-        'lcars-telemetry.js',
-        'hindsight.js',
-      ])
+      for (const file of ['opencode.json', 'instructions.md'])
         writeFileSync(join(project, 'agents/opencode', file), '{}');
+      for (const dir of [
+        'context-lifecycle',
+        'lcars-session',
+        'lcars-telemetry',
+        'hindsight',
+      ]) {
+        mkdirSync(join(project, 'agents/opencode', dir), { recursive: true });
+        writeFileSync(
+          join(project, 'agents/opencode', dir, 'package.json'),
+          '{}',
+        );
+      }
       writeFileSync(
         join(
           project,

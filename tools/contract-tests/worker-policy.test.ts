@@ -480,4 +480,198 @@ describe('dispatched worker policy', () => {
     expect(result.stdout).toBe('');
     expect(result.stderr).toBe('');
   });
+
+  it('enforces worktree, review-mode, and native-outcome rules on OpenCode 2 patch and write({ path }) tools', () => {
+    const deps = dependencies();
+    const patch =
+      '*** Begin Patch\n*** Add File: src/new.ts\n+new\n*** Move to: ../primary/moved.ts\n*** End Patch';
+    const patchInput = {
+      tool_name: 'patch',
+      cwd: '/task/feature',
+      tool_input: { patchText: patch },
+    };
+    expect(verdict(patchInput, { ...context, mode: 'review' }, deps)).toBe(
+      'deny',
+    );
+    deps.assertWorktree.mockImplementation((directory?: string) => {
+      if (directory === '/task/primary') throw new Error('primary');
+    });
+    expect(
+      verdict(
+        {
+          tool_name: 'patch',
+          cwd: '/task/feature',
+          tool_input: {
+            patchText:
+              '*** Begin Patch\n*** Update File: ../primary/existing.ts\n@@\n-a\n+b\n*** End Patch',
+          },
+        },
+        context,
+        deps,
+      ),
+    ).toBe('deny');
+
+    const root = mkdtempSync(join(tmpdir(), 'lcars-v2-outcome-'));
+    try {
+      const outcomePath = join(root, 'native-outcome.txt');
+      const native = policy.prepareContext(
+        {
+          repository: 'octo/example',
+          mode: 'reply',
+          anchor: { type: 'work', id: 'item' },
+        },
+        {
+          provider: 'opencode',
+          runId: 'work:item/r1',
+          attemptId: 'g1:work:item/r1',
+          nativeOutcomePath: outcomePath,
+        },
+      );
+      const strictDeps = dependencies();
+      strictDeps.assertWorktree.mockImplementation(() => {
+        throw new Error('outside worktree');
+      });
+      const validOutcome =
+        '<!-- agent-result:v1:park:g1:work:item/r1 -->\n<!-- attempt-claim:g1:work:item/r1 -->\n';
+
+      // OpenCode 2 `write` passes `path`, not `filePath`.
+      expect(
+        verdict(
+          {
+            tool_name: 'write',
+            cwd: root,
+            tool_input: { path: outcomePath, content: validOutcome },
+          },
+          native,
+          strictDeps,
+        ),
+      ).toBe('allow');
+      expect(
+        verdict(
+          {
+            tool_name: 'write',
+            cwd: root,
+            tool_input: { path: outcomePath, content: 'forged outcome\n' },
+          },
+          native,
+          strictDeps,
+        ),
+      ).toBe('deny');
+
+      // OpenCode 2 `patch` with Add File to nativeOutcomePath is likewise checked.
+      expect(
+        verdict(
+          {
+            tool_name: 'patch',
+            cwd: root,
+            tool_input: {
+              patchText: `*** Begin Patch\n*** Add File: ${outcomePath}\n+${validOutcome.trimEnd().split('\n').join('\n+')}\n*** End Patch`,
+            },
+          },
+          native,
+          strictDeps,
+        ),
+      ).toBe('allow');
+      expect(
+        verdict(
+          {
+            tool_name: 'patch',
+            cwd: root,
+            tool_input: {
+              patchText: `*** Begin Patch\n*** Add File: ${outcomePath}\n+invalid\n*** End Patch`,
+            },
+          },
+          native,
+          strictDeps,
+        ),
+      ).toBe('deny');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('denies Code Mode execute, session_move, and forced or out-of-worktree worktree mutations', () => {
+    const deps = dependencies();
+    expect(verdict({ tool_name: 'execute', tool_input: { code: '1+1' } })).toBe(
+      'deny',
+    );
+    for (const moveTool of ['opencode.session_move', 'opencode_session_move']) {
+      expect(
+        verdict({
+          tool_name: moveTool,
+          tool_input: { directory: '/task/feature' },
+        }),
+      ).toBe('deny');
+    }
+    for (const removeTool of [
+      'opencode.worktree_remove',
+      'opencode_worktree_remove',
+    ]) {
+      expect(
+        verdict(
+          {
+            tool_name: removeTool,
+            cwd: '/task/feature',
+            tool_input: { directory: '/task/feature', force: true },
+          },
+          context,
+          deps,
+        ),
+      ).toBe('deny');
+      expect(
+        verdict(
+          {
+            tool_name: removeTool,
+            cwd: '/task/feature',
+            tool_input: {},
+          },
+          context,
+          deps,
+        ),
+      ).toBe('deny');
+    }
+    deps.assertWorktree.mockImplementation((directory?: string) => {
+      if (directory === '/task/primary') throw new Error('primary');
+    });
+    for (const worktreeTool of [
+      'opencode.worktree_create',
+      'opencode_worktree_create',
+      'opencode.worktree_remove',
+      'opencode_worktree_remove',
+    ]) {
+      expect(
+        verdict(
+          {
+            tool_name: worktreeTool,
+            cwd: '/task/feature',
+            tool_input: { directory: '/task/primary' },
+          },
+          context,
+          deps,
+        ),
+      ).toBe('deny');
+      expect(
+        verdict(
+          {
+            tool_name: worktreeTool,
+            cwd: '/task/feature',
+            tool_input: { directory: '/task/feature' },
+          },
+          { ...context, mode: 'review' },
+          deps,
+        ),
+      ).toBe('deny');
+      expect(
+        verdict(
+          {
+            tool_name: worktreeTool,
+            cwd: '/task/feature',
+            tool_input: { directory: '/task/feature' },
+          },
+          context,
+          deps,
+        ),
+      ).toBe('allow');
+    }
+  });
 });

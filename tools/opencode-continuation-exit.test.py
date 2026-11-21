@@ -24,14 +24,18 @@ class ContinuationExitTest(unittest.TestCase):
         (config / "opencode.json").write_text("{}\n")
         for name in [
             "instructions.md",
-            "context-lifecycle.js",
-            "lcars-session.js",
-            "lcars-telemetry.js",
-            "hindsight.js",
             "package.json",
             "package-lock.json",
         ]:
             (config / name).write_text("{}\n")
+        for plugin_dir in [
+            "context-lifecycle",
+            "lcars-session",
+            "lcars-telemetry",
+            "hindsight",
+        ]:
+            (config / plugin_dir).mkdir()
+            (config / plugin_dir / "package.json").write_text("{}\n")
         (config / "node_modules").mkdir()
         data = self.home / ".local/share/opencode"
         data.mkdir(parents=True)

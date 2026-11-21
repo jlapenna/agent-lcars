@@ -3,7 +3,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import contextLifecycle from '../agents/opencode/context-lifecycle.js';
+import contextLifecycleV2 from '../agents/opencode/context-lifecycle/index.js';
+import contextLifecycle from '../agents/opencode/context-lifecycle/v1.js';
 
 const directory = await mkdtemp(join(tmpdir(), 'opencode-context-test-'));
 try {
@@ -145,6 +146,113 @@ try {
   assert.equal(summary.context[0], 'existing context');
   assert(summary.context[1].includes('next concrete action'));
   assert.equal(summary.prompt, undefined);
+
+  // Exercise the OpenCode 2 `setup(ctx)` context + compaction + delete hooks.
+  await writeFile(root, 'AUTHORITATIVE V2 ROOT\n');
+  const registered = new Map();
+  const v2Cleanup = await contextLifecycleV2.setup({
+    session: {
+      hook: (name, fn) => registered.set(name, fn),
+    },
+    event: {
+      subscribe: async function* () {
+        // Keep idle in unit fixture.
+      },
+    },
+  });
+  const v2ReadPair = (id, filePath, content) => [
+    {
+      id: `asst_${id}`,
+      role: 'assistant',
+      content: [
+        {
+          type: 'tool-call',
+          id: `call_${id}`,
+          name: 'read',
+          input: { path: filePath, offset: 1, limit: 200 },
+        },
+      ],
+    },
+    {
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          id: `call_${id}`,
+          name: 'read',
+          result: { type: 'text', value: content },
+        },
+      ],
+    },
+  ];
+  const v2Messages = [
+    { role: 'user', content: [{ type: 'text', text: 'Start task' }] },
+    ...v2ReadPair('old', '/worktree/source.ts', 'OLD V2 SOURCE'.repeat(20000)),
+    {
+      role: 'user',
+      metadata: {
+        instruction: {
+          paths: ['/worktree/app/AGENTS.md', '/worktree/AGENTS.md'],
+        },
+      },
+      content: [
+        {
+          type: 'text',
+          text: 'Instructions from: /worktree/app/AGENTS.md\nUNIQUE V2 CHILD\n\n\nInstructions from: /worktree/AGENTS.md\nAUTHORITATIVE V2 ROOT\n',
+        },
+      ],
+    },
+    ...v2ReadPair(
+      'protocol',
+      '/protocol/agent-protocol.md',
+      'KEEP MD'.repeat(20000),
+    ),
+    ...v2ReadPair('recent1', '/worktree/recent1.ts', 'RECENT1'.repeat(20000)),
+    ...v2ReadPair('recent2', '/worktree/recent2.ts', 'RECENT2'),
+  ];
+  await registered.get('context')({
+    sessionID: 'v2-ses',
+    system: [
+      {
+        type: 'text',
+        text: `System header\nInstructions from: ${root}\nAUTHORITATIVE V2 ROOT\n`,
+      },
+    ],
+    messages: v2Messages,
+    options: {},
+  });
+  assert(
+    !v2Messages[2].content[0].result.value.includes('OLD V2 SOURCE'),
+    'old source read should be evicted on v2',
+  );
+  assert(
+    v2Messages[2].content[0].result.value.includes(
+      'retained in session history',
+    ),
+  );
+  assert(
+    !v2Messages[3].content[0].text.includes('AUTHORITATIVE V2 ROOT'),
+    'duplicate root instructions should be stripped from synthetic message on v2',
+  );
+  assert(v2Messages[3].content[0].text.includes('UNIQUE V2 CHILD'));
+  assert(v2Messages[5].content[0].result.value.includes('KEEP MD'));
+  assert(v2Messages[7].content[0].result.value.includes('RECENT1'));
+
+  const v2Compaction = {
+    sessionID: 'v2-ses',
+    system: [{ type: 'text', text: 'Summarizer' }],
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: '<template>' }] },
+    ],
+    options: { maxTokens: 8192 },
+  };
+  await registered.get('compaction')(v2Compaction);
+  assert.equal(v2Compaction.options.maxTokens, 4096);
+  assert(
+    JSON.stringify(v2Compaction.messages).includes('next concrete action'),
+  );
+  v2Cleanup?.();
+
   console.log(
     'OpenCode request context: instruction identity, continuation, history retention, and summary budget OK',
   );

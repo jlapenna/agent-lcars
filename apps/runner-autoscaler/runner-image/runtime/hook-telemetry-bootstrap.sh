@@ -6,7 +6,7 @@
 # telemetry: telemetry must never fail a dispatch.
 
 # Installs this pipeline's hook entries and exports the run context the hook
-# client stamps on every event. OpenCode's plugin (lcars-telemetry.js) is
+# client stamps on every event. OpenCode's plugin (lcars-telemetry/) is
 # already in the image's OpenCode config and stays inert until
 # LCARS_TELEMETRY_CREDENTIALS_FILE is exported, so it needs no install. The credentials file is named only through
 # LCARS_TELEMETRY_CREDENTIALS_FILE, which the flusher hands to the Firestore
@@ -19,7 +19,8 @@ hook_telemetry_bootstrap() {
   export INTENT_ID
   export LCARS_TELEMETRY_CREDENTIALS_FILE="$credentials"
   if [ "$PIPELINE" = opencode ]; then
-    if [ ! -r "${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/lcars-telemetry.js" ]; then
+    local oc_cfg="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}"
+    if [ ! -r "$oc_cfg/lcars-telemetry/index.js" ] || [ ! -r "$oc_cfg/lcars-telemetry/package.json" ]; then
       unset LCARS_TELEMETRY_CREDENTIALS_FILE LCARS_REPO LCARS_ISSUE_NUMBER
       return 1
     fi

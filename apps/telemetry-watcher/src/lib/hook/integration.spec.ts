@@ -11,11 +11,16 @@ import {
   installIntegration,
   INTEGRATION_VERSION,
   integrationStatus,
+  opencodePluginDir,
   opencodePluginPath,
   stubCommand,
   uninstallIntegration,
 } from './integration';
-import { OPENCODE_TELEMETRY_PLUGIN } from './opencode-plugin-source';
+import {
+  OPENCODE_TELEMETRY_PLUGIN,
+  OPENCODE_TELEMETRY_PLUGIN_PACKAGE_JSON,
+  OPENCODE_TELEMETRY_PLUGIN_V1,
+} from './opencode-plugin-source';
 
 const homes: string[] = [];
 afterEach(() => {
@@ -786,14 +791,31 @@ describe('lcars integration', () => {
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining('usage:'));
   });
 
-  it('installs the OpenCode plugin under XDG_CONFIG_HOME and removes it', () => {
+  it('installs the OpenCode folder plugin under XDG_CONFIG_HOME, removes legacy flat v1 files, and uninstalls cleanly', () => {
     const home = tempHome();
     const env = { XDG_CONFIG_HOME: path.join(home, 'xdg') };
+    const pluginDir = opencodePluginDir(home, env);
     const pluginPath = opencodePluginPath(home, env);
+    const legacyFlat = path.join(
+      home,
+      'xdg/opencode/plugins/lcars-telemetry.js',
+    );
+    expect(pluginDir).toBe(
+      path.join(home, 'xdg/opencode/plugins/lcars-telemetry'),
+    );
     expect(pluginPath).toBe(
-      path.join(home, 'xdg/opencode/plugins/lcars-telemetry.js'),
+      path.join(home, 'xdg/opencode/plugins/lcars-telemetry/index.js'),
     );
     expect(integrationStatus('opencode', home, env).installed).toBe(false);
+
+    fs.mkdirSync(path.dirname(legacyFlat), { recursive: true });
+    fs.writeFileSync(legacyFlat, '// LCARS_INTEGRATION_VERSION=1\n');
+    expect(integrationStatus('opencode', home, env)).toMatchObject({
+      stubInstalled: true,
+      stubVersion: 1,
+      stubCurrent: false,
+      installed: false,
+    });
 
     expect(installIntegration('opencode', home, env)).toMatchObject({
       runtime: 'opencode',
@@ -801,7 +823,14 @@ describe('lcars integration', () => {
       stubVersion: 1,
       installed: true,
     });
+    expect(fs.existsSync(legacyFlat)).toBe(false);
     expect(fs.readFileSync(pluginPath, 'utf8')).toBe(OPENCODE_TELEMETRY_PLUGIN);
+    expect(fs.readFileSync(path.join(pluginDir, 'v1.js'), 'utf8')).toBe(
+      OPENCODE_TELEMETRY_PLUGIN_V1,
+    );
+    expect(fs.readFileSync(path.join(pluginDir, 'package.json'), 'utf8')).toBe(
+      OPENCODE_TELEMETRY_PLUGIN_PACKAGE_JSON,
+    );
     expect(fs.statSync(pluginPath).mode & 0o777).toBe(0o600);
 
     fs.writeFileSync(pluginPath, '// LCARS_INTEGRATION_VERSION=0\n');
@@ -814,7 +843,7 @@ describe('lcars integration', () => {
     expect(uninstallIntegration('opencode', home, env).stubInstalled).toBe(
       false,
     );
-    expect(fs.existsSync(pluginPath)).toBe(false);
+    expect(fs.existsSync(pluginDir)).toBe(false);
     // Uninstalling twice is a no-op.
     expect(uninstallIntegration('opencode', home, env).installed).toBe(false);
   });
@@ -822,19 +851,24 @@ describe('lcars integration', () => {
   it('defaults the OpenCode plugin directory to ~/.config', () => {
     const home = tempHome();
     expect(opencodePluginPath(home, {})).toBe(
-      path.join(home, '.config/opencode/plugins/lcars-telemetry.js'),
+      path.join(home, '.config/opencode/plugins/lcars-telemetry/index.js'),
     );
   });
 
-  it('embeds the repository OpenCode plugin byte for byte', () => {
-    const source = fs.readFileSync(
-      path.resolve(
-        __dirname,
-        '../../../../../agents/opencode/lcars-telemetry.js',
-      ),
-      'utf8',
+  it('embeds the repository OpenCode plugin folder byte for byte', () => {
+    const dir = path.resolve(
+      __dirname,
+      '../../../../../agents/opencode/lcars-telemetry',
     );
-    expect(OPENCODE_TELEMETRY_PLUGIN).toBe(source);
+    expect(OPENCODE_TELEMETRY_PLUGIN).toBe(
+      fs.readFileSync(path.join(dir, 'index.js'), 'utf8'),
+    );
+    expect(OPENCODE_TELEMETRY_PLUGIN_V1).toBe(
+      fs.readFileSync(path.join(dir, 'v1.js'), 'utf8'),
+    );
+    expect(OPENCODE_TELEMETRY_PLUGIN_PACKAGE_JSON).toBe(
+      fs.readFileSync(path.join(dir, 'package.json'), 'utf8'),
+    );
   });
 
   it('installs and uninstalls Antigravity hooks in ~/.gemini/config/hooks.json without disturbing foreign hook sets', () => {
