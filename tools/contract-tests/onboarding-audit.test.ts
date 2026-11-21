@@ -93,6 +93,56 @@ async function githubHttpError(
 }
 
 describe('read-only onboarding audit', () => {
+  it.each([
+    ['pass', 'pass'],
+    ['fail', 'fail'],
+  ])(
+    'audits candidate checks using the protected push evaluation (%s)',
+    async (result, expected) => {
+      const checks = [
+        { context: 'LCARS review (merge candidate)', integration_id: 4457090 },
+      ];
+      const rule = {
+        type: 'required_status_checks',
+        ruleset_id: 42,
+        ruleset_source_type: 'Repository',
+        parameters: { required_status_checks: checks },
+      };
+      const prefix = `/repos/${repo}/rulesets`;
+      const { api } = fixture({
+        [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: [rule],
+        [`${prefix}/rule-suites?ref=refs%2Fheads%2Fmain&time_period=month&rule_suite_result=all&per_page=100&page=1`]:
+          [
+            {
+              id: 7,
+              after_sha: 'abc123',
+              ref: 'refs/heads/main',
+              result: result === 'pass' ? 'pass' : 'bypass',
+              pushed_at: '2026-11-20T16:00:36Z',
+            },
+          ],
+        [`${prefix}/rule-suites/7`]: {
+          rule_evaluations: [
+            {
+              rule_type: 'required_status_checks',
+              rule_source: { type: 'ruleset', id: 42 },
+              result,
+            },
+          ],
+        },
+        [`${prefix}/42/history?per_page=100&page=1`]: [
+          { version_id: 3, updated_at: '2026-11-20T05:11:25Z' },
+        ],
+        [`${prefix}/42/history/3`]: {
+          state: { enforcement: 'active', rules: [rule] },
+        },
+      });
+      expect(
+        (await audit(api)).find(({ fact }) => fact === 'required-checks')
+          ?.status,
+      ).toBe(expected);
+    },
+  );
   it('falls back to the fleet token for an unset workflow secret', async () => {
     const base = fixture();
     const tokens: string[] = [];
