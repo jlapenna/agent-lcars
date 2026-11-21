@@ -209,7 +209,7 @@ def owner_of(path: str) -> str:
     as the wrong account.
     """
     parts = path.split("/")
-    if len(parts) < 4 or parts[1] != "repos":
+    if len(parts) < 4 or parts[1] != "repos" or not parts[2]:
         raise ValueError(f"cannot determine repository owner from path: {path}")
     return parts[2]
 
@@ -577,7 +577,8 @@ class ExporterState:
     def record_response(
         self, endpoint: str, response: requests.Response, owner: str = ""
     ) -> None:
-        self.api_requests.labels(owner, endpoint, str(response.status_code)).inc()
+        owner_label = owner.casefold()
+        self.api_requests.labels(owner_label, endpoint, str(response.status_code)).inc()
         for header, metric in (
             ("x-ratelimit-remaining", self.api_rate_remaining),
             ("x-ratelimit-limit", self.api_rate_limit),
@@ -599,7 +600,7 @@ class ExporterState:
                         "GitHub returned an invalid rate-limit header: %s", header
                     )
                 else:
-                    metric.labels(owner).set(count)
+                    metric.labels(owner_label).set(count)
 
 
 class GitHubRequestError(RuntimeError):
@@ -1135,7 +1136,7 @@ class Database:
             concurrency_group_rows = self.connection.execute(
                 """
                 SELECT DISTINCT repository, workflow, concurrency_group FROM jobs
-                WHERE concurrency_group != ?
+                WHERE concurrency_group NOT IN (?, 'none', 'unknown')
                 """,
                 (OVERFLOW_CONCURRENCY_GROUP_LABEL,),
             ).fetchall()
@@ -1578,6 +1579,8 @@ class Database:
         Apply the same per-(repository, workflow) cardinality cap already
         used above for dynamic job names.
         """
+        if name in {"none", "unknown"}:
+            return name
         with self.lock:
             labels = self.concurrency_group_labels.setdefault(
                 (repository, workflow), set()

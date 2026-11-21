@@ -106,7 +106,9 @@ class FakeState:
         self.backfill_in_progress = self.Metric()
 
     def record_response(self, endpoint, response, owner=""):
-        self.api_requests.labels(owner, endpoint, str(response.status_code)).inc()
+        self.api_requests.labels(
+            owner.casefold(), endpoint, str(response.status_code)
+        ).inc()
 
 
 class FakeAPI:
@@ -2235,7 +2237,12 @@ class OwnerOfTests(unittest.TestCase):
     def test_non_repository_path_is_rejected(self):
         # Guessing here would authenticate as whichever installation happened
         # to be cached, so the wrong-account failure must be loud.
-        for path in ("/test", "/rate_limit", "/orgs/jlapenna/installation"):
+        for path in (
+            "/test",
+            "/rate_limit",
+            "/orgs/jlapenna/installation",
+            "/repos//homelab/actions/runs",
+        ):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 exporter.owner_of(path)
 
@@ -2782,6 +2789,23 @@ class PerOwnerQuotaTests(unittest.TestCase):
             ),
             0.0,
         )
+        self.assertEqual(
+            exported_metric_value(
+                metrics,
+                "github_actions_exporter_api_requests_total",
+                '{endpoint="runs",owner="jlapenna",status="200"}',
+            ),
+            1.0,
+        )
+        self.assertEqual(
+            exported_metric_value(
+                metrics,
+                "github_actions_exporter_api_rate_limit_remaining",
+                '{owner="jlapenna"}',
+            ),
+            0.0,
+        )
+        self.assertNotIn('owner="JLaPenna"', metrics)
 
     def test_retry_after_delta_http_date_clock_skew_fallback_and_ceiling(self):
         config = exporter.Config(
@@ -3108,6 +3132,143 @@ class PerOwnerQuotaTests(unittest.TestCase):
         self.assertEqual(
             stored,
             {1010: "group-10", 1011: "group-11", 1012: "unknown"},
+        )
+
+    def test_saturated_concurrency_group_cap_preserves_confirmed_and_sentinels(self):
+        repository = "jlapenna/agent-lcars"
+        active_run = workflow_run(id=77, status="in_progress", conclusion=None)
+        self.database.upsert_run(repository, active_run)
+
+        # Seed sentinel rows first, reload from SQLite to prove _initialize_schema
+        # does not count "none"/"unknown" against MAX_CONCURRENCY_GROUP_LABELS_PER_WORKFLOW,
+        # then saturate all 100 dynamic slots (ci-pr-1 .. ci-pr-100).
+        self.database.upsert_jobs(
+            repository,
+            active_run,
+            [
+                workflow_job(
+                    id=900,
+                    status="queued",
+                    conclusion=None,
+                    started_at=None,
+                    completed_at=None,
+                )
+            ],
+            [],
+        )
+        completed_seed = workflow_run(id=76)
+        self.database.upsert_run(repository, completed_seed)
+        self.database.upsert_jobs(
+            repository, completed_seed, [workflow_job(id=901)], None
+        )
+
+        database_path = str(Path(self.temporary_directory.name) / "actions.db")
+        self.database.close()
+        self.database = exporter.Database(database_path)
+        self.addCleanup(self.database.close)
+
+        cap = exporter.MAX_CONCURRENCY_GROUP_LABELS_PER_WORKFLOW
+        self.assertEqual(cap, 100)
+        saturated_jobs = [
+            workflow_job(
+                id=idx,
+                status="queued",
+                conclusion=None,
+                started_at=None,
+                completed_at=None,
+            )
+            for idx in range(1, cap + 1)
+        ]
+        saturated_groups = [
+            {"group_name": f"ci-pr-{idx}", "group_members": [{"job_id": idx}]}
+            for idx in range(1, cap + 1)
+        ]
+        self.database.upsert_jobs(
+            repository, active_run, saturated_jobs, saturated_groups
+        )
+        self.assertEqual(
+            self.database.rows(
+                "SELECT concurrency_group FROM jobs WHERE repository = ? AND id = 100",
+                (repository,),
+            )[0]["concurrency_group"],
+            "ci-pr-100",
+        )
+
+        # Throttled/skipped optional poll (`groups=[]`) after cap saturation:
+        # confirmed "ci-pr-1" stays "ci-pr-1" (not overwritten with "__other__")
+        # and newly seen active job 200 gets "unknown" (not "__other__").
+        self.database.upsert_jobs(
+            repository,
+            active_run,
+            [
+                workflow_job(
+                    id=1,
+                    status="in_progress",
+                    conclusion=None,
+                    started_at="2026-08-05T04:19:39Z",
+                    completed_at=None,
+                ),
+                workflow_job(
+                    id=200,
+                    status="queued",
+                    conclusion=None,
+                    started_at=None,
+                    completed_at=None,
+                ),
+            ],
+            [],
+        )
+        # Explicit 101st dynamic group still maps to "__other__".
+        self.database.upsert_jobs(
+            repository,
+            active_run,
+            [
+                workflow_job(
+                    id=201,
+                    status="queued",
+                    conclusion=None,
+                    started_at=None,
+                    completed_at=None,
+                )
+            ],
+            [{"group_name": "ci-pr-101", "group_members": [{"job_id": 201}]}],
+        )
+        active_groups = {
+            row["id"]: row["concurrency_group"]
+            for row in self.database.rows(
+                "SELECT id, concurrency_group FROM jobs WHERE repository = ? AND id IN (1, 200, 201)",
+                (repository,),
+            )
+        }
+        self.assertEqual(
+            active_groups,
+            {1: "ci-pr-1", 200: "unknown", 201: "__other__"},
+        )
+
+        # Completion poll (`groups=None`) after cap saturation: confirmed "ci-pr-1"
+        # stays "ci-pr-1", while unresolved/new completed jobs record "none" (not "__other__").
+        completed_run = workflow_run(id=77)
+        self.database.upsert_run(repository, completed_run)
+        self.database.upsert_jobs(
+            repository,
+            completed_run,
+            [
+                workflow_job(id=1),
+                workflow_job(id=200),
+                workflow_job(id=202),
+            ],
+            None,
+        )
+        final_groups = {
+            row["id"]: row["concurrency_group"]
+            for row in self.database.rows(
+                "SELECT id, concurrency_group FROM jobs WHERE repository = ? AND id IN (1, 200, 202)",
+                (repository,),
+            )
+        }
+        self.assertEqual(
+            final_groups,
+            {1: "ci-pr-1", 200: "none", 202: "none"},
         )
 
 
