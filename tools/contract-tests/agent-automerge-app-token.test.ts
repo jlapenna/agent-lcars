@@ -70,23 +70,52 @@ describe('agent auto-merge App identity trust boundary', () => {
   it('admits only successful same-repository PR runs to the App private key', async () => {
     const reconcileIf =
       (await readReusable()).jobs['reconcile-automerge'].if ?? '';
-    // Every workflow_run branch carries every guard, so no later `||`
-    // branch can admit a fork-originated run to the App private key.
-    const workflowRunClauses = reconcileIf
-      .split('||')
-      .filter((clause) =>
-        clause.includes("github.event_name == 'workflow_run'"),
-      );
-    expect(workflowRunClauses).not.toHaveLength(0);
-    for (const clause of workflowRunClauses) {
-      for (const guard of [
-        'inputs.app-token-enabled',
-        "github.event.workflow_run.event == 'pull_request'",
-        "github.event.workflow_run.conclusion == 'success'",
-        'github.event.workflow_run.head_repository.full_name == github.repository',
-      ]) {
-        expect(clause).toContain(guard);
-      }
+    // Evaluate the workflow's equality and boolean operators against event fixtures.
+    const filter = reconcileIf
+      .replaceAll('github.', '.github.')
+      .replaceAll('inputs.app-token-enabled', '.inputs["app-token-enabled"]')
+      .replaceAll("'", '"')
+      .replaceAll('&&', ' and ')
+      .replaceAll('||', ' or ');
+    for (const [event, name, conclusion, origin, enabled, admit] of [
+      ['pull_request', 'CI', 'success', 'upstream', true, true],
+      [
+        'pull_request_review',
+        'LCARS review event',
+        'success',
+        'upstream',
+        true,
+        true,
+      ],
+      ['pull_request_review', 'CI', 'success', 'upstream', true, false],
+      ['push', 'LCARS review event', 'success', 'upstream', true, false],
+      ...['pull_request', 'pull_request_review'].flatMap((type) => [
+        [type, 'LCARS review event', 'success', 'fork', true, false],
+        [type, 'LCARS review event', 'failure', 'upstream', true, false],
+        [type, 'LCARS review event', 'success', 'upstream', false, false],
+      ]),
+    ]) {
+      const context = {
+        github: {
+          event_name: 'workflow_run',
+          repository: 'upstream',
+          event: {
+            workflow_run: {
+              event,
+              name,
+              conclusion,
+              head_repository: { full_name: origin },
+            },
+          },
+        },
+        inputs: { 'app-token-enabled': enabled },
+      };
+      const result = spawnSync('jq', ['-c', filter], {
+        input: JSON.stringify(context),
+        encoding: 'utf8',
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout), JSON.stringify(context)).toBe(admit);
     }
   });
 
