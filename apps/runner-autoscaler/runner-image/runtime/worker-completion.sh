@@ -29,7 +29,7 @@ report_message_usable() {
 # The two marker lines bind a report to this attempt. Older workers wrote
 # only the markers and delivered the body through the provider's final turn.
 native_report_source() {
-  python3 - "$NATIVE_WORK_OUTCOME_FILE" "$ATTEMPT_ID" "$RUN_MESSAGE_MAX_BYTES" "$RUNNER_TEMP" "$1" <<'PYTHON'
+  python3 -I - "$NATIVE_WORK_OUTCOME_FILE" "$ATTEMPT_ID" "$RUN_MESSAGE_MAX_BYTES" "$RUNNER_TEMP" "$1" <<'PYTHON'
 import os
 import stat
 import sys

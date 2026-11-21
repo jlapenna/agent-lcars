@@ -363,14 +363,14 @@ comment must say.
 The dispatch brief's `mode` and `requested_results` fields are authoritative;
 do not infer the job from labels:
 
-| `mode`      | anchor       | deliverable                                                       |
-| ----------- | ------------ | ----------------------------------------------------------------- |
-| `implement` | issue        | open a PR on a new branch                                         |
-| `implement` | pull request | take over and keep pushing to that PR's branch                    |
-| `implement` | work         | open a PR, or emit its explicit marker-bound PARK/NO-OP artifact  |
-| `implement` | report work  | final response is the report, plus its marker-bound REPORT record |
-| `review`    | pull request | submit a real pull-request review with a body; push nothing       |
-| `reply`     | either       | a comment may be the complete deliverable                         |
+| `mode`      | anchor       | deliverable                                                        |
+| ----------- | ------------ | ------------------------------------------------------------------ |
+| `implement` | issue        | open a PR on a new branch                                          |
+| `implement` | pull request | take over and keep pushing to that PR's branch                     |
+| `implement` | work         | open a PR, or emit its explicit marker-bound PARK/NO-OP artifact   |
+| `implement` | report work  | the body below the two attempt markers is the authoritative report |
+| `review`    | pull request | submit a real pull-request review with a body; push nothing        |
+| `reply`     | either       | a comment may be the complete deliverable                          |
 
 The shared lane stamps the accepted PR, comment, or review artifact with the
 attempt marker required above. Do not remove it.

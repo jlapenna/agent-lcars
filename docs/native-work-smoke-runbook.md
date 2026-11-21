@@ -148,12 +148,15 @@ path, not as one green light:
   `result.summary: pull-request`, and PR `result.ref` record publication.
   Independently confirm the merge on the PR, then that the binding reached
   `state: complete`, before treating the Task as complete.
-- **Report path:** confirm the private
-  `<!-- agent-result:v1:report:$ATTEMPT_ID -->` record with the attempt claim in
-  the same private outcome file **and** complete final findings in the same
-  round (stored whole at any length up to 4 MiB; never truncated).
-  Verify the accepted Run outcome; a bare final message settles nothing, and
-  a PR fails a report item.
+- **Report path:** verify the accepted Run outcome is `report`. In the
+  attempt's outcome file, locate the report marker and its matching claim
+  followed by the complete report. Compare the bytes after the second
+  marker's newline with the UTF-8 bytes of the stored Run result message,
+  including trailing newlines. When the provider subsequently responds with
+  a different final turn, the stored message must match the file body.
+  A two-line legacy record exercises only the final-turn fallback. If the
+  saved body or a differing final turn is unavailable, record which check
+  remains unverified.
 
 Then let normal delivery and cleanup take their course. Do not close useful
 delivery to end the run sooner.
