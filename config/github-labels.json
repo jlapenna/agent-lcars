@@ -774,6 +774,17 @@
     },
     "jlapenna/repo-tools": {
       "labels": [
+        "type:bug",
+        "type:feature",
+        "type:docs",
+        "type:maintenance",
+        "type:security",
+        "type:dependency-update",
+        "status:ready-for-agent",
+        "status:blocked",
+        "status:needs-human",
+        "status:post-deploy-action",
+        "status:ledger",
         "agent:claude",
         "agent:codex",
         "agent:opencode",
@@ -782,7 +793,11 @@
         "review:claude",
         "review:codex",
         "review:opencode",
-        "review:agy"
+        "review:agy",
+        "agent-option:cross-repo",
+        "intake:quick-task",
+        "planning",
+        "bot:renovate"
       ],
       "migrations": {},
       "remove": []

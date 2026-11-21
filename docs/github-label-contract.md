@@ -77,13 +77,12 @@ respective artifact facts.
 
 Each manifest entry follows one of four profiles:
 
-- **Standard** (Homelab and most member repositories): the shared families
+- **Standard** (Homelab, Repo Tools and most member repositories): the shared families
   below and no `automation:*`, `ci:*`, or `app:*` labels.
 - **Agent LCARS**: Standard plus its own `app:*` labels.
 - **Sprinkles**: Standard plus its automation/CI controls and `app:*` labels.
 - **Empty**: an entry with no declared labels and empty
-  `migrations`/`remove` lists (currently `dev`, `repo-tools`, and
-  `fleet-runtime`), so the sync changes nothing there.
+  `migrations`/`remove` lists (currently `dev` and `fleet-runtime`), so the sync changes nothing there.
 
 | Family            | Standard                                         | Agent LCARS                           | Sprinkles                                                         |
 | ----------------- | ------------------------------------------------ | ------------------------------------- | ----------------------------------------------------------------- |
