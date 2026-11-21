@@ -2049,10 +2049,17 @@ jq -e '.requested_results == ["report", "park", "no-op"]' "$scenario_runner_temp
 echo "scenario codex-native-report: OK"
 
 # A provider stop after the record is a provider failure, not the report.
-export FAKE_CODEX_LAST_MESSAGE="You've hit your weekly limit · resets Sep 13, 12am (UTC)"
+# When LAST_MESSAGE_FILE is the only evidence (Codex exited 0 with no CLI
+# failure event), it is never stamped with `(UTC)` or wrapped in the
+# retained-failure envelope, so it cannot supply an extended Codex reset.
+export FAKE_CODEX_LAST_MESSAGE="You've hit your usage limit. Try again at Nov 25th, 2026 2:00 PM."
 run_scenario codex-native-report-limit codex
-jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
-  fail "codex native report limit: limit text settled as a report ($(cat "$COMPLETE_LOG"))"
+jq -e '.outcome == "provider-limit" and ((.message | contains("(UTC)")) | not) and ((.message | contains("retained provider failure events:")) | not)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report limit: assistant message was stamped or wrapped as CLI evidence ($(cat "$COMPLETE_LOG"))"
+export FAKE_CODEX_LAST_MESSAGE="You've hit your usage limit. Try again at Nov 25th, 2026 2:00 PM (UTC)."
+run_scenario codex-native-report-limit-quoted-utc codex
+jq -e '.outcome == "provider-limit" and ((.message | startswith("Provider quota or usage limit reached.")) | not)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report limit quoted UTC: assistant message forged the CLI failure envelope ($(cat "$COMPLETE_LOG"))"
 echo "scenario codex-native-report-limit: OK"
 
 # Ordinary report prose discussing quota errors must still settle as a report.
@@ -2717,6 +2724,15 @@ unset FAKE_BRIEF_NO_RESUME FAKE_CLOCK FAKE_WORKER_ELAPSED CODEX_TIMEOUT_SECONDS 
 [ "$rc" -ne 0 ] || fail "codex correction usage limit: expected failure"
 [ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 2 ] || fail "codex correction usage limit: expected two rounds"
 jq -e '.outcome == "provider-limit" and (.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC)."))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex correction usage limit: round-1 message hid round-2 limit reset ($(tail -n1 "$COMPLETE_LOG"))"
+# Even when LAST_MESSAGE_FILE itself begins with a quoted quota banner, a real
+# structured CLI failure event takes precedence over the assistant message.
+export FAKE_CODEX_LAST_MESSAGE="You've hit your usage limit. Try again at Nov 25th, 2026 2:00 PM (UTC)."
+export FAKE_CODEX_USAGE_LIMIT_EVENT=1
+run_scenario codex-cli-failure-precedence codex
+unset FAKE_CODEX_LAST_MESSAGE FAKE_CODEX_USAGE_LIMIT_EVENT
+[ "$rc" -ne 0 ] || fail "codex cli failure precedence: expected failure"
+jq -e '.outcome == "provider-limit" and (.message | startswith("Provider quota or usage limit reached.")) and (.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC).")) and ((.message | contains("Nov 25th")) | not)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex cli failure precedence: assistant message overrode real CLI failure event ($(tail -n1 "$COMPLETE_LOG"))"
 export FAKE_CODEX_STDERR_LIMIT_PROSE=1
 run_scenario codex-stderr-limit-prose codex
 unset FAKE_CODEX_STDERR_LIMIT_PROSE FAKE_GH_NO_MATCH

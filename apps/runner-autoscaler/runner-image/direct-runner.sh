@@ -1740,11 +1740,12 @@ if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed || "$OUTCOME" = r
   if is_provider_limit_message "$AGENT_MESSAGE" ||
     is_provider_limit_failure "$PROVIDER_FAILURES"; then
     OUTCOME=provider-limit
-    if [ "$PIPELINE" = codex ]; then
-      if is_provider_limit_message "$AGENT_MESSAGE"; then
-        AGENT_MESSAGE="$(annotate_codex_limit_utc "$AGENT_MESSAGE")"
-      fi
-      if [ -n "$PROVIDER_FAILURES" ]; then
+    # Only structured CLI failure events or captured CLI stderr banners carry
+    # runner-verified provider evidence: they always win over LAST_MESSAGE_FILE,
+    # and an assistant final message alone is never stamped with `(UTC)` or
+    # wrapped in the retained-failure envelope.
+    if is_provider_limit_failure "$PROVIDER_FAILURES"; then
+      if [ "$PIPELINE" = codex ]; then
         PROVIDER_FAILURES="$(annotate_codex_limit_utc "$PROVIDER_FAILURES")"
         if [ "${#PROVIDER_FAILURES}" -gt 16000 ]; then
           PROVIDER_FAILURES="${PROVIDER_FAILURES: -16000}"
@@ -1753,8 +1754,6 @@ if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed || "$OUTCOME" = r
           fi
         fi
       fi
-    fi
-    if ! is_provider_limit_message "$AGENT_MESSAGE" && [ -n "$PROVIDER_FAILURES" ]; then
       AGENT_MESSAGE="Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: $PROVIDER_FAILURES"
     fi
     AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"

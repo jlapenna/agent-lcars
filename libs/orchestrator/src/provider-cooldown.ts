@@ -16,6 +16,8 @@ const MONTHS = [
   'Nov',
   'Dec',
 ];
+const CODEX_PROVIDER_FAILURE_PREFIX =
+  'Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: ';
 const CODEX_RESET_PATTERN =
   /\b[Tt]ry again at (?:([A-Z][a-z]{2}) (\d{1,2})(?:st|nd|rd|th)?, (\d{4}) )?(\d{1,2}):(\d{2}) (AM|PM)( \(UTC\))?(?=\.(?:\s|$)|\s|$)/gu;
 
@@ -56,10 +58,15 @@ function claudeReset(message: string, now: number): number | undefined {
   return reset > now && reset - now <= MAX_RESET_MS ? reset : undefined;
 }
 
-/** Only a runner-pinned `(UTC)` Codex reset with a full calendar date supplies a longer hold. */
+/** Only a runner-captured CLI failure event or stderr quota banner with a
+ * runner-pinned `(UTC)` full calendar date supplies a longer Codex hold; an
+ * assistant final message alone (`LAST_MESSAGE_FILE`) never carries the
+ * retained-failure envelope and stays on the 15-minute probe. */
 function codexReset(message: string, now: number): number | undefined {
+  if (!message.startsWith(CODEX_PROVIDER_FAILURE_PREFIX)) return undefined;
+  const events = message.slice(CODEX_PROVIDER_FAILURE_PREFIX.length);
   let reset: number | undefined;
-  for (const match of message.matchAll(CODEX_RESET_PATTERN)) {
+  for (const match of events.matchAll(CODEX_RESET_PATTERN)) {
     if (
       match[1] === undefined ||
       match[2] === undefined ||

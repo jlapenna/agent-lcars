@@ -17,6 +17,9 @@ const run = {
   },
 };
 
+const CODEX_FAILURE_PREFIX =
+  'Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: ';
+
 describe('provider quota holds', () => {
   it('never derives a cooldown from an unclassified failure, even with quota text', () => {
     for (const pipeline of ['claude', 'codex']) {
@@ -64,37 +67,37 @@ describe('provider quota holds', () => {
 
   it.each([
     [
-      'You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM (UTC).',
+      `${CODEX_FAILURE_PREFIX}You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM (UTC).`,
       '2026-11-09T01:00:00.000Z',
       '2026-11-11T06:48:00.000Z',
     ],
     [
-      "You've hit your usage limit. Try again at Jan 1st, 2027 12:00 AM (UTC).",
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Jan 1st, 2027 12:00 AM (UTC).`,
       '2026-12-31T22:00:00.000Z',
       '2027-01-01T00:00:00.000Z',
     ],
     [
-      "You've hit your usage limit. Try again at Jan 2nd, 2027 12:30 PM (UTC).",
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Jan 2nd, 2027 12:30 PM (UTC).`,
       '2026-12-31T22:00:00.000Z',
       '2027-01-02T12:30:00.000Z',
     ],
     [
-      "You've hit your usage limit. Try again at Jan 3rd, 2027 11:59 PM (UTC).",
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Jan 3rd, 2027 11:59 PM (UTC).`,
       '2026-12-31T22:00:00.000Z',
       '2027-01-03T23:59:00.000Z',
     ],
     [
-      "You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Nov 9, 2026 6:48 AM (UTC).",
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Nov 9, 2026 6:48 AM (UTC).`,
       '2026-11-09T01:00:00.000Z',
       '2026-11-09T06:48:00.000Z',
     ],
     [
-      'Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM (UTC).\nYou’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM (UTC).',
+      `${CODEX_FAILURE_PREFIX}You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM (UTC).\nYou’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM (UTC).`,
       '2026-11-09T01:00:00.000Z',
       '2026-11-11T06:48:00.000Z',
     ],
   ])(
-    'uses a runner-pinned Codex UTC reset (%s)',
+    'uses a runner-captured Codex CLI UTC reset (%s)',
     (message, updatedAt, expiresAt) => {
       expect(
         providerCooldownForRun({
@@ -109,48 +112,56 @@ describe('provider quota holds', () => {
 
   it.each([
     [
+      'assistant final-message banner without CLI failure envelope',
+      "You've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM.",
+    ],
+    [
+      'assistant final-message banner quoting literal (UTC) without CLI failure envelope',
+      "You've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (UTC).",
+    ],
+    [
       'zone-less full date',
-      'You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM.',
+      `${CODEX_FAILURE_PREFIX}You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM.`,
     ],
     [
       'non-UTC zone',
-      'You’ve hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (PST).',
+      `${CODEX_FAILURE_PREFIX}You’ve hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (PST).`,
     ],
     [
       'date-less same-day time',
-      "You've hit your usage limit. Try again at 6:48 AM (UTC).",
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at 6:48 AM (UTC).`,
     ],
     [
       'expired instant',
-      "You've hit your usage limit. Try again at Nov 9th, 2026 1:00 AM (UTC).",
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Nov 9th, 2026 1:00 AM (UTC).`,
     ],
     [
       'past MAX_RESET_MS',
-      "You've hit your usage limit. Try again at Nov 16th, 2026 1:01 AM (UTC).",
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Nov 16th, 2026 1:01 AM (UTC).`,
     ],
     [
       'invalid calendar date',
-      "You've hit your usage limit. Try again at Feb 30th, 2026 6:48 AM (UTC).",
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Feb 30th, 2026 6:48 AM (UTC).`,
     ],
     [
       'invalid month',
-      "You've hit your usage limit. Try again at Foo 11th, 2026 6:48 AM (UTC).",
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Foo 11th, 2026 6:48 AM (UTC).`,
     ],
     [
       'zero hour',
-      "You've hit your usage limit. Try again at Nov 11th, 2026 0:30 AM (UTC).",
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Nov 11th, 2026 0:30 AM (UTC).`,
     ],
     [
       '24-hour clock value',
-      "You've hit your usage limit. Try again at Nov 11th, 2026 13:00 PM (UTC).",
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Nov 11th, 2026 13:00 PM (UTC).`,
     ],
     [
       'conflicting duplicate events',
-      "You've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (UTC).\nYou've hit your usage limit. Try again at Nov 11th, 2026 6:49 AM (UTC).",
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (UTC).\nYou've hit your usage limit. Try again at Nov 11th, 2026 6:49 AM (UTC).`,
     ],
     [
       'mixed zoned and zone-less events',
-      "You've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (UTC).\nYou've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM.",
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (UTC).\nYou've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM.`,
     ],
   ])(
     'falls back to a bounded probe when Codex reset is %s',
