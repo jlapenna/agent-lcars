@@ -290,8 +290,8 @@ branch on the reference format:
   those two marker lines, then give the report as your final response. It is stored whole however long it is (the only bound is
   4 MiB of UTF-8; a longer one is refused, never truncated). Only a report, park or no-op settles such an item; a PR fails it.
   In a reply round that resumes the earlier conversation, a follow-up on a
-  delivered report gets a direct, self-contained answer as that final
-  response, not a redone report; a reply that answers a parked question
+  delivered report gets a self-contained answer in the saved body, including
+  every changed finding; a reply that answers a parked question
   finishes the full report. A reply round without the earlier conversation
   produces the full report, addressing the reply within it. The item settles
   done, not

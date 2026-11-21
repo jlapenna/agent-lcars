@@ -678,9 +678,8 @@ that file for a pull-request outcome."
       report_followup="
 This round follows a human reply. If you already delivered the report and
 the reply asks about it, answer that follow-up directly instead of redoing
-the whole report. Your final response replaces the report the requester
-reads, so make it self-contained: the answer, plus any earlier finding it
-changes. If the reply answers a question you parked on, finish the full
+the whole report. The saved body replaces the report the requester reads.
+Write the answer and every changed finding in that body to make it self-contained. If the reply answers a question you parked on, finish the full
 report."
     elif [ "$MODE" = reply ]; then
       report_followup="
@@ -1744,6 +1743,10 @@ fi
 message_file="$RUNNER_TEMP/complete-message.txt"
 if [ "$OUTCOME" = report ]; then
   message_file="$REPORT_MESSAGE_FILE"
+  if [ "$message_file" != "${LAST_MESSAGE_FILE:-}" ]; then
+    digest="$(sha256sum < "$message_file")"
+    printf 'Submitted report attempt=%s sha256=%s\n' "$ATTEMPT_ID" "${digest%% *}"
+  fi
 else
   printf '%s' "$AGENT_MESSAGE" > "$message_file"
 fi

@@ -148,15 +148,17 @@ path, not as one green light:
   `result.summary: pull-request`, and PR `result.ref` record publication.
   Independently confirm the merge on the PR, then that the binding reached
   `state: complete`, before treating the Task as complete.
-- **Report path:** verify the accepted Run outcome is `report`. In the
-  attempt's outcome file, locate the report marker and its matching claim
-  followed by the complete report. Compare the bytes after the second
-  marker's newline with the UTF-8 bytes of the stored Run result message,
-  including trailing newlines. When the provider subsequently responds with
-  a different final turn, the stored message must match the file body.
-  A two-line legacy record exercises only the final-turn fallback. If the
-  saved body or a differing final turn is unavailable, record which check
-  remains unverified.
+- **Report path:** follow the exact worker pod's log while it runs. Before
+  posting completion, the runner logs `Submitted report attempt=<id> sha256=<digest>`
+  for the saved body. Retain this line with the Run ID and pod UID. The log
+  contains only the digest and attempt ID. After settlement, check that the
+  same attempt finished with outcome `report`. Hash the full UTF-8
+  `result.message` from the single-item API response, for example with
+  `jq -je '.runs[] | select(.runId==$run) | .result.message' --arg run "$run" item.json | sha256sum`.
+  The hashes must match, including trailing newlines. When a later provider
+  turn differs, this comparison verifies that the saved body survived.
+  Legacy two-line records produce no saved-body digest. Record any missing
+  evidence before treating a live check as verified.
 
 Then let normal delivery and cleanup take their course. Do not close useful
 delivery to end the run sooner.
