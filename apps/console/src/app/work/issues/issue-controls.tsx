@@ -89,7 +89,7 @@ export function RunIssue({
   choices: { repo: string; pipeline: WorkSpec['pipeline'] }[];
 }) {
   const router = useRouter();
-  const [repo, setRepo] = useState(repository ?? '');
+  const [selectedRepo, setSelectedRepo] = useState('');
   const [selectedPipeline, setPipeline] =
     useState<WorkSpec['pipeline']>('codex');
   const [error, setError] = useState('');
@@ -98,6 +98,7 @@ export function RunIssue({
     undefined,
   );
   const repos = [...new Set(choices.map((choice) => choice.repo))];
+  const repo = repository ?? (repos.includes(selectedRepo) ? selectedRepo : '');
   const pipelines = [
     ...new Set(
       choices
@@ -115,7 +116,7 @@ export function RunIssue({
           <NativeSelect
             aria-label="Target repository"
             value={repo}
-            onChange={(event) => setRepo(event.currentTarget.value)}
+            onChange={(event) => setSelectedRepo(event.currentTarget.value)}
             data={[
               { value: '', label: 'Select repository' },
               ...repos.map((value) => ({ value, label: value })),

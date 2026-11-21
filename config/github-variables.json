@@ -75,10 +75,6 @@
         "ONBOARDING_AUDIT_REGISTRATIONS": {
           "class": "shared-input",
           "required": false
-        },
-        "AGENT_LCARS_RUNNER_APP_CLIENT_ID": {
-          "class": "shared-input",
-          "required": false
         }
       }
     },

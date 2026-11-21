@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { gzipSync } from 'node:zlib';
 
 import {
   createLiteLLMProxy,
@@ -128,6 +129,54 @@ test('preserves inference when deployment metadata is unavailable', async () => 
     });
     assert.equal(response.status, 200);
     assert.equal(await response.text(), '{"ok":true}');
+  } finally {
+    await Promise.all([
+      new Promise((resolve) => upstream.close(resolve)),
+      new Promise((resolve) => proxy.close(resolve)),
+    ]);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('strips upstream content-encoding and content-length when streaming decoded gzip bodies', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'opencode-litellm-proxy-'));
+  const outputFile = join(root, 'resolved-model');
+  const payload = JSON.stringify({
+    id: 'chatcmpl-1',
+    choices: [{ message: { content: 'decoded-ok' } }],
+  });
+  const compressed = gzipSync(Buffer.from(payload, 'utf8'));
+  const upstream = createServer((request, response) => {
+    if (request.url === '/model/info') {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
+    response.writeHead(200, {
+      'Content-Encoding': 'gzip',
+      'Content-Length': String(compressed.byteLength),
+      'Content-Type': 'application/json',
+      'x-litellm-model-id': 'deployment-1',
+    });
+    response.end(compressed);
+  });
+  const upstreamURL = await listen(upstream);
+  const proxy = createLiteLLMProxy({ upstream: upstreamURL, outputFile });
+  const proxyURL = await listen(proxy);
+
+  try {
+    const response = await fetch(`${proxyURL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer virtual-key',
+        'content-type': 'application/json',
+      },
+      body: '{"model":"default"}',
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-encoding'), null);
+    assert.equal(response.headers.get('content-length'), null);
+    assert.deepEqual(await response.json(), JSON.parse(payload));
   } finally {
     await Promise.all([
       new Promise((resolve) => upstream.close(resolve)),
