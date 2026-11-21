@@ -16,12 +16,18 @@ HELPER = Path(__file__).with_name("drain-hook-test-clients.py")
 
 
 class DrainTests(unittest.TestCase):
-    def child(self, scratch, duration, extra_args=(), extra_env=None):
+    def child(self, scratch, duration, extra_args=(), extra_env=None, comm_override=None):
+        rename = ""
+        if comm_override is not None:
+            rename = (
+                "import ctypes; "
+                f"ctypes.CDLL(None).prctl(15, {comm_override.encode('utf-8')!r}, 0, 0, 0); "
+            )
         child = subprocess.Popen(
             [
                 sys.executable,
                 "-c",
-                f"import time; print('ready', flush=True); time.sleep({duration})",
+                f"{rename}import time; print('ready', flush=True); time.sleep({duration})",
                 *extra_args,
             ],
             env={**os.environ, **(extra_env or {}), "TMPDIR": str(scratch)},
@@ -55,8 +61,8 @@ class DrainTests(unittest.TestCase):
                 60,
                 extra_args=("private-arg-secret",),
                 extra_env={"PRIVATE_ENV": "private-env-secret"},
+                comm_override="sk-comm-secret1",
             )
-            expected_comm = Path(f"/proc/{owned.pid}/comm").read_text().strip()[:16]
             sentinel = Path(scratch) / "client-state"
             sentinel.write_text("retained")
             diagnostics = io.StringIO()
@@ -73,11 +79,62 @@ class DrainTests(unittest.TestCase):
                 runpy.run_path(str(HELPER), run_name="__main__")
             stderr = diagnostics.getvalue()
             self.assertEqual(result.exception.code, 1)
-            self.assertIn(f"reason=deadline processes={expected_comm}", stderr)
+            self.assertIn("reason=deadline processes=python3", stderr)
+            self.assertNotIn("sk-comm-secret1", stderr)
             self.assertNotIn("private-arg-secret", stderr)
             self.assertNotIn("private-env-secret", stderr)
             self.assertIsNone(owned.poll())
             self.assertEqual(sentinel.read_text(), "retained")
+
+    def test_unrecognized_comm_without_exe_falls_back_to_unknown_and_checks_pidfd(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            owned = self.child(
+                scratch,
+                60,
+                comm_override="sk-comm-secret1",
+            )
+            diagnostics = io.StringIO()
+            clean_env = {
+                key: value
+                for key, value in os.environ.items()
+                if key not in ("HOOK_DRAIN_DEADLINE_SECONDS", "HOOK_SMOKE_DEGRADE_DEADLINE")
+            }
+            real_readlink = os.readlink
+
+            def hide_exe(target, *args, **kwargs):
+                if str(target).endswith("/exe"):
+                    raise PermissionError(13, "exe hidden")
+                return real_readlink(target, *args, **kwargs)
+
+            with mock.patch.dict(os.environ, clean_env, clear=True), \
+                    mock.patch.object(sys, "argv", [str(HELPER), scratch]), \
+                    mock.patch("os.readlink", side_effect=hide_exe), \
+                    mock.patch("time.monotonic", side_effect=[0, 31]), \
+                    contextlib.redirect_stderr(diagnostics), \
+                    self.assertRaises(SystemExit) as result:
+                runpy.run_path(str(HELPER), run_name="__main__")
+            stderr = diagnostics.getvalue()
+            self.assertEqual(result.exception.code, 1)
+            self.assertIn("reason=deadline processes=unknown", stderr)
+            self.assertNotIn("sk-comm-secret1", stderr)
+            self.assertIsNone(owned.poll())
+
+            # Also verify snapshot_label rejects a post-exit/recycled snapshot when
+            # pidfd_send_signal reports ESRCH after reading stat.
+            fake_proc = Path(scratch) / "fake-proc"
+            fake_proc.mkdir()
+            (fake_proc / "stat").write_text("999 (codex) S 1 " + " ".join(["0"] * 19) + " 42 0\n")
+            namespace = {}
+            for line in HELPER.read_text().splitlines():
+                if line.startswith("try:"):
+                    break
+                namespace.setdefault("_src", []).append(line)
+            exec("\n".join(namespace["_src"]), namespace)
+            with mock.patch("signal.pidfd_send_signal", side_effect=ProcessLookupError(3, "ESRCH")):
+                self.assertEqual(
+                    namespace["snapshot_label"](fake_proc, "42", 99, "git"),
+                    "git",
+                )
 
     def test_degrade_deadline_exits_75_and_honors_configured_deadline(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -86,8 +143,8 @@ class DrainTests(unittest.TestCase):
                 60,
                 extra_args=("private-arg-secret",),
                 extra_env={"PRIVATE_ENV": "private-env-secret"},
+                comm_override="sk-comm-secret1",
             )
-            expected_comm = Path(f"/proc/{owned.pid}/comm").read_text().strip()[:16]
             sentinel = Path(scratch) / "client-state"
             sentinel.write_text("retained")
             result = subprocess.run(
@@ -105,8 +162,9 @@ class DrainTests(unittest.TestCase):
             self.assertEqual(
                 result.stderr.strip(),
                 "hook smoke cleanup: process drainage refused; retaining private scratch; "
-                f"exception=RuntimeError errno=none reason=deadline processes={expected_comm}",
+                "exception=RuntimeError errno=none reason=deadline processes=python3",
             )
+            self.assertNotIn("sk-comm-secret1", result.stderr)
             self.assertNotIn("private-arg-secret", result.stderr)
             self.assertNotIn("private-env-secret", result.stderr)
             self.assertIsNone(owned.poll())

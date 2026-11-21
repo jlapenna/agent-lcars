@@ -1,7 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -606,7 +605,7 @@ const injectedMode=fs.existsSync(injectionFile)?fs.readFileSync(injectionFile,'u
 const launcher=fs.readFileSync(path.join(process.env.PATH.split(':')[0],'lcars'),'utf8');
 const runtimeLib=launcher.match(/exec node (.+)\\/lcars-session-title\\.cjs/)[1];
 if(!injectedMode){
-const child=childProc.spawn(process.execPath,['-e','setInterval(() => {}, 1000)','private-arg-secret'],{
+const child=childProc.spawn(process.execPath,['-e','process.title="sk-comm-secret1"; setInterval(() => {}, 1000)','private-arg-secret'],{
 detached:true,stdio:'ignore',env:{...process.env,PRIVATE_ENV:'private-env-secret'}
 });
 const start=fs.readFileSync('/proc/'+child.pid+'/stat','utf8').split(') ')[1].split(' ')[19];
@@ -620,11 +619,8 @@ const injectedMode=fs.existsSync(injectionFile)?fs.readFileSync(injectionFile,'u
 if(injectedMode==='removal'){
 const launcher=fs.readFileSync(path.join(process.env.PATH.split(':')[0],'lcars'),'utf8');
 const runtimeLib=launcher.match(/exec node (.+)\\/lcars-session-title\\.cjs/)[1];
-const locked=path.join(process.env.TMPDIR,'locked-subdir');
-fs.mkdirSync(locked,{recursive:true});
-fs.writeFileSync(path.join(locked,'retained'),'locked');
-fs.chmodSync(locked,0o500);
-fs.writeFileSync(${JSON.stringify(writerIdentity)},JSON.stringify({pid:0,start:'none',lib:runtimeLib,tmp:process.env.TMPDIR,locked}));
+fs.writeFileSync(${JSON.stringify(join(root, 'fail-rm-target'))},process.env.TMPDIR);
+fs.writeFileSync(${JSON.stringify(writerIdentity)},JSON.stringify({pid:0,start:'none',lib:runtimeLib,tmp:process.env.TMPDIR}));
 }
 if(injectedMode==='degraded-marker'){
 const launcher=fs.readFileSync(path.join(process.env.PATH.split(':')[0],'lcars'),'utf8');
@@ -666,6 +662,30 @@ response.resume();response.on('end',resolve);
   );
   for (const command of ['claude', 'codex', 'opencode'])
     symlinkSync(fixture, join(bin, command));
+  const failRmTargetFile = join(root, 'fail-rm-target');
+  writeFileSync(
+    join(bin, 'rm'),
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const targetFile = ${JSON.stringify(failRmTargetFile)};
+if (fs.existsSync(targetFile)) {
+  const target = fs.readFileSync(targetFile, 'utf8').trim();
+  if (target && process.argv.slice(2).includes(target)) {
+    process.stderr.write('rm: injected scratch removal failure\\n');
+    process.exit(1);
+  }
+}
+const restPath = (process.env.PATH || '').split(':').filter((dir) => dir !== ${JSON.stringify(bin)}).join(':');
+const realRm = restPath.split(':').map((dir) => path.resolve(dir, 'rm')).find((candidate) => {
+  try { fs.accessSync(candidate, fs.constants.X_OK); return fs.statSync(candidate).isFile(); } catch { return false; }
+}) || '/bin/rm';
+const res = spawnSync(realRm, process.argv.slice(2), { stdio: 'inherit', env: { ...process.env, PATH: restPath } });
+process.exit(res.status ?? 1);
+`,
+    { mode: 0o755 },
+  );
   const bakedStore = join(fixtureHome, '.local/share/opencode');
   mkdirSync(bakedStore, { recursive: true });
   const store = spawnSync(
@@ -714,8 +734,7 @@ response.resume();response.on('end',resolve);
         /^hook smoke cleanup: process drainage refused; retaining private scratch; exception=RuntimeError errno=none reason=deadline processes=([A-Za-z0-9._,?-]+)$/gm,
       ),
     ];
-    expect(drainMatches).toHaveLength(1);
-    expect(drainMatches[0]?.[1]).toMatch(/^node(?:-MainThread)?$/);
+    expect(drainMatches.map((match) => match[1])).toEqual(['node']);
     expect(result.stderr).toContain(
       'hook smoke cleanup: retaining private bundles after refused smoke',
     );
@@ -764,6 +783,7 @@ except (ProcessLookupError,FileNotFoundError):pass`,
     expect(readdirSync(scratch).length).toBeGreaterThan(0);
     killHeldWriter();
     for (const privateValue of [
+      'sk-comm-secret1',
       'private-arg-secret',
       'private-env-secret',
       'private-query',
@@ -778,7 +798,8 @@ except (ProcessLookupError,FileNotFoundError):pass`,
     // Propagate cleanup filesystem failures even when cleanup runs inside an
     // `if` conditional (which suppresses bash errexit inside the function):
     // 1. Failed scratch removal after a clean drain must exit nonzero without
-    //    writing .hook-smoke-drained (retaining bundles).
+    //    writing .hook-smoke-drained (retaining bundles), independent of
+    //    CAP_DAC_OVERRIDE / root privileges.
     const injectionControl = join(root, 'inject-cleanup-failure');
     writeFileSync(injectionControl, 'removal\n');
     const removalFailure = spawnSync(
@@ -799,9 +820,10 @@ except (ProcessLookupError,FileNotFoundError):pass`,
         timeout: 60_000,
       },
     );
+    rmSync(failRmTargetFile, { force: true });
     const removalIdentity = JSON.parse(readFileSync(writerIdentity, 'utf8'));
-    chmodSync(removalIdentity.locked, 0o700);
     expect(removalFailure.status).toBe(1);
+    expect(existsSync(removalIdentity.tmp)).toBe(true);
     expect(existsSync(join(removalIdentity.lib, '.hook-smoke-drained'))).toBe(
       false,
     );
@@ -860,7 +882,6 @@ except FileNotFoundError:pass`,
       );
       ownedCleanupStatus = cleanup.status ?? 1;
     }
-    spawnSync('chmod', ['-R', 'u+rwx', root]);
     expect(ownedCleanupStatus).toBe(0);
     rmSync(root, { recursive: true, force: true });
   }
