@@ -1401,7 +1401,7 @@ else
   export OPENCODE_CONFIG="$OPENCODE_CONFIG_DIR/opencode.json"
   if [ "$MODE" = review ]; then
     # OpenCode loads inline configuration after the reviewed project's config.
-    opencode_review_config=$(jq -c '.agent.general += {disable: false, steps: 8}' <<< "${OPENCODE_CONFIG_CONTENT:-null}")
+    opencode_review_config=$(jq -c '.agent.general += {disable: false, steps: 8} | .agent.explore.steps = 8' <<< "${OPENCODE_CONFIG_CONTENT:-null}")
     export OPENCODE_CONFIG_CONTENT="$opencode_review_config"
   fi
   worker_policy_bootstrap "$OPENCODE_CONFIG"

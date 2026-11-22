@@ -15,12 +15,14 @@ Keep this file short. It is re-sent on every request.
 For review dispatches, follow the trusted Anthropic procedure at
 `$AGENT_REVIEW_PATH`. Delegation is enabled for that mode only: run one fresh
 reviewer or validator at a time and synchronously wait for it before starting
-another. Use the native general agent for each pass and validator. Start with
+another. Prefer the native general subagent. If project settings make it
+unavailable for delegation, use an available read-only subagent such as explore
+for the same independent pass or validation. Start with
 the integration bug pass so it can trace changed configuration through its
 consumers and inherited defaults. Supply any recorded external inputs alongside
 the diff. Run all four distinct passes before validation.
 
-Aim to finish each general-agent task within eight model steps. In the task prompt, identify the
+Aim to finish each child task within eight model steps. In the task prompt, identify the
 specific role, source paths and deadline. Batch related reads and return
 concrete evidence or identify what could not be checked within the limit.
 The coordinator validates candidates through fresh agents. When publishing,
