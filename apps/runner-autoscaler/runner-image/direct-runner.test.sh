@@ -2291,7 +2291,7 @@ grep -Fq 'the Anthropic review procedure at $AGENT_REVIEW_PATH' "$OPENCODE_ARGS_
   fail "github review: provider was not directed to the trusted review procedure"
 jq -e '.agent["lcars-review"].steps == 8 and .agent["lcars-review"].mode == "subagent"' "$OPENCODE_ENV_LOG.config" >/dev/null ||
   fail "github review: missing inline general-agent finish reminder"
-jq -e '.permission.task["lcars-review"] == "allow"' "$OPENCODE_ENV_LOG.config" >/dev/null ||
+jq -e '.default_agent == "lcars-review-coordinator" and .agent[.default_agent].permission.task["lcars-review"] == "allow"' "$OPENCODE_ENV_LOG.config" >/dev/null ||
   fail "github review: OpenCode independent reviewers remain disabled"
 jq -e '.provider.homelab.models.default.options.reasoningEffort == "medium"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
   fail "github review: OpenCode review reasoning budget was not configured"
