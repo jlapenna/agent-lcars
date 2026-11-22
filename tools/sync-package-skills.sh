@@ -15,6 +15,10 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+stage=""
+cleanup_stage() { if [ -n "$stage" ]; then rm -rf "$stage"; fi; }
+trap cleanup_stage EXIT
+
 # <package> <skill directory under the package's skills/>
 sync_skill() {
   local package="$1" skill="$2"
@@ -23,23 +27,29 @@ sync_skill() {
   local version
   version="$(node -p "require('./node_modules/$package/package.json').version")"
 
-  rm -rf "$dest"
+  # Stage and verify the rewritten copy before it replaces the installed
+  # skill, so a failed check never leaves an unpinned copy for agents to load.
   mkdir -p .agents/skills
-  cp -RL "$src" "$dest"
+  stage="$(mktemp -d .agents/skills/.sync-XXXXXX)"
+  cp -RL "$src" "$stage/$skill"
 
   local runners='(npx -y |npx |pnpx |pnpm dlx |pnpm exec |bunx |yarn dlx )'
   local files=()
-  mapfile -d '' files < <(grep -rlZF -- "$package@latest" "$dest" || true)
+  mapfile -d '' files < <(grep -rlZF -- "$package@latest" "$stage/$skill" || true)
   if [ "${#files[@]}" -gt 0 ]; then
     sed -E -i \
       -e "s#(DISABLE_TELEMETRY=1 )?$runners$package@latest#DISABLE_TELEMETRY=1 \\2$package@$version#g" \
       -e "s#$package@latest#$package@$version#g" \
       "${files[@]}"
   fi
-  if grep -rqF -- "$package@latest" "$dest"; then
-    echo "sync-package-skills: unpinned $package@latest remains in $dest" >&2
+  if grep -rqF -- "$package@latest" "$stage/$skill"; then
+    rm -rf "$dest"
+    echo "sync-package-skills: unpinned $package@latest remains in $skill; not installed" >&2
     exit 1
   fi
+
+  rm -rf "$dest"
+  mv "$stage/$skill" "$dest"
 }
 
 sync_skill modern-web-guidance modern-web-guidance
