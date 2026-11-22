@@ -901,7 +901,7 @@ RUN claude plugin marketplace add /opt/repo-tools && \
 # the repo-tools layer, so each repo-tools-driven rebuild refreshes them.
 # Codex dispatches copy this ~/.codex; OpenCode (agents/opencode/opencode.json)
 # reads the skills from the Claude marketplace checkouts checked below, and
-# Antigravity gets copies of them in its own skills directory.
+# Antigravity and Goose (which discovers ~/.agents/skills) get copies.
 RUN codex plugin marketplace add GoogleChrome/modern-web-guidance && \
     codex plugin marketplace add JetBrains/go-modern-guidelines && \
     codex plugin add modern-web-guidance@googlechrome && \
@@ -912,11 +912,12 @@ RUN claude plugin marketplace add GoogleChrome/modern-web-guidance && \
     claude plugin install modern-go-guidelines@goland-claude-marketplace && \
     test -f /home/runner/.claude/plugins/marketplaces/googlechrome/skills/modern-web-guidance/SKILL.md && \
     test -f /home/runner/.claude/plugins/marketplaces/goland-claude-marketplace/plugin/skills/use-modern-go/SKILL.md && \
-    mkdir -p /home/runner/.gemini/antigravity-cli/skills && \
+    mkdir -p /home/runner/.gemini/antigravity-cli/skills /home/runner/.agents/skills && \
     for skill in googlechrome/skills/modern-web-guidance googlechrome/skills/chrome-extensions \
       goland-claude-marketplace/plugin/skills/use-modern-go; do \
       src="/home/runner/.claude/plugins/marketplaces/$skill"; \
-      test -f "$src/SKILL.md" && cp -R "$src" /home/runner/.gemini/antigravity-cli/skills/ || exit 1; \
+      test -f "$src/SKILL.md" && cp -R "$src" /home/runner/.gemini/antigravity-cli/skills/ && \
+        cp -R "$src" /home/runner/.agents/skills/ || exit 1; \
     done
 
 # Stage the Hindsight coding-agent runtime and register hooks/MCP/skills for
