@@ -123,27 +123,36 @@ function prFromDeliverables(doc: CliSessionDoc): JoinedPr | undefined {
 }
 
 /**
- * Leaves a pane with the session most recently active in it.
+ * The sessions that hold their herdr pane: for each pane, the one seen in it
+ * most recently.
  *
  * A terminal outlives its sessions. One that died without recording its end
  * stays `idle` for an hour and still names the pane, while the next session
  * started there names it too; so does every session after a herdr-core
  * restart hands the same addresses out again. Both links would open the
- * same pane, which now shows only the newer session. `sessions` is ordered
- * most recently active first.
+ * same pane, which now shows only the newer session.
+ *
+ * "Seen" is the later of a session's last activity and its last observation,
+ * so a session resumed a moment ago holds the pane before it has taken a
+ * turn. Sessions that have recorded their end count as well: one that left
+ * the pane cleanly still took it from whoever was there before, and no
+ * older session gets the link back.
  */
-function withOnePaneOwner(sessions: CliSession[]): CliSession[] {
-  const owned = new Set<string>();
-  return sessions.map((session) => {
-    if (!session.herdrPaneId) return session;
-    const pane = `${session.host ?? ''}\u0000${session.herdrPaneId}`;
-    if (!owned.has(pane)) {
-      owned.add(pane);
-      return session;
+function paneHolders(docs: readonly CliSessionDoc[]): Set<string> {
+  const latest = new Map<string, { sessionId: string; seenAt: string }>();
+  for (const doc of docs) {
+    if (!doc.herdrPaneId) continue;
+    const pane = `${doc.host ?? ''}\u0000${doc.herdrPaneId}`;
+    const seenAt =
+      doc.observedAt !== undefined && doc.observedAt > doc.lastActivityAt
+        ? doc.observedAt
+        : doc.lastActivityAt;
+    const holder = latest.get(pane);
+    if (!holder || seenAt > holder.seenAt) {
+      latest.set(pane, { sessionId: doc.sessionId, seenAt });
     }
-    const { herdrPaneId: _left, ...rest } = session;
-    return rest;
-  });
+  }
+  return new Set([...latest.values()].map((holder) => holder.sessionId));
 }
 
 export interface CliSessionsResult {
@@ -252,12 +261,17 @@ export async function getCliSessions({
   }
 
   const nowIso = now.toISOString();
+  const holders = paneHolders(docs);
   const sessions = docs.map((doc) => {
-    const session = toCliSession(doc, nowIso);
+    const { herdrPaneId, ...session } = toCliSession(doc, nowIso);
     const pr = prFromDeliverables(doc);
-    return { ...session, ...(pr === undefined ? {} : { pr }) };
+    return {
+      ...session,
+      ...(herdrPaneId && holders.has(doc.sessionId) ? { herdrPaneId } : {}),
+      ...(pr === undefined ? {} : { pr }),
+    };
   });
 
   sessions.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
-  return { sessions: withOnePaneOwner(sessions), warnings };
+  return { sessions, warnings };
 }

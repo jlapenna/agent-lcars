@@ -57,6 +57,12 @@ Decisions the prototype already carries:
   total leads the counts. The prototype draws both cases as two rounds in a
   panel below Recent work; production shows them on the Work item's own
   page.
+- A CLI session row offers **Open live ↗** beside **Open session** when the
+  session runs in a terminal its host's viewer can show (a herdr-core pane on
+  a host with a configured Ovis). It opens that pane in a new tab, straight
+  from the browser to the host, so it is one tap from the list on a phone. A
+  row without such a terminal keeps the single action. When two sessions name
+  one pane, only the one most recently seen in it carries the link.
 - Bridge includes recent event-driven triage and summaries, linking into Work.
   Work exposes an event-driven filter and source activity on detail pages; source
   revisions represent admitted work, not every raw webhook delivery.
