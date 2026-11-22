@@ -8,7 +8,9 @@
 //   release   null, or { body, draft, assets: [{ id, name }] }
 //   sums      content of the published SHA256SUMS asset
 //   compare   answer to a compare call's `.status`
-//   fail      names of calls that fail: 'read', 'compare', or 'upload:<name>'
+//   jobs      the CI run's jobs, [{ name, conclusion }]
+//   fail      names of calls that fail: 'read', 'compare', 'jobs', 'rename',
+//             or 'upload:<name>'
 //   nextId    next asset id
 // Calls are appended to FAKE_GH_LOG, one line each.
 'use strict';
@@ -60,6 +62,9 @@ if (args[0] === 'api') {
     // GitHub does not find a draft by its tag.
     if (!state.release || state.release.draft) die('Not Found (HTTP 404)');
     if (!silent) respond(state.release, jq);
+  } else if (/\/actions\/runs\/\d+\/jobs/.test(route)) {
+    if (failing('jobs')) die('Service Unavailable (HTTP 503)');
+    respond({ jobs: state.jobs ?? [] }, jq);
   } else if (/\/compare\//.test(route)) {
     if (failing('compare')) die('Not Found (HTTP 404)');
     respond({ status: state.compare }, jq);
@@ -72,6 +77,7 @@ if (args[0] === 'api') {
         (entry) => entry !== asset,
       );
     } else if (method === 'PATCH') {
+      if (failing('rename')) die('Service Unavailable (HTTP 503)');
       const name = field.replace(/^name=/, '');
       if (state.release.assets.some((entry) => entry.name === name))
         die('Validation Failed (HTTP 422)');

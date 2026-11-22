@@ -21,18 +21,57 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build and verify the archive
-    # From CI: only a `main` revision whose whole run passed. A cancelled or
-    # failed run publishes nothing; the next green one builds its own, newer
-    # head. A manual dispatch builds the head of `main` as it is, without
-    # waiting for its CI, like Deploy console's dispatch.
+  # CI's run conclusion is a rollup of every job in it. A non-required job
+  # that times out reports the whole run as cancelled even when Verify, the
+  # check that gated the merge, passed (#543, and Deploy console's gate).
+  # Publishing on the rollup would then skip a merged CLI change with every
+  # job of this workflow green. Ask for Verify's own conclusion instead.
+  gate:
+    name: Check that Verify passed
     if: |
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.conclusion == 'success')
+       github.event.workflow_run.head_branch == 'main')
+    # This GitHub-only check must not wait for fleet-runner placement.
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      verify_passed: ${{ steps.check.outputs.verify_passed }}
+    steps:
+      - name: Read Verify's conclusion
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          # A manual dispatch builds the head of main as it is, without
+          # waiting for its CI, like Deploy console's dispatch.
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            echo "verify_passed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A read that fails stops the job (errexit); it is not "did not pass".
+          conclusion="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.name == "Verify") | .conclusion] | first // ""')"
+          if [ "$conclusion" = success ]; then
+            echo "verify_passed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Not a failure of this workflow: CI's own run already shows it,
+          # and the next main revision that passes builds its own, newer head.
+          echo "verify_passed=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::Verify did not pass for CI run $RUN_ID at $HEAD_SHA (conclusion: '${conclusion:-missing}'); nothing to publish."
+
+  build:
+    name: Build and verify the archive
+    needs: gate
+    if: needs.gate.outputs.verify_passed == 'true'
     # Three esbuild bundles and a dependency install: inside the hosted
     # lane's 1 CPU / 5 GiB / 14 GiB / 15-minute envelope, like Deploy
     # console's build. This job has no write access to the repository.
@@ -175,7 +214,23 @@ jobs:
           if [ -n "$old_id" ]; then
             gh api --method DELETE "$release_api/assets/$old_id" --silent
           fi
-          gh api --method PATCH "$release_api/assets/$new_id" -f name="$asset" --silent
+          # Between these two calls the archive has no asset under its name.
+          # Keep that as short as it can be: try the rename again before
+          # giving up. If it still fails, the next run finds the uploaded
+          # copy and finishes.
+          renamed=false
+          for attempt in 1 2 3; do
+            if gh api --method PATCH "$release_api/assets/$new_id" -f name="$asset" --silent; then
+              renamed=true
+              break
+            fi
+            echo "::warning::Renaming the uploaded archive failed (attempt $attempt of 3)."
+            sleep "$attempt"
+          done
+          if [ "$renamed" != true ]; then
+            echo "::error::Release $TAG has no $asset until the next run renames $asset.new."
+            exit 1
+          fi
 
           # The checksum list goes last: it is what the next run compares, so
           # anything interrupted before it is simply repeated.

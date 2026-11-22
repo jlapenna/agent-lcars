@@ -244,6 +244,7 @@ interface Step {
 }
 interface Job {
   if?: string;
+  needs?: string;
   permissions?: Record<string, string>;
   concurrency?: Record<string, unknown>;
   steps: Step[];
@@ -257,6 +258,9 @@ const workflow = parse(
 };
 
 describe('publish-workstation-cli.yml', () => {
+  const FAKE_GH = path.resolve(
+    'tools/contract-tests/fixtures/fake-gh-release.cjs',
+  );
   const { build, publish: publishJob } = workflow.jobs;
 
   it('gives write access only to a job that runs no checkout code', () => {
@@ -274,18 +278,95 @@ describe('publish-workstation-cli.yml', () => {
     expect(checkout?.with?.['persist-credentials']).toBe(false);
   });
 
-  it('admits only a green push run of main, or a dispatch on main', () => {
-    const gate = build?.if?.replace(/\s+/g, ' ') ?? '';
-    expect(gate).toContain(
+  it('admits only a push run of main, or a dispatch on main, to the gate', () => {
+    const admitted = workflow.jobs['gate']?.if?.replace(/\s+/g, ' ') ?? '';
+    expect(admitted).toContain(
       "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
     );
     for (const clause of [
       "github.event.workflow_run.event == 'push'",
       "github.event.workflow_run.head_branch == 'main'",
-      "github.event.workflow_run.conclusion == 'success'",
     ])
-      expect(gate).toContain(clause);
+      expect(admitted).toContain(clause);
+    // The run's rollup conclusion is not the gate: a non-required job that
+    // times out reports the run cancelled although Verify passed.
+    expect(admitted).not.toContain('workflow_run.conclusion');
+    expect(workflow.jobs['gate']?.permissions).toEqual({ actions: 'read' });
+    expect(build?.needs).toBe('gate');
+    expect(build?.if).toBe("needs.gate.outputs.verify_passed == 'true'");
+    expect(publishJob?.needs).toBe('build');
     expect(publishJob?.if).toBeUndefined();
+  });
+
+  const gateScript = workflow.jobs['gate']?.steps.find(
+    (step) => step.name === "Read Verify's conclusion",
+  )?.run as string;
+
+  // Runs the gate's own step against the fake `gh`.
+  function gate(
+    event: 'workflow_run' | 'workflow_dispatch',
+    state: {
+      jobs?: { name: string; conclusion: string | null }[];
+      fail?: string[];
+    } = {},
+  ) {
+    const root = tempRoot();
+    const bin = path.join(root, 'bin');
+    mkdirSync(bin);
+    symlinkSync(FAKE_GH, path.join(bin, 'gh'));
+    const statePath = path.join(root, 'state.json');
+    const output = path.join(root, 'output');
+    writeFileSync(statePath, JSON.stringify({ release: null, ...state }));
+    writeFileSync(path.join(root, 'gh.log'), '');
+    writeFileSync(output, '');
+    const result = spawnSync('bash', ['-c', gateScript], {
+      encoding: 'utf8',
+      env: {
+        PATH: `${bin}:${process.env['PATH']}`,
+        GITHUB_REPOSITORY: 'jlapenna/agent-lcars',
+        GITHUB_OUTPUT: output,
+        EVENT_NAME: event,
+        RUN_ID: '7',
+        HEAD_SHA: SOURCE,
+        FAKE_GH_STATE: statePath,
+        FAKE_GH_LOG: path.join(root, 'gh.log'),
+      },
+    });
+    return { result, output: readFileSync(output, 'utf8').trim() };
+  }
+
+  it('publishes when Verify passed although another job cancelled the run', () => {
+    const { result, output } = gate('workflow_run', {
+      jobs: [
+        { name: 'E2E', conclusion: 'cancelled' },
+        { name: 'Verify', conclusion: 'success' },
+      ],
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(output).toBe('verify_passed=true');
+  });
+
+  it.each([
+    ['failed', [{ name: 'Verify', conclusion: 'failure' }]],
+    ['has not finished', [{ name: 'Verify', conclusion: null }]],
+    ['did not run', [{ name: 'E2E', conclusion: 'success' }]],
+  ])('publishes nothing, without failing, when Verify %s', (_name, jobs) => {
+    const { result, output } = gate('workflow_run', { jobs });
+    expect(result.status, result.stderr).toBe(0);
+    expect(output).toBe('verify_passed=false');
+    expect(result.stdout).toContain('nothing to publish');
+  });
+
+  it('fails, publishing nothing, when the jobs cannot be read', () => {
+    const { result, output } = gate('workflow_run', { fail: ['jobs'] });
+    expect(result.status).not.toBe(0);
+    expect(output).toBe('');
+  });
+
+  it('lets a manual dispatch through without a CI run to ask about', () => {
+    const { result, output } = gate('workflow_dispatch', { fail: ['jobs'] });
+    expect(result.status, result.stderr).toBe(0);
+    expect(output).toBe('verify_passed=true');
   });
 
   it('serializes publications on the publish job, not the workflow', () => {
@@ -324,9 +405,6 @@ describe('publish-workstation-cli.yml', () => {
   const script = publishJob?.steps.find(
     (step) => step.name === 'Publish when the CLI changed',
   )?.run as string;
-  const FAKE_GH = path.resolve(
-    'tools/contract-tests/fixtures/fake-gh-release.cjs',
-  );
   const ASSET = { id: 1, name: ARCHIVE };
   const SUMS = { id: 2, name: 'SHA256SUMS' };
   const notes = (revision: string) =>
@@ -352,6 +430,9 @@ describe('publish-workstation-cli.yml', () => {
     const work = path.join(root, 'work');
     for (const dir of [bin, work]) mkdirSync(dir);
     symlinkSync(FAKE_GH, path.join(bin, 'gh'));
+    // The step waits between rename attempts; the test does not need to.
+    writeFileSync(path.join(bin, 'sleep'), '#!/bin/sh\nexit 0\n');
+    chmodSync(path.join(bin, 'sleep'), 0o755);
     writeFileSync(path.join(work, ARCHIVE), 'archive');
     writeFileSync(path.join(work, 'SHA256SUMS'), 'new sums\n');
     const statePath = path.join(root, 'state.json');
@@ -496,6 +577,29 @@ describe('publish-workstation-cli.yml', () => {
     // compares against.
     expect(failed.release?.assets).toContainEqual(ASSET);
     expect(failed.sums).toBe('old sums\n');
+
+    run.set({ fail: [] });
+    const retried = run.run();
+    expect(retried.result.status, retried.result.stderr).toBe(0);
+    expect(retried.names).toEqual(['SHA256SUMS', ARCHIVE]);
+    expect(retried.sums).toBe('new sums\n');
+  });
+
+  it('retries the rename, and the next run finishes one that never succeeded', () => {
+    const run = publisher({
+      ...published(notes(NEWER)),
+      compare: 'behind',
+      fail: ['rename'],
+    });
+    const failed = run.run();
+    expect(failed.result.status).not.toBe(0);
+    expect(
+      failed.changes.filter((call) => call.startsWith('api --method PATCH ')),
+    ).toHaveLength(3);
+    // The checksum list is still the old one, so the next run does not
+    // mistake this for published.
+    expect(failed.sums).toBe('old sums\n');
+    expect(failed.names).toEqual(['SHA256SUMS', `${ARCHIVE}.new`]);
 
     run.set({ fail: [] });
     const retried = run.run();

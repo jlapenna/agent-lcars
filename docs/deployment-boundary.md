@@ -310,10 +310,16 @@ independent delivery paths:
 | Runner CLI      | Homelab owns publication and reconciliation under the [image-publish routing contract](image-publish-routing.md). The [runner Dockerfile](../apps/runner-autoscaler/runner-image/Dockerfile) bakes the CLI bundle and launcher. The former watcher-daemon image is retired (hooks telemetry phase 3).                                                                                                                                                                                                                                                                                                                                                                                             | Record the running image digest and source revision; test the CLI baked into that runner digest.                                      |
 
 For a CLI source change, workstations need no handoff: the publish workflow
-and homegit deliver it. Confirm that the `workstation-cli` release notes name
-the merged revision or a later one, and that each affected host's
-`~/.local/share/agent-lcars-cli/REVISION` reaches it after homegit's next
-apply. For the runner image, hand the maintainer the reviewed main SHA and CI
+and homegit deliver it. The archive's `REVISION` names the last `main` commit
+that changed what the CLI is built into, so a merge that leaves the bundles
+byte-identical publishes nothing and moves nothing. To confirm a change that
+does alter them, read the `Publish workstation CLI` run for the merged
+revision, then `~/.local/share/agent-lcars-cli/REVISION` on each affected
+host after homegit's next apply. The release notes name the revision the
+publisher last started on, which can be ahead of the archive after an
+interrupted run; the archive is the evidence. To take a bad build back,
+revert it on `main`: the revert's own run publishes the earlier bundles.
+For the runner image, hand the maintainer the reviewed main SHA and CI
 receipt, the affected image consumers, the image-publish link above, and the
 verification command below, and obtain approval for any Homelab rollout
 before executing it. Follow the existing image selection contract; Console
