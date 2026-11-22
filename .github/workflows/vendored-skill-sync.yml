@@ -93,7 +93,9 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - uses: actions/checkout@v7
+      # Pinned by SHA: this job holds a contents:write App token, and
+      # callers such as Homelab pin this workflow by commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           token: ${{ steps.token.outputs.token }}
