@@ -20,7 +20,7 @@ the integration bug pass so it can trace changed configuration through its
 consumers and inherited defaults. Supply any recorded external inputs alongside
 the diff. Run all four distinct passes before validation.
 
-Aim to finish each child task within eight model steps. In the task prompt, identify the
+Aim to finish each child task within twelve model steps. In the task prompt, identify the
 specific role, source paths and deadline. Batch related reads and return
 concrete evidence or identify what could not be checked within the limit.
 The coordinator validates candidates through fresh agents. When publishing,

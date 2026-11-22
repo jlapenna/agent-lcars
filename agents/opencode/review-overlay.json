@@ -9,7 +9,7 @@
     "lcars-review": {
       "description": "Run one independent code review pass or validate one finding and return the evidence.",
       "mode": "subagent",
-      "steps": 8,
+      "steps": 12,
       "permission": { "task": "deny", "edit": "deny" }
     }
   }

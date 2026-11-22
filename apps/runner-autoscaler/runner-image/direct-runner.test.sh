@@ -2289,7 +2289,10 @@ grep -Fq 'the pull-request review body must contain this exact literal' "$OPENCO
   fail "github review: review prompt did not require the marker on the review body ($(cat "$OPENCODE_ARGS_LOG"))"
 grep -Fq 'the Anthropic review procedure at $AGENT_REVIEW_PATH' "$OPENCODE_ARGS_LOG" ||
   fail "github review: provider was not directed to the trusted review procedure"
-jq -e '.agent["lcars-review"].steps == 8 and .agent["lcars-review"].mode == "subagent"' "$OPENCODE_ENV_LOG.config" >/dev/null ||
+expected_revision=$(cat "$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review/revision")
+grep -Fq "cite the packaged upstream revision $expected_revision." "$OPENCODE_ARGS_LOG" ||
+  fail "github review: missing packaged revision in the coordinator prompt"
+jq -e '.agent["lcars-review"].steps == 12 and .agent["lcars-review"].mode == "subagent"' "$OPENCODE_ENV_LOG.config" >/dev/null ||
   fail "github review: missing inline general-agent finish reminder"
 jq -e '.default_agent == "lcars-review-coordinator" and .agent[.default_agent].permission.task["lcars-review"] == "allow"' "$OPENCODE_ENV_LOG.config" >/dev/null ||
   fail "github review: OpenCode independent reviewers remain disabled"

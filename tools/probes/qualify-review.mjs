@@ -279,17 +279,33 @@ if (provider === 'codex' && process.env.LCARS_REVIEW_CODEX_ISOLATE === '1') {
   );
 }
 if (provider === 'opencode') {
+  const sourceConfig = join(root, 'agents/opencode');
+  const effectiveConfig = imageId
+    ? '/home/runner/.config/opencode'
+    : sourceConfig;
+  if (imageId) {
+    for (const name of ['review-overlay.json', 'instructions.md']) {
+      if (
+        !readFileSync(join(sourceConfig, name)).equals(
+          readFileSync(join(effectiveConfig, name)),
+        )
+      )
+        throw new Error(
+          'Candidate image OpenCode review input mismatch: ' + name,
+        );
+    }
+  }
   // Match the direct runner's effective per-review configuration.
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
     ...JSON.parse(
-      readFileSync(join(root, 'agents/opencode/review-overlay.json'), 'utf8'),
+      readFileSync(join(effectiveConfig, 'review-overlay.json'), 'utf8'),
     ),
     provider: {
       homelab: {
         models: { default: { options: { reasoningEffort: 'medium' } } },
       },
     },
-    instructions: [join(root, 'agents/opencode/instructions.md')],
+    instructions: [join(effectiveConfig, 'instructions.md')],
   });
   env.MODE = 'review';
   args = [
