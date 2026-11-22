@@ -65,6 +65,7 @@ test('linked setup keeps submodule registration and deinitialization isolated fr
       writeFileSync(join(primary, 'tools', name), '#!/bin/sh\nexit 0\n', {
         mode: 0o700,
       });
+    writeFileSync(join(primary, 'tools', 'sync-package-skills.mjs'), '');
     const dependency = 'third_party/anthropic-plugins';
     const url = pathToFileURL(upstream).href;
     writeFileSync(
