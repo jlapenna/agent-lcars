@@ -166,3 +166,6 @@ vitest.config.*.timestamp*
 
 # Daemon-free Console deployment artifacts.
 .console-deploy/
+
+# Installed from pinned npm devDependencies by tools/sync-package-skills.sh.
+/.agents/skills/modern-web-guidance/
