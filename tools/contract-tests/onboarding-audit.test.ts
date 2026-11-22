@@ -357,10 +357,14 @@ describe('read-only onboarding audit', () => {
     'unavailable',
     'different-app',
     'independent-failure',
+    'mixed-legacy-first',
+    'mixed-app-first',
     'before-enforcement',
     'different-branch',
     'inherited',
   ])('audits PR-head App reviews with %s evidence', async (evidence) => {
+    const legacy = { context: 'LCARS review', integration_id: 15368 };
+    const mixed = evidence.startsWith('mixed-');
     const { api } = fixture({
       [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: [
         {
@@ -370,7 +374,9 @@ describe('read-only onboarding audit', () => {
             evidence === 'inherited' ? 'Organization' : 'Repository',
           parameters: {
             required_status_checks: [
+              ...(evidence === 'mixed-legacy-first' ? [legacy] : []),
               { context: 'LCARS review', integration_id: 4457090 },
+              ...(evidence === 'mixed-app-first' ? [legacy] : []),
               { context: 'LCARS review', integration_id: 4457090 },
               ...(evidence === 'independent-failure'
                 ? [{ context: 'missing-check' }]
@@ -391,22 +397,23 @@ describe('read-only onboarding audit', () => {
               head: { sha: 'reviewed' },
             },
           ],
+      [`/repos/${repo}/commits/reviewed/statuses?per_page=100&page=1`]: [],
       [`/repos/${repo}/commits/reviewed/check-runs?filter=all&per_page=100&page=1`]:
         {
-          check_runs: [
-            'before-enforcement',
-            'different-branch',
-            'inherited',
-          ].includes(evidence)
+          check_runs: mixed
             ? []
-            : [
-                {
-                  name: 'LCARS review',
-                  head_sha: 'reviewed',
-                  external_id: 'lcars-review',
-                  app: { id: evidence === 'different-app' ? 42 : 4457090 },
-                },
-              ],
+            : ['before-enforcement', 'different-branch', 'inherited'].includes(
+                  evidence,
+                )
+              ? []
+              : [
+                  {
+                    name: 'LCARS review',
+                    head_sha: 'reviewed',
+                    external_id: 'lcars-review',
+                    app: { id: evidence === 'different-app' ? 42 : 4457090 },
+                  },
+                ],
         },
       [`/repos/${repo}/rulesets/rule-suites?ref=refs%2Fheads%2Fmain&time_period=month&rule_suite_result=all&per_page=100&page=1`]:
         [
@@ -445,7 +452,12 @@ describe('read-only onboarding audit', () => {
                     type: 'required_status_checks',
                     parameters: {
                       required_status_checks: [
-                        { context: 'LCARS review', integration_id: 4457090 },
+                        mixed
+                          ? legacy
+                          : {
+                              context: 'LCARS review',
+                              integration_id: 4457090,
+                            },
                       ],
                     },
                   },

@@ -373,12 +373,7 @@ export async function auditRepository({
           'Merged PR head unavailable for the required LCARS review',
         );
       }
-      for (const integration of new Set(
-        reviewRules.map((rule) => rule.integration_id),
-      )) {
-        const reviewRule = reviewRules.find(
-          (rule) => rule.integration_id === integration,
-        );
+      async function checkIntegration(reviewRule) {
         let reviewStatusObserved;
         if (reviewRule.integration_id === 4457090) {
           const headChecks = await optionalMetadataRead(capability, () =>
@@ -491,6 +486,19 @@ export async function auditRepository({
           );
         }
       }
+      let gap;
+      const integrations = new Map(
+        reviewRules.map((rule) => [rule.integration_id, rule]),
+      );
+      for (const rule of integrations.values()) {
+        try {
+          await checkIntegration(rule);
+        } catch (error) {
+          if (failureStatus(error) !== 'unverifiable') throw error;
+          gap ??= error;
+        }
+      }
+      if (gap) throw gap;
     }
     return `${required.length} required contexts observed on ${commit.sha}`;
   });
