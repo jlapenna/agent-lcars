@@ -10,6 +10,7 @@ import {
 } from './action-items';
 import { isSelectedGithubAnchorProjection } from './github-anchor-selector';
 import { getWatchedRepos } from './github-client';
+import { readGithubHumanDecision } from './github-human-decision';
 import { readHandoffActions } from './handoff-summary-work';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 
@@ -60,9 +61,27 @@ export async function getAuthoritativeQueueItems(): Promise<ActionItemsResult> {
             issue: item.number,
           }),
         );
-        const actions =
-          run === undefined ? undefined : await readHandoffActions(store, run);
-        return actions ? { ...item, humanNeededActions: actions } : item;
+        if (!run) return item;
+        if (
+          run.params?.['replyExpectedParkedRunId'] &&
+          run.result?.summary !== 'park'
+        ) {
+          return {
+            ...item,
+            actionTypes: item.actionTypes.filter(
+              (type) => type !== 'needs-human',
+            ),
+          };
+        }
+        const [actions, decision] = await Promise.all([
+          readHandoffActions(store, run),
+          readGithubHumanDecision(store, run),
+        ]);
+        return {
+          ...item,
+          ...(actions ? { humanNeededActions: actions } : {}),
+          ...(decision ? { humanDecision: decision } : {}),
+        };
       } catch {
         // Optional reading aids must not hide an otherwise readable decision.
         logger.warn('agent-lcars: human-needed summary read unavailable');

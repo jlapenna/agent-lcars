@@ -241,7 +241,7 @@ function buildFixtureItems(): FixtureItem[] {
         { author: MAINTAINER, body: 'Filing this so it does not get lost.' },
         {
           author: FLEET,
-          body: 'Human ask: Choose the archive retention window.\nHuman option: Keep 30 days\nHuman option: Keep 90 days\n\nParking this — 30 days and 90 days have different storage-cost profiles and I should not pick for you.',
+          body: 'Parking this — 30 days and 90 days have different storage-cost profiles and I should not pick for you.',
         },
       ],
     },

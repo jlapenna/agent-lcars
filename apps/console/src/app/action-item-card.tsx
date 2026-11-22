@@ -27,11 +27,7 @@ import {
 } from 'react';
 
 import type { ActionItem, MergeableState } from '../lib/action-items';
-import {
-  humanDecisionReply,
-  type IssueDecisionAnswer,
-  issueHumanDecision,
-} from '../lib/human-ask';
+import { type HumanChoice, issueHumanDecision } from '../lib/human-ask';
 import {
   localAgentCommand,
   localAgentDisplayName,
@@ -47,6 +43,7 @@ import {
   supportedAgentPipelines,
 } from '../lib/watched-repo';
 import {
+  answerGithubDecision,
   approveAndRebase,
   mergePr,
   type ReplyResult,
@@ -261,11 +258,6 @@ export function ActionItemCard({
   onReplyDraftChange?: (hasDraft: boolean) => void;
 }) {
   const decision = issueHumanDecision(item);
-  const decisionKey = JSON.stringify([
-    decision,
-    item.lastCommentUrl,
-    item.updatedAt,
-  ]);
   const [answeredDecision, setAnsweredDecision] = useState<string>();
   const answeringDecision = useRef(false);
   const [expanded, setExpanded] = useState(false);
@@ -359,19 +351,11 @@ export function ActionItemCard({
    * assignment of its own. Takes both as arguments, not from state, so a
    * reply restored after a GitHub re-authorization can be sent in the same
    * pass that restores it. */
-  const submitReply = (
-    body: string,
-    chosenTarget: Pipeline | undefined,
-    answer?: IssueDecisionAnswer,
-  ) => {
+  const submitReply = (body: string, chosenTarget: Pipeline | undefined) => {
     if (!body.trim()) return;
     // The browser is already on its way to GitHub; a second click must not
     // race it into the "sign out" fallback.
     if (Date.now() - reauthorizingSince.current < 15_000) return;
-    if (answer) {
-      if (answeringDecision.current || answeredDecision === decisionKey) return;
-      answeringDecision.current = true;
-    }
     setError(undefined);
     startTransition(async () => {
       const result = await replyToItem(
@@ -384,17 +368,13 @@ export function ActionItemCard({
         // Only the hand-off control's choice may give an unlabeled PR or an
         // already-admitted item to an agent.
         pipeline === undefined && chosenTarget !== undefined,
-        ...(answer ? [answer] : []),
-      ).finally(() => {
-        if (answer) answeringDecision.current = false;
-      });
+      );
       if (!result.ok) {
         // GitHub refused the operator's token. Renew it and send this reply
         // again on return, instead of asking for a manual sign-out. The text
         // stays in the box in case the round trip does not happen.
         if (
           result.reauth &&
-          !answer &&
           beginOperatorReauth({
             reply: {
               itemKey,
@@ -413,7 +393,6 @@ export function ActionItemCard({
         setError(result.message);
         return;
       }
-      if (answer) setAnsweredDecision(decisionKey);
       setReplyRetry(result.retry);
       setReplyBody('');
       setChosenReplyTarget(undefined);
@@ -427,6 +406,35 @@ export function ActionItemCard({
   };
 
   const handleReply = () => submitReply(replyBody, chosenReplyTarget);
+
+  const choose = (choice: HumanChoice) => {
+    if (
+      !decision ||
+      answeredDecision === decision.runId ||
+      answeringDecision.current
+    )
+      return;
+    answeringDecision.current = true;
+    setError(undefined);
+    startTransition(async () => {
+      try {
+        const result = await answerGithubDecision(
+          item.repo,
+          item.number,
+          decision.runId,
+          choice,
+        );
+        if (!result.ok) {
+          setError(result.message);
+          return;
+        }
+        setAnsweredDecision(decision.runId);
+        notifications.show({ message: result.note, color: 'green' });
+      } finally {
+        answeringDecision.current = false;
+      }
+    });
+  };
 
   // Back from a GitHub re-authorization that a refused reply started: put the
   // reply back and send it, so the operator's one click still does the job.
@@ -777,14 +785,10 @@ export function ActionItemCard({
         {decision && (
           <HumanDecisionButtons
             decision={decision}
-            disabled={!ready || isPending || answeredDecision === decisionKey}
-            onChoose={(choice) =>
-              submitReply(humanDecisionReply(decision.ask, choice), undefined, {
-                ask: decision.ask,
-                choice,
-                commentUrl: item.lastCommentUrl,
-              })
+            disabled={
+              !ready || isPending || answeredDecision === decision.runId
             }
+            onChoose={choose}
           />
         )}
         {!decision && decisionSummary && (

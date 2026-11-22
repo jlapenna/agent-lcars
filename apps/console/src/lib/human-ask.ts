@@ -10,12 +10,6 @@ export interface HumanChoice {
   label: string;
 }
 
-export interface IssueDecisionAnswer {
-  ask: string;
-  choice: HumanChoice;
-  commentUrl?: string;
-}
-
 export function humanAskFromHandoff(handoff?: string): string | undefined {
   const firstLine = handoff?.trimStart().split(/\r?\n/, 1)[0];
   const ask = firstLine?.match(/^Human ask:[ \t]+(.{1,400})$/i)?.[1]?.trim();
@@ -55,9 +49,9 @@ export function humanDecisionReply(ask: string, choice: HumanChoice): string {
 
 export function issueHumanDecision(
   item: ActionItem,
-): HumanDecision | undefined {
+): ActionItem['humanDecision'] {
   if (!item.actionTypes.includes('needs-human')) return undefined;
-  return humanDecisionFromHandoff(item.lastCommentBody ?? item.body);
+  return item.humanDecision;
 }
 
 export function issueHumanAsk(item: ActionItem): string | undefined {

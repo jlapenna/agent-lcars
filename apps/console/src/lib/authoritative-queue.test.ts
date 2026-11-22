@@ -247,11 +247,34 @@ it('shows only the current parked run summary, never an older handoff after new 
   });
   const parked = {
     runId: 'jlapenna/agent-lcars#42/r1',
+    task: { repo: 'jlapenna/agent-lcars', issue: 42 },
     createdAt: '2026-10-17T00:00:00Z',
     state: 'finished',
-    result: { summary: 'park', humanNeededActions: actions },
+    result: {
+      ok: true,
+      summary: 'park',
+      humanNeededActions: actions,
+      message: 'Human ask: Approve staging.\nHuman approval: Approve staging',
+    },
   };
   listRuns.mockResolvedValue([parked]);
+  expect(
+    (await getAuthoritativeQueueItems()).items[0].humanDecision,
+  ).toBeUndefined();
+  listRuns.mockResolvedValue([
+    {
+      ...parked,
+      result: {
+        ...parked.result,
+        ref: 'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-1',
+      },
+    },
+  ]);
+  expect((await getAuthoritativeQueueItems()).items[0].humanDecision).toEqual({
+    ask: 'Approve staging.',
+    runId: parked.runId,
+    choices: [{ kind: 'approval', label: 'Approve staging' }],
+  });
   expect(
     (await getAuthoritativeQueueItems()).items[0].humanNeededActions,
   ).toEqual(actions);
@@ -263,11 +286,15 @@ it('shows only the current parked run summary, never an older handoff after new 
       createdAt: '2026-10-17T01:00:00Z',
       state: 'running',
       result: undefined,
+      params: { replyExpectedParkedRunId: parked.runId },
     },
   ]);
   expect(
     (await getAuthoritativeQueueItems()).items[0].humanNeededActions,
   ).toBeUndefined();
+  expect(
+    (await getAuthoritativeQueueItems()).items[0].actionTypes,
+  ).not.toContain('needs-human');
   listRuns.mockRejectedValue(new Error('datastore temporarily unavailable'));
   expect((await getAuthoritativeQueueItems()).items[0]).toMatchObject({
     number: 42,

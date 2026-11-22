@@ -215,8 +215,8 @@ sends the operator's choice as a reply tied to the original ask.
 Include the affected target in the ask and keep the request to 400 characters
 or less. Follow the line with why human authority is required, what you already
 tried, and what will let the agent resume.
-For an issue anchor, put the same line first in the park comment, before
-the markers. For native Work, put it first in the terminal response.
+Start the terminal response with this decision block. For an issue anchor,
+also put the same block first in the park comment, before the markers.
 
 End your response with `PARK <blocker and resume trigger>`. A park is a
 real outcome, not silence: it must leave the same kind of durable,

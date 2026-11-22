@@ -9,6 +9,7 @@ import {
 } from './util/e2e-test-utils';
 import {
   readTaskAdmission,
+  seedGithubPark,
   seedTaskDeliverableHistory,
   updateDashboardAnchor,
 } from './util/orchestrator-seed';
@@ -382,13 +383,17 @@ test.describe('Inbox authorized action journeys', () => {
     await expectScope(page, url);
   });
 
-  test('a GitHub handoff option posts and dispatches the exact answer in one click', async ({
+  test('a verified GitHub park dispatches the exact answer in one click', async ({
     page,
     request,
   }) => {
     const number = E2E_ITEM_NUMBERS.humanNeeded;
     const ask = 'Choose the archive retention window.';
     const reply = `Selected: Keep 90 days\n\nFor this request: ${ask}`;
+    const parkedRunId = await seedGithubPark(
+      number,
+      `Human ask: ${ask}\nHuman option: Keep 30 days\nHuman option: Keep 90 days`,
+    );
     await selectItem(page, number);
     const detail = page.locator('.queue-workspace__detail');
     await expect(detail.getByLabel('Human ask')).toHaveText(ask);
@@ -396,26 +401,24 @@ test.describe('Inbox authorized action journeys', () => {
       detail.getByRole('button', { name: 'Keep 30 days' }),
     ).toBeEnabled();
     await detail.getByRole('button', { name: 'Keep 90 days' }).click();
-    await expect(
-      page.getByText(`#${number}: Dispatched claude`, { exact: true }),
-    ).toBeVisible();
+    await expect(page.getByText(/Reply admitted/)).toBeVisible();
     await expect
       .poll(() => readTaskAdmission(number))
       .toMatchObject({
-        run: { pipeline: 'claude', params: { mode: 'reply', reply } },
+        run: {
+          pipeline: 'claude',
+          params: {
+            mode: 'reply',
+            reply,
+            replyExpectedParkedRunId: parkedRunId,
+          },
+        },
       });
     expect(
       (await journal(request)).filter(
         ({ path }) => path === pathFor(`issues/${number}/comments`),
       ),
-    ).toEqual([
-      {
-        method: 'POST',
-        path: pathFor(`issues/${number}/comments`),
-        body: { body: consoleReply(reply) },
-        rejected: false,
-      },
-    ]);
+    ).toEqual([]);
   });
 
   test('a rejected comment keeps its draft and admits no Work', async ({

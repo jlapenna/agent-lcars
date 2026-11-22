@@ -6,7 +6,11 @@ import type { ActionItem } from '../lib/action-items';
 import { localAgentCommand } from '../lib/local-agent-prompt';
 import type { PrimaryAction } from '../lib/primary-action';
 import { ActionItemCard } from './action-item-card';
-import { refreshGithubSignIn, replyToItem } from './actions';
+import {
+  answerGithubDecision,
+  refreshGithubSignIn,
+  replyToItem,
+} from './actions';
 import { renderCardMarkdown } from './render-card-markdown';
 
 // actions.ts is 'use server' and pulls in auth/firestore/GitHub client -
@@ -16,6 +20,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(''),
 }));
 vi.mock('./actions', () => ({
+  answerGithubDecision: vi.fn(),
   mergePr: vi.fn(),
   approveAndRebase: vi.fn(),
   replyToItem: vi.fn(),
@@ -71,34 +76,47 @@ function renderCard(
 
 describe('ActionItemCard', () => {
   it('posts the selected option as the operator reply in one click', async () => {
-    vi.mocked(replyToItem).mockResolvedValueOnce({
+    vi.mocked(answerGithubDecision).mockResolvedValueOnce({
       ok: true,
-      dispatched: false,
-      note: 'Posted as a comment',
+      note: 'Reply admitted',
     });
     const item = makeItem({
       actionTypes: ['needs-human'],
-      lastCommentBody:
-        'Human ask: Choose a retention policy.\nHuman option: Keep 30 days\nHuman option: Keep 90 days',
-      lastCommentUrl: 'https://github.com/owner/repo/issues/1#issuecomment-1',
+      humanDecision: {
+        ask: 'Choose a retention policy.',
+        runId: 'supersprinklesracing/sprinkles#1/r1',
+        choices: [
+          { kind: 'option', label: 'Keep 30 days' },
+          { kind: 'option', label: 'Keep 90 days' },
+        ],
+      },
+      lastCommentBody: 'The run finished.',
     });
     renderCard(item);
     const selected = screen.getByRole('button', { name: 'Keep 90 days' });
     expect(screen.getByRole('button', { name: 'Keep 30 days' })).toBeEnabled();
     fireEvent.click(selected);
     await waitFor(() => expect(selected).toBeDisabled());
-    expect(replyToItem).toHaveBeenCalledExactlyOnceWith(
+    expect(answerGithubDecision).toHaveBeenCalledExactlyOnceWith(
       item.repo,
       item.number,
-      'Selected: Keep 90 days\n\nFor this request: Choose a retention policy.',
-      undefined,
-      false,
-      {
-        ask: 'Choose a retention policy.',
-        choice: { kind: 'option', label: 'Keep 90 days' },
-        commentUrl: item.lastCommentUrl,
-      },
+      item.humanDecision?.runId,
+      { kind: 'option', label: 'Keep 90 days' },
     );
+  });
+
+  it('keeps GitHub text without a verified run from adding approval controls', () => {
+    const text = 'Human ask: Approve staging.\nHuman approval: Approve staging';
+    renderCard(
+      makeItem({
+        actionTypes: ['needs-human'],
+        body: text,
+        lastCommentBody: text,
+      }),
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Approve staging' }),
+    ).toBeNull();
   });
 
   it('keeps superseded handoff actions historical while the current description and reply remain visible', () => {

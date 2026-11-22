@@ -1,5 +1,8 @@
 'use server';
 
+import { createHash } from 'node:crypto';
+
+import { taskKey } from '@agent-lcars/orchestrator';
 import { revalidatePath, updateTag } from 'next/cache';
 import type { Session } from 'next-auth';
 
@@ -30,9 +33,14 @@ import {
 } from '../lib/backend-actions';
 import { AUTHORITATIVE_QUEUE_TAG } from '../lib/cache-tags';
 import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
+import { readGithubHumanDecision } from '../lib/github-human-decision';
 import { safeReturnPath } from '../lib/github-reauth';
-import type { IssueDecisionAnswer } from '../lib/human-ask';
+import { type HumanChoice, humanDecisionReply } from '../lib/human-ask';
 import type { Pipeline } from '../lib/primary-action';
+import { isWorkOperatorPrincipal } from '../lib/work-mint';
+import { requestReply } from '../lib/work-reply';
+import { replyAdmissionMessage } from './reply-admission-message';
+import { context } from './work/context';
 
 // LAN preview goes through the shared test-session adapter inside auth()
 // (E2E_TESTING + the x-e2e-auth-user request header), so no bypass is
@@ -160,7 +168,6 @@ export async function replyToItem(
   assignedPipeline?: Pipeline,
   /** The operator chose `assignedPipeline` in the reply's hand-off control. */
   handoff = false,
-  answer?: IssueDecisionAnswer,
 ): Promise<ReplyResult> {
   const session = await requireAdmin();
   try {
@@ -171,7 +178,6 @@ export async function replyToItem(
       await operatorFor(session),
       assignedPipeline,
       handoff,
-      ...(answer ? [answer] : []),
     );
     revalidateDashboard();
     // A reply that dispatched nobody is a success, but not the one the
@@ -207,6 +213,66 @@ export async function replyToItem(
                       ? `Dispatched ${assignedPipeline ?? 'agent'}`
                       : 'No agent assigned - posted as a comment only',
     };
+  } catch (error) {
+    return toFailure(error);
+  }
+}
+
+export async function answerGithubDecision(
+  repo: WatchedRepo,
+  number: number,
+  runId: string,
+  selection: HumanChoice,
+): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    const resolved = resolveWatchedRepo(repo);
+    const work = await context();
+    if (!isWorkOperatorPrincipal(work.principal))
+      throw new ActionError('Work operator access is required', 403);
+    const task = { repo: `${resolved.owner}/${resolved.name}`, issue: number };
+    const key = taskKey(task);
+    if (
+      !Number.isSafeInteger(number) ||
+      number < 1 ||
+      typeof runId !== 'string' ||
+      !runId.startsWith(`${key}/r`) ||
+      !/^\d+$/.test(runId.slice(key.length + 2))
+    )
+      throw new ActionError('Invalid parked run', 400);
+    const [run, projection] = await Promise.all([
+      work.runtime.store.readRun(runId),
+      work.runtime.store.readGithubAnchorProjection(task),
+    ]);
+    const decision =
+      run && taskKey(run.task) === key
+        ? await readGithubHumanDecision(work.runtime.store, run)
+        : undefined;
+    const choice = decision?.choices.find(
+      (candidate) =>
+        candidate.kind === selection?.kind &&
+        candidate.label === selection?.label,
+    );
+    if (projection?.state !== 'open' || !decision || !choice)
+      throw new ActionError(
+        'This decision changed. Refresh to see the current handoff.',
+        409,
+      );
+    const reply = await requestReply(
+      work,
+      {
+        task,
+        text: humanDecisionReply(decision.ask, choice),
+        channel: 'console',
+        principal: work.principal.principal,
+        expectedParkedRunId: runId,
+        requestId: `inbox-decision:${createHash('sha256').update(runId).digest('hex')}`,
+      },
+      { kind: 'work-api-reply', principal: work.principal.principal },
+    );
+    if (!reply.ok) return { ok: false, message: reply.message };
+    revalidateDashboard();
+    return { ok: true, note: replyAdmissionMessage(reply.resumed) };
   } catch (error) {
     return toFailure(error);
   }

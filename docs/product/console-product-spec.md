@@ -405,10 +405,11 @@ the work that has stopped, and the work in flight.
   an approval or options in the
   [parking format](../../agents/shared/skills/agent-protocol/reference/agent-protocol.md#4-parking--blocked-on-a-human),
   the detail pane lets the operator send that answer with one click. The
-  reply records the original ask and the chosen answer, using the same
-  authorization and dispatch path as a typed reply. Native decisions bind
-  the answer to the parked run. GitHub decisions check the current handoff
-  before posting. Free-text replies and older handoffs remain supported.
+  reply records the original ask and the chosen answer in the Work history.
+  For GitHub anchors, LCARS reads the ask from the verified parked run,
+  even when a later status comment appears. One-click replies use Work
+  operator grants and bind admission to that exact run. Free-text replies
+  and older handoffs remain supported.
 
 - **FE-IN-2 [Shipped] Primary action** (`lib/primary-action.ts`). Each GitHub card
   shows at most one primary action chosen from its state: **Approve & Merge**,

@@ -130,6 +130,37 @@ export async function readTaskAdmission(issue: number) {
   return { task: task?.task, run };
 }
 
+export async function seedGithubPark(issue: number, message: string) {
+  const store = firestoreStore();
+  const anchor = { repo: E2E_FIXTURE_REPOSITORY, issue };
+  const versioned = await store.readTask(anchor);
+  const runId = `${anchor.repo}#${issue}/r${versioned?.task.runCount}`;
+  const run = versioned && (await store.readRun(runId));
+  if (!versioned || !run) throw new Error('Missing GitHub decision fixture');
+  const now = new Date().toISOString();
+  await store.apply({
+    expectedRevision: versioned.revision,
+    decision: {
+      task: { ...versioned.task, updatedAt: now },
+      run: {
+        ...run,
+        createdAt: now,
+        updatedAt: now,
+        pipeline: 'claude',
+        state: 'finished',
+        result: {
+          ok: true,
+          summary: 'park',
+          message,
+          ref: `https://github.com/${anchor.repo}/issues/${issue}#issuecomment-${issue * 100}`,
+        },
+      },
+      outbox: [],
+    },
+  });
+  return runId;
+}
+
 /** A finished delivery alongside the existing duplicate live-run anomaly. */
 export async function seedTaskDeliverableHistory() {
   const store = firestoreStore();
