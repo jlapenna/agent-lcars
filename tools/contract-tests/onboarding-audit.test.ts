@@ -400,6 +400,32 @@ describe('read-only onboarding audit', () => {
     ).toBe(true);
   });
 
+  it.each([true, false])(
+    'preserves legacy branch review evidence without a PR (%s)',
+    async (present) => {
+      const rule = { context: 'LCARS review', integration_id: 15368 };
+      const { api } = fixture({
+        [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: [
+          {
+            type: 'required_status_checks',
+            parameters: { required_status_checks: [rule] },
+          },
+        ],
+        [`/repos/${repo}/commits/abc123/check-runs?filter=all&per_page=100&page=1`]:
+          {
+            check_runs: present
+              ? [{ name: 'LCARS review', app: { id: 15368 } }]
+              : [],
+          },
+        [`/repos/${repo}/commits/abc123/pulls?per_page=100&page=1`]: [],
+        [`/repos/${repo}/actions/runs?head_sha=abc123&per_page=100`]: {
+          workflow_runs: [{ status: 'completed' }],
+        },
+      });
+      expect((await audit(api))[3].status).toBe(present ? 'pass' : 'fail');
+    },
+  );
+
   it.each([
     'present',
     'unavailable',

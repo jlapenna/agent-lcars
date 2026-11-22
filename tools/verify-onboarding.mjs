@@ -338,7 +338,7 @@ export async function auditRepository({
           (status) => status.context === rule.context && !rule.integration_id,
         ),
     );
-    if (missing.length) {
+    async function checkMissing(missing) {
       // A same-named check from the wrong App is a real mismatch. Otherwise
       // let a newly merged head finish emitting its configured contexts.
       if (
@@ -453,6 +453,16 @@ export async function auditRepository({
         );
     }
     async function checkIntegration(reviewRule) {
+      const legacy = reviewRule.integration_id === 15368;
+      if (
+        legacy &&
+        checks.some(
+          (check) =>
+            check.name === reviewRule.context &&
+            check.app?.id === reviewRule.integration_id,
+        )
+      )
+        return;
       const pulls = await optionalMetadataRead(capability, () =>
         pages(api, `/repos/${repo}/commits/${commit.sha}/pulls`, metadataToken),
       );
@@ -460,6 +470,7 @@ export async function auditRepository({
         (pr) => pr.merge_commit_sha === commit.sha && pr.merged_at,
       );
       if (!merged?.head?.sha) {
+        if (legacy) return checkMissing([reviewRule]);
         throw new UnverifiableError(
           'Merged PR head unavailable for the required LCARS review',
         );
@@ -494,6 +505,7 @@ export async function auditRepository({
             status.context === reviewRule.context &&
             status.creator?.login === 'github-actions[bot]',
         );
+        if (!reviewStatusObserved) return checkMissing([reviewRule]);
       }
       if (!reviewStatusObserved) {
         // Current rules may have been introduced after this PR merged.
@@ -572,6 +584,7 @@ export async function auditRepository({
     const evaluate = [...integrations.values()].map(
       (rule) => () => checkIntegration(rule),
     );
+    if (missing.length) evaluate.unshift(() => checkMissing(missing));
     if (required.some(isCandidateRule)) evaluate.push(checkCandidate);
     for (const check of evaluate) {
       try {
