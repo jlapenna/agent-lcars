@@ -111,6 +111,9 @@ jobs:
           path: workstation-cli-out/
           if-no-files-found: error
           retention-days: 7
+          # A re-run of this job alone keeps the first attempt's artifact;
+          # without this the second upload is refused.
+          overwrite: true
 
   publish:
     name: Publish the archive
@@ -118,13 +121,16 @@ jobs:
     # One publication at a time. The group is on this job, not the workflow:
     # every CI completion starts a run of this workflow, pull requests
     # included, and a workflow-level group would let such a run replace a
-    # pending `main` publication before the `if` above turned it away. Only
-    # runs that built an archive reach this job. A newer one waiting here
-    # replaces an older one still waiting, which is the order wanted; a late
-    # run for an older commit is turned away by the descendant check below.
+    # pending `main` publication before the gate turned it away. Only runs
+    # that built an archive reach this job.
     concurrency:
       group: publish-workstation-cli
       cancel-in-progress: false
+      # Every waiting publication keeps its place. With the default single
+      # waiting slot, an older commit whose build finished late would evict
+      # a newer one already waiting, and the descendant check below cannot
+      # bring back a run that was cancelled.
+      queue: max
     # Holds the only write permission, and runs no code from the checkout:
     # nothing a dependency's install script could reach can publish.
     runs-on: ubuntu-slim
@@ -210,6 +216,14 @@ jobs:
             echo "::error::The uploaded archive is not on release $TAG."
             exit 1
           fi
+          # The published checksum list describes the archive about to be
+          # replaced. Remove it first: if this run stops anywhere after the
+          # swap, no list is left to make a later run, or a revert back to
+          # these same bytes, look already published.
+          sums_id="$(asset_id SHA256SUMS)"
+          if [ -n "$sums_id" ]; then
+            gh api --method DELETE "$release_api/assets/$sums_id" --silent
+          fi
           old_id="$(asset_id "$asset")"
           if [ -n "$old_id" ]; then
             gh api --method DELETE "$release_api/assets/$old_id" --silent
@@ -234,5 +248,5 @@ jobs:
 
           # The checksum list goes last: it is what the next run compares, so
           # anything interrupted before it is simply repeated.
-          gh release upload "$TAG" SHA256SUMS --clobber
+          gh release upload "$TAG" SHA256SUMS
           echo "::notice::Published the workstation CLI from $SOURCE_SHA."

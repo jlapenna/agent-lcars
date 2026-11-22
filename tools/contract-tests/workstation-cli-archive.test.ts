@@ -375,9 +375,12 @@ describe('publish-workstation-cli.yml', () => {
     // before the build job's `if` turned it away.
     expect(workflow.concurrency).toBeUndefined();
     expect(build?.concurrency).toBeUndefined();
+    // queue: max keeps every waiting publication; with the default single
+    // slot a late older build would evict a newer one already waiting.
     expect(publishJob?.concurrency).toEqual({
       group: 'publish-workstation-cli',
       'cancel-in-progress': false,
+      queue: 'max',
     });
   });
 
@@ -441,6 +444,10 @@ describe('publish-workstation-cli.yml', () => {
     writeFileSync(log, '');
     let attempt = 0;
     return {
+      /** What this run built: the checksum list beside the archive. */
+      localSums(content: string) {
+        writeFileSync(path.join(work, 'SHA256SUMS'), content);
+      },
       set(change: Partial<GhState>) {
         const state = JSON.parse(readFileSync(statePath, 'utf8'));
         writeFileSync(statePath, JSON.stringify({ ...state, ...change }));
@@ -522,14 +529,42 @@ describe('publish-workstation-cli.yml', () => {
     ).toEqual([
       'release edit workstation-cli --draft=false --notes',
       `release upload workstation-cli ${ARCHIVE}.new --clobber`,
+      // The old checksum list goes before the swap, the new one after it.
+      'api --method DELETE repos/jlapenna/agent-lcars/releases/assets/2 --silent',
       'api --method DELETE repos/jlapenna/agent-lcars/releases/assets/1 --silent',
       `api --method PATCH repos/jlapenna/agent-lcars/releases/assets/10 -f`,
-      'release upload workstation-cli SHA256SUMS --clobber',
+      'release upload workstation-cli SHA256SUMS',
     ]);
-    expect(changes[3]).toContain(`name=${ARCHIVE}`);
+    expect(changes[4]).toContain(`name=${ARCHIVE}`);
     expect(release?.body).toContain(`Source revision: ${SOURCE}`);
     expect(names).toEqual(['SHA256SUMS', ARCHIVE]);
     expect(sums).toBe('new sums\n');
+  });
+
+  it('republishes a revert after a run that stopped right after the swap', () => {
+    // The new archive is live but its checksum list never went up. A revert
+    // then builds the bytes the release held before; it must not find their
+    // old checksum list still there and conclude nothing changed.
+    const run = publisher({
+      ...published(notes(NEWER)),
+      compare: 'behind',
+      fail: ['upload:SHA256SUMS'],
+    });
+    const stopped = run.run();
+    expect(stopped.result.status).not.toBe(0);
+    expect(stopped.names).toEqual([ARCHIVE]);
+
+    run.set({ fail: [] });
+    run.localSums('old sums\n');
+    const reverted = run.run();
+    expect(reverted.result.status, reverted.result.stderr).toBe(0);
+    expect(
+      reverted.changes.some((call) =>
+        call.startsWith(`release upload workstation-cli ${ARCHIVE}.new`),
+      ),
+    ).toBe(true);
+    expect(reverted.names).toEqual(['SHA256SUMS', ARCHIVE]);
+    expect(reverted.sums).toBe('old sums\n');
   });
 
   it('leaves a newer build in place when an older commit arrives late', () => {
@@ -596,10 +631,9 @@ describe('publish-workstation-cli.yml', () => {
     expect(
       failed.changes.filter((call) => call.startsWith('api --method PATCH ')),
     ).toHaveLength(3);
-    // The checksum list is still the old one, so the next run does not
-    // mistake this for published.
-    expect(failed.sums).toBe('old sums\n');
-    expect(failed.names).toEqual(['SHA256SUMS', `${ARCHIVE}.new`]);
+    // No checksum list is left, so the next run does not mistake this for
+    // published.
+    expect(failed.names).toEqual([`${ARCHIVE}.new`]);
 
     run.set({ fail: [] });
     const retried = run.run();

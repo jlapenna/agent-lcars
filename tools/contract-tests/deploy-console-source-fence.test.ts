@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -332,28 +333,51 @@ describe('serialized automatic deployment source fence', () => {
 
   it('enforces the supported queue syntax covered by the narrow actionlint compatibility exception', () => {
     // The pinned linter predates concurrency.queue. Required contracts own
-    // validation of this new key for the one exceptional workflow only.
-    for (const concurrency of [
-      workflow.concurrency,
-      ...Object.values(workflow.jobs).map((job) => job.concurrency),
-    ]) {
-      if (concurrency === undefined || !('queue' in concurrency)) continue;
-      expect(['single', 'max']).toContain(concurrency.queue);
-      expect(
-        concurrency.queue === 'max' &&
-          ![undefined, false].includes(
-            concurrency['cancel-in-progress'] as undefined | boolean,
-          ),
-      ).toBe(false);
+    // validation of this new key for the exceptional workflows only: every
+    // workflow that sets it is listed here, and each is checked.
+    const exceptional = [
+      '.github/workflows/deploy-console.yml',
+      '.github/workflows/publish-workstation-cli.yml',
+    ];
+    const queued: string[] = [];
+    for (const name of readdirSync('.github/workflows').sort()) {
+      if (!/\.ya?ml$/.test(name)) continue;
+      const file = `.github/workflows/${name}`;
+      const parsed = parse(readFileSync(file, 'utf8')) as typeof workflow;
+      for (const concurrency of [
+        parsed.concurrency,
+        ...Object.values(parsed.jobs ?? {}).map((job) => job.concurrency),
+      ]) {
+        if (
+          concurrency === undefined ||
+          typeof concurrency !== 'object' ||
+          !('queue' in concurrency)
+        )
+          continue;
+        if (!queued.includes(file)) queued.push(file);
+        expect(['single', 'max']).toContain(concurrency.queue);
+        expect(
+          concurrency.queue === 'max' &&
+            ![undefined, false].includes(
+              concurrency['cancel-in-progress'] as undefined | boolean,
+            ),
+        ).toBe(false);
+      }
     }
+    expect(queued).toEqual(exceptional);
     const config = parse(readFileSync('.github/actionlint.yaml', 'utf8'));
-    expect(config.paths).toEqual({
-      '.github/workflows/deploy-console.yml': {
-        ignore: [
-          '^unexpected key "queue" for "concurrency" section\\. expected one of "cancel-in-progress", "group"$',
-        ],
-      },
-    });
+    expect(config.paths).toEqual(
+      Object.fromEntries(
+        exceptional.map((file) => [
+          file,
+          {
+            ignore: [
+              '^unexpected key "queue" for "concurrency" section\\. expected one of "cancel-in-progress", "group"$',
+            ],
+          },
+        ]),
+      ),
+    );
   });
 
   it.each([
