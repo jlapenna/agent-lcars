@@ -489,7 +489,7 @@ AUDIT_READ_TOKEN="$(gh auth token)" \
   node tools/verify-onboarding.mjs --registrations=/path/to/accepted-registration-receipt.yml
 ```
 
-Run this on the completed default-branch CI head. Preserve all per-repository
+After activating the merge-candidate requirement, land one PR through the active check without bypass and wait for default-branch CI on that commit. Run the audit there. An earlier head or missing historical evidence gives an unverifiable result. A measured failure of the applicable required checks fails the audit. Preserve all per-repository
 and per-registration JSON facts. Repeat the audit after adding a watched repo
 or changing App permissions, registration identities, or rulesets. Every fact
 must be `pass` for complete qualification; `unverifiable` explicitly records

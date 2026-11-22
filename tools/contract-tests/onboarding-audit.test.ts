@@ -94,11 +94,12 @@ async function githubHttpError(
 
 describe('read-only onboarding audit', () => {
   it.each([
-    ['pass', 'pass'],
-    ['fail', 'fail'],
+    ['pass', 'pass', '2026-11-19T12:00:00Z'],
+    ['fail', 'fail', '2026-11-19T12:00:00Z'],
+    ['pass', 'unverifiable', '2026-11-20T16:00:36.429Z'],
   ])(
     'audits candidate checks using the protected push evaluation (%s)',
-    async (result, expected) => {
+    async (result, expected, updated_at) => {
       const checks = [
         { context: 'LCARS review (merge candidate)', integration_id: 4457090 },
       ];
@@ -124,18 +125,14 @@ describe('read-only onboarding audit', () => {
         [`${prefix}/rule-suites/7`]: {
           rule_evaluations: [
             {
+              enforcement: 'active',
               rule_type: 'required_status_checks',
               rule_source: { type: 'ruleset', id: 42 },
               result,
             },
           ],
         },
-        [`${prefix}/42/history?per_page=100&page=1`]: [
-          { version_id: 3, updated_at: '2026-11-20T05:11:25Z' },
-        ],
-        [`${prefix}/42/history/3`]: {
-          state: { enforcement: 'active', rules: [rule] },
-        },
+        [`${prefix}/42`]: { updated_at, enforcement: 'active', rules: [rule] },
       });
       expect(
         (await audit(api)).find(({ fact }) => fact === 'required-checks')

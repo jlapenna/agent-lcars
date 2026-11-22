@@ -415,54 +415,54 @@ export async function auditRepository({
       const sourceRules = rules.filter((rule) =>
         rule.parameters?.required_status_checks?.some(isCandidateRule),
       );
+      let missingEvaluation = false;
       for (const source of sourceRules) {
-        if (!source.ruleset_id || source.ruleset_source_type !== 'Repository')
-          throw new UnverifiableError(
-            'Required review ruleset history unavailable',
-          );
-        const path = `/repos/${repo}/rulesets/${source.ruleset_id}/history`;
-        const history = await optionalMetadataRead(capability, () =>
-          pages(api, path, metadataToken),
+        const result = detail.rule_evaluations.find(
+          (evaluation) =>
+            evaluation.rule_type === 'required_status_checks' &&
+            evaluation.enforcement === 'active' &&
+            evaluation.rule_source.type === 'ruleset' &&
+            evaluation.rule_source.id === source.ruleset_id,
         );
-        const version = history
-          .filter(
-            (item) =>
-              Date.parse(item.updated_at) <= Date.parse(suite.pushed_at),
-          )
-          .sort(
-            (a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at),
-          )[0];
-        if (!version)
-          throw new UnverifiableError(
-            'No retained ruleset version for the default-branch update',
+        if (!result || !source.ruleset_id) {
+          missingEvaluation = true;
+          continue;
+        }
+        let state;
+        try {
+          state = await api(
+            `/repos/${repo}/rulesets/${source.ruleset_id}`,
+            metadataToken,
           );
-        const { state } = await optionalMetadataRead(capability, () =>
-          api(`${path}/${version.version_id}`, metadataToken),
-        );
+        } catch (error) {
+          if (!isAccessGap(error)) throw error;
+          missingEvaluation = true;
+          continue;
+        }
+        // GitHub records suite pushes to the second. Only an earlier ruleset
+        // version can identify the contexts and Apps that the suite evaluated.
         if (
+          !(
+            Math.floor(Date.parse(state.updated_at) / 1000) <
+            Math.floor(Date.parse(suite.pushed_at) / 1000)
+          ) ||
           state.enforcement !== 'active' ||
           !state.rules.some((rule) =>
             rule.parameters?.required_status_checks?.some(isCandidateRule),
           )
-        )
-          throw new UnverifiableError(
-            'The default-branch update predates the candidate review requirement',
-          );
-        const result = detail.rule_evaluations.find(
-          (evaluation) =>
-            evaluation.rule_type === 'required_status_checks' &&
-            evaluation.rule_source.type === 'ruleset' &&
-            evaluation.rule_source.id === source.ruleset_id,
-        );
-        if (!result)
-          throw new UnverifiableError(
-            'Missing required-check evaluation for the protected update',
-          );
+        ) {
+          missingEvaluation = true;
+          continue;
+        }
         if (result.result !== 'pass')
           throw new AuditError(
             'The protected update did not pass its required status checks',
           );
       }
+      if (missingEvaluation)
+        throw new UnverifiableError(
+          'The retained required-check evaluation could not be matched to the active ruleset at push time',
+        );
     }
     return `${required.length} required contexts observed on ${commit.sha}`;
   });
