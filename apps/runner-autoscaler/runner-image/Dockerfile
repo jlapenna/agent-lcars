@@ -899,9 +899,6 @@ RUN claude plugin marketplace add /opt/repo-tools && \
 # Third-party web and Go guidance plugins follow their upstream default
 # branches directly, with no vendoring or review step. This layer sits after
 # the repo-tools layer, so each repo-tools-driven rebuild refreshes them.
-# DISABLE_TELEMETRY opts the modern-web-guidance CLI out of telemetry, as
-# upstream recommends (it also opts Claude Code out of Statsig metrics).
-ENV DISABLE_TELEMETRY=1
 RUN codex plugin marketplace add GoogleChrome/modern-web-guidance && \
     codex plugin marketplace add JetBrains/go-modern-guidelines && \
     codex plugin add modern-web-guidance@googlechrome && \
