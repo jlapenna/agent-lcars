@@ -348,6 +348,7 @@ export interface OrchestratorStore {
      * history lookup and any new Run. */
     requestBinding?: RequestBinding;
     readProviderRouting?: boolean;
+    readGithubProjection?: boolean;
     sourceRevision?: WorkRevision;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal>;
@@ -628,6 +629,7 @@ export interface VersionedTask {
 
 /** The single consistent snapshot supplied to a request transaction. */
 export interface RequestTransactionState {
+  readonly githubProjection?: GithubAnchorProjection;
   /** Read only for source-ordered label handoffs, inside the claim transaction. */
   readonly latestRun?: Run;
   readonly retainedClaims?: readonly Run[];

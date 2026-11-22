@@ -195,6 +195,29 @@ is that its acceptance is met, and say which: on an issue anchor use
 `Tracks #N` instead of `Fixes #N`; on a native Work anchor keep the
 `Work: work:<id>` reference (§5) and state what remains.
 
+Before parking, identify the exact decision, approval, or access the operator
+must provide. If an authorized retry, fallback, or other recovery can still
+advance the work, use it first. Start the handoff with a plain-text line in this
+format:
+
+```text
+Human ask: Approve the production cutover for the staged release.
+Human approval: Approve the staged production cutover
+```
+
+When the operator can make a choice, put two to four `Human option: <label>`
+lines immediately after the ask. For a single approval, use one
+`Human approval: <label>` line instead. Use distinct, self-contained button
+labels of up to 120 characters. For anything that needs a free-text reply,
+omit these lines. Put a blank line before the supporting context. Each button
+sends the operator's choice as a reply tied to the original ask.
+
+Include the affected target in the ask and keep the request to 400 characters
+or less. Follow the line with why human authority is required, what you already
+tried, and what will let the agent resume.
+Start the terminal response with this decision block. For an issue anchor,
+also put the same block first in the park comment, before the markers.
+
 End your response with `PARK <blocker and resume trigger>`. A park is a
 real outcome, not silence: it must leave the same kind of durable,
 marker-stamped evidence any other outcome does (§5), or it is

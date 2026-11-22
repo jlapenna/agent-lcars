@@ -27,6 +27,7 @@ import {
 } from 'react';
 
 import type { ActionItem, MergeableState } from '../lib/action-items';
+import { type HumanChoice, issueHumanDecision } from '../lib/human-ask';
 import {
   localAgentCommand,
   localAgentDisplayName,
@@ -42,12 +43,14 @@ import {
   supportedAgentPipelines,
 } from '../lib/watched-repo';
 import {
+  answerGithubDecision,
   approveAndRebase,
   mergePr,
   type ReplyResult,
   replyToItem,
 } from './actions';
 import { githubIssueUrl } from './format';
+import { HumanDecisionButtons } from './human-decision-buttons';
 import { HumanNeededSummary } from './human-needed-summary';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { beginOperatorReauth, takePendingReply } from './operator-reauth';
@@ -254,6 +257,9 @@ export function ActionItemCard({
   variant?: 'card' | 'workspace';
   onReplyDraftChange?: (hasDraft: boolean) => void;
 }) {
+  const decision = issueHumanDecision(item);
+  const [answeredDecision, setAnsweredDecision] = useState<string>();
+  const answeringDecision = useRef(false);
   const [expanded, setExpanded] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [labelsExpanded, setLabelsExpanded] = useState(false);
@@ -400,6 +406,35 @@ export function ActionItemCard({
   };
 
   const handleReply = () => submitReply(replyBody, chosenReplyTarget);
+
+  const choose = (choice: HumanChoice) => {
+    if (
+      !decision ||
+      answeredDecision === decision.runId ||
+      answeringDecision.current
+    )
+      return;
+    answeringDecision.current = true;
+    setError(undefined);
+    startTransition(async () => {
+      try {
+        const result = await answerGithubDecision(
+          item.repo,
+          item.number,
+          decision.runId,
+          choice,
+        );
+        if (!result.ok) {
+          setError(result.message);
+          return;
+        }
+        setAnsweredDecision(decision.runId);
+        notifications.show({ message: result.note, color: 'green' });
+      } finally {
+        answeringDecision.current = false;
+      }
+    });
+  };
 
   // Back from a GitHub re-authorization that a refused reply started: put the
   // reply back and send it, so the operator's one click still does the job.
@@ -742,7 +777,21 @@ export function ActionItemCard({
           </Text>
         )}
 
-        {decisionSummary && (
+        {decision && (
+          <Text size="sm" fw={600} aria-label="Human ask">
+            {decision.ask}
+          </Text>
+        )}
+        {decision && (
+          <HumanDecisionButtons
+            decision={decision}
+            disabled={
+              !ready || isPending || answeredDecision === decision.runId
+            }
+            onChoose={choose}
+          />
+        )}
+        {!decision && decisionSummary && (
           <Text size="sm" aria-label="Inbox summary">
             {decisionSummary}
           </Text>

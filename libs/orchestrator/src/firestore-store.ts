@@ -447,6 +447,7 @@ export class FirestoreStore implements OrchestratorStore {
     requestSource: RequestSource;
     requestBinding?: RequestBinding;
     readProviderRouting?: boolean;
+    readGithubProjection?: boolean;
     sourceRevision?: WorkRevision;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
@@ -543,8 +544,20 @@ export class FirestoreStore implements OrchestratorStore {
       const previousSourceRevision = revisionSnapshot?.exists
         ? workRevisionSchema.parse(revisionSnapshot.data())
         : undefined;
+      const githubProjection =
+        input.readGithubProjection && !isWorkAnchor(input.taskId)
+          ? (await tx.get(this.#githubAnchorRef(input.taskId))).data()?.[
+              'projection'
+            ]
+          : undefined;
       const outcome = input.decide({
         previousSourceRevision,
+        ...(githubProjection === undefined
+          ? {}
+          : {
+              githubProjection:
+                githubAnchorProjectionSchema.parse(githubProjection),
+            }),
         ...(routing === undefined
           ? {}
           : {

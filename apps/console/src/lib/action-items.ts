@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { maintainerLogin } from './deployment';
 import { type WatchedRepo } from './github-client';
+import type { HumanDecision } from './human-ask';
 
 export type ActionType =
   | 'needs-human'
@@ -49,6 +50,7 @@ export interface ActionItem {
   labels: string[];
   assigneeLogins: string[];
   humanNeededActions?: HumanNeededActions;
+  humanDecision?: HumanDecision & { runId: string };
   lastCommentBody?: string;
   lastCommentUrl?: string;
   lastCommentAuthor?: string;

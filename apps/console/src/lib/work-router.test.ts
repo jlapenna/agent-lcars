@@ -1917,6 +1917,58 @@ describe('items routes', () => {
   });
 
   describe('reply', () => {
+    it('answers only the displayed park and recovers the original click receipt', async () => {
+      const ctx = contextWithSession();
+      await parkedItemWithSession(ctx);
+      const path = `/items/${ID}/reply`;
+      const body = {
+        text: 'Approved: Roll out to staging',
+        requestId: 'decision-r1',
+        expectedParkedRunId: `work:${ID}/r1`,
+      };
+      const first = await call(ctx, 'POST', path, body);
+      expect(first.status).toBe(200);
+      await ctx.runtime.orchestrator.report(first.json.admittedRunId, {
+        ok: true,
+        summary: 'park',
+      });
+      const replay = await call(ctx, 'POST', path, body);
+      expect(replay.status).toBe(200);
+      expect(replay.json.admittedRunId).toBe(first.json.admittedRunId);
+      const stale = await call(ctx, 'POST', path, {
+        ...body,
+        requestId: 'another-click-for-r1',
+      });
+      expect(stale.status).toBe(409);
+      expect(stale.json.message).toContain('decision changed');
+      expect(await ctx.runtime.store.listRuns({ workId: ID })).toHaveLength(2);
+    });
+
+    it('refuses a click if a newer run parks while resume context is loading', async () => {
+      const ctx = contextWithSession();
+      await parkedItemWithSession(ctx);
+      ctx.sessionDocsForRuns = async () => {
+        const newer = await call(ctx, 'POST', `/items/${ID}/reply`, {
+          text: 'A concurrent operator reply',
+          resume: false,
+        });
+        expect(newer.status).toBe(200);
+        await ctx.runtime.orchestrator.report(newer.json.admittedRunId, {
+          ok: true,
+          summary: 'park',
+        });
+        return [];
+      };
+      const response = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'Approved: Roll out to staging',
+        requestId: 'decision-r1-raced',
+        expectedParkedRunId: `work:${ID}/r1`,
+      });
+      expect(response.status).toBe(409);
+      expect(response.json.message).toContain('decision changed');
+      expect(await ctx.runtime.store.listRuns({ workId: ID })).toHaveLength(2);
+    });
+
     it('round-trips the typed client through the actual HTTP handler for admission and conflict feedback', async () => {
       const ctx = contextWithSession();
       await parkedItemWithSession(ctx);

@@ -400,6 +400,17 @@ the work that has stopped, and the work in flight.
   to decision SLA/oldest-decision selection, or trigger decision notifications.
   The owning lifetime and dismissal constants are in `app/inbox-card.ts`.
 
+  For a Human needed handoff, the Inbox shows the agent's exact
+  `Human ask:` line ahead of supporting context. When the handoff supplies
+  an approval or options in the
+  [parking format](../../agents/shared/skills/agent-protocol/reference/agent-protocol.md#4-parking--blocked-on-a-human),
+  the detail pane lets the operator send that answer with one click. The
+  reply records the original ask and the chosen answer in the Work history.
+  For GitHub anchors, LCARS reads the ask from the verified parked run,
+  even when a later status comment appears. One-click replies use Work
+  operator grants and bind admission to that exact run. Free-text replies
+  and older handoffs remain supported.
+
 - **FE-IN-2 [Shipped] Primary action** (`lib/primary-action.ts`). Each GitHub card
   shows at most one primary action chosen from its state: **Approve & Merge**,
   **Approve & Rebase**, **Reply**, or **Open failing check ↗**. The last

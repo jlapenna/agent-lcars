@@ -785,6 +785,14 @@ export const itemsContract = {
         /** Retries with this key return the original admitted round. Scoped
          * to the item and authenticated principal; changed input conflicts. */
         requestId: workReplyRequestIdSchema.optional(),
+        expectedParkedRunId: z
+          .string()
+          .min(1)
+          .max(256)
+          .optional()
+          .describe(
+            'Only admit a new reply if this park still owns the decision.',
+          ),
         /** Defaults to true. False starts a fresh session that still
          *  carries the reply text. */
         resume: z.boolean().optional(),
