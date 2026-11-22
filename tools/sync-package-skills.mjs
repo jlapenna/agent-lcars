@@ -64,7 +64,7 @@ if (command === "-v" || command === "--version") {
   console.log(${JSON.stringify(version)});
   process.exit(0);
 }
-if (!command || command === "-h" || command === "--help") {
+if (!command || process.argv.slice(2).some((arg) => arg === "-h" || arg === "--help")) {
   console.log(${JSON.stringify(
     `Usage: ${LOCAL_CLI} <command> [args]\n\nCommands: ${GUIDANCE_COMMANDS.join(', ')}\n\n` +
       `The skill is installed from the repository lockfile; Renovate updates it.`,
