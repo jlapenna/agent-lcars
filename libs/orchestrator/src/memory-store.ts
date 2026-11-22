@@ -262,6 +262,7 @@ export class MemoryStore implements OrchestratorStore {
     requestSource: RequestSource;
     requestBinding?: RequestBinding;
     readProviderRouting?: boolean;
+    readGithubProjection?: boolean;
     sourceRevision?: WorkRevision;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
@@ -310,6 +311,13 @@ export class MemoryStore implements OrchestratorStore {
         ? undefined
         : structuredClone(this.#sourceRevisions.get(revisionKey));
     const outcome = input.decide({
+      ...(input.readGithubProjection
+        ? {
+            githubProjection: structuredClone(
+              this.#githubAnchorProjections.get(key)?.projection,
+            ),
+          }
+        : {}),
       previousSourceRevision,
       task,
       activeRun,

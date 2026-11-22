@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { logger } from '@agent-lcars/logging';
+import { isLive } from '@agent-lcars/orchestrator';
 import { latestRun } from '@agent-lcars/work/derive';
 
 import {
@@ -66,11 +67,18 @@ export async function getAuthoritativeQueueItems(): Promise<ActionItemsResult> {
           run.params?.['replyExpectedParkedRunId'] &&
           run.result?.summary !== 'park'
         ) {
+          const actionTypes = item.actionTypes.filter(
+            (type) => type !== 'needs-human',
+          );
+          if (
+            !isLive(run.state) &&
+            !run.result?.ok &&
+            !actionTypes.includes('run-failed')
+          )
+            actionTypes.push('run-failed');
           return {
             ...item,
-            actionTypes: item.actionTypes.filter(
-              (type) => type !== 'needs-human',
-            ),
+            actionTypes,
           };
         }
         const [actions, decision] = await Promise.all([

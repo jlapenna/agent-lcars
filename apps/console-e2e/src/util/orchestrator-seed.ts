@@ -75,6 +75,7 @@ export async function readActiveOrchestratorRun(params: {
 /** A real durable webhook-projection write, with no fixture route/cache bust. */
 export async function updateDashboardAnchor(params: {
   issue: number;
+  labels?: string[];
   title?: string;
   remove?: boolean;
   mergeableState?: 'clean' | 'behind';
@@ -94,6 +95,7 @@ export async function updateDashboardAnchor(params: {
       : {
           projection: {
             ...current,
+            labels: params.labels ?? current.labels,
             title: params.title ?? current.title,
             sourceUpdatedAt: params.sourceUpdatedAt ?? current.sourceUpdatedAt,
             ...(params.mergeableState

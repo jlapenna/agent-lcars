@@ -240,10 +240,7 @@ export async function answerGithubDecision(
       !/^\d+$/.test(runId.slice(key.length + 2))
     )
       throw new ActionError('Invalid parked run', 400);
-    const [run, projection] = await Promise.all([
-      work.runtime.store.readRun(runId),
-      work.runtime.store.readGithubAnchorProjection(task),
-    ]);
+    const run = await work.runtime.store.readRun(runId);
     const decision =
       run && taskKey(run.task) === key
         ? await readGithubHumanDecision(work.runtime.store, run)
@@ -253,7 +250,7 @@ export async function answerGithubDecision(
         candidate.kind === selection?.kind &&
         candidate.label === selection?.label,
     );
-    if (projection?.state !== 'open' || !decision || !choice)
+    if (!decision || !choice)
       throw new ActionError(
         'This decision changed. Refresh to see the current handoff.',
         409,

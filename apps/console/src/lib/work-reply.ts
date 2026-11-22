@@ -8,6 +8,7 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 import {
   decidedRun,
+  type GithubAnchorProjection,
   isRefusal,
   isWorkAnchor,
   type OperationalIntervention,
@@ -26,6 +27,7 @@ import {
 import { deriveItemState, latestRun } from '@agent-lcars/work/derive';
 
 import { isClosedItemState } from './session-expiry';
+import { hasCrossRepoOption } from './watched-repo';
 import { forbiddenReason, type WorkContext } from './work-mint';
 import { authorizeProviderFallback } from './work-provider-fallback';
 
@@ -319,6 +321,17 @@ export async function requestReply(
     ...(request.expectedParkedRunId === undefined
       ? {}
       : { expectedParkedRunId: request.expectedParkedRunId }),
+    ...(!isWorkAnchor(request.task) && request.expectedParkedRunId !== undefined
+      ? {
+          githubDecisionParams: (projection: GithubAnchorProjection) =>
+            projection.state === 'open' &&
+            projection.labels.includes('status:needs-human')
+              ? hasCrossRepoOption(projection.labels)
+                ? { crossRepo: 'true' }
+                : {}
+              : undefined,
+        }
+      : {}),
     params: {
       mode: 'reply',
       reply: request.text,

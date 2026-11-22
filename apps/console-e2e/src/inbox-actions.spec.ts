@@ -394,6 +394,10 @@ test.describe('Inbox authorized action journeys', () => {
       number,
       `Human ask: ${ask}\nHuman option: Keep 30 days\nHuman option: Keep 90 days`,
     );
+    await updateDashboardAnchor({
+      issue: number,
+      labels: ['status:needs-human', 'agent:claude', 'agent-option:cross-repo'],
+    });
     await selectItem(page, number);
     const detail = page.locator('.queue-workspace__detail');
     await expect(detail.getByLabel('Human ask')).toHaveText(ask);
@@ -411,6 +415,7 @@ test.describe('Inbox authorized action journeys', () => {
             mode: 'reply',
             reply,
             replyExpectedParkedRunId: parkedRunId,
+            crossRepo: 'true',
           },
         },
       });
