@@ -94,12 +94,13 @@ async function githubHttpError(
 
 describe('read-only onboarding audit', () => {
   it.each([
-    ['pass', 'pass', '2026-11-19T12:00:00Z'],
-    ['fail', 'fail', '2026-11-19T12:00:00Z'],
-    ['pass', 'unverifiable', '2026-11-20T16:00:36.429Z'],
+    ['pass', 'pass', '2026-11-19T12:00:00Z', 'pass'],
+    ['pass', 'unverifiable', '2026-11-19T12:00:00Z', 'bypass'],
+    ['fail', 'fail', '2026-11-19T12:00:00Z', 'bypass'],
+    ['pass', 'unverifiable', '2026-11-20T16:00:36.429Z', 'pass'],
   ])(
     'audits candidate checks using the protected push evaluation (%s)',
-    async (result, expected, updated_at) => {
+    async (result, expected, updated_at, suiteResult) => {
       const checks = [
         { context: 'LCARS review (merge candidate)', integration_id: 4457090 },
       ];
@@ -118,7 +119,7 @@ describe('read-only onboarding audit', () => {
               id: 7,
               after_sha: 'abc123',
               ref: 'refs/heads/main',
-              result: result === 'pass' ? 'pass' : 'bypass',
+              result: suiteResult,
               pushed_at: '2026-11-20T16:00:36Z',
             },
           ],

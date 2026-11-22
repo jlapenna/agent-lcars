@@ -459,6 +459,10 @@ export async function auditRepository({
             'The protected update did not pass its required status checks',
           );
       }
+      if (suite.result === 'bypass')
+        throw new UnverifiableError(
+          'The default-branch update used a bypass; verify the next unbypassed PR merge',
+        );
       if (missingEvaluation)
         throw new UnverifiableError(
           'The retained required-check evaluation could not be matched to the active ruleset at push time',
