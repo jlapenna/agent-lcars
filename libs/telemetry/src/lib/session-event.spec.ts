@@ -227,3 +227,33 @@ describe('livenessForSessionEvent', () => {
     }
   });
 });
+
+describe('parseSessionSummaryV1 herdr pane', () => {
+  it('keeps a herdr-core terminal address', () => {
+    for (const herdrPaneId of ['t36', 't1b', 'T-2.a_b']) {
+      expect(
+        parseSessionSummaryV1({ ...summary, herdrPaneId }, 'sess-1')
+          ?.herdrPaneId,
+      ).toBe(herdrPaneId);
+    }
+  });
+
+  it("drops another machine's terminal and anything that is not an identifier", () => {
+    for (const herdrPaneId of [
+      'laptop/t7',
+      'w1:p1',
+      't36&view=terminal',
+      '../t36',
+      '',
+      36,
+      'x'.repeat(65),
+    ]) {
+      const parsed = parseSessionSummaryV1(
+        { ...summary, herdrPaneId },
+        'sess-1',
+      );
+      expect(parsed).toBeDefined();
+      expect(parsed?.herdrPaneId).toBeUndefined();
+    }
+  });
+});

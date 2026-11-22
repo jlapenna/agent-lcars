@@ -8,7 +8,11 @@ import type {
   SessionLiveness,
   SessionRepository,
 } from '@agent-lcars/telemetry';
-import { displayLiveness, totalTokens } from '@agent-lcars/telemetry';
+import {
+  displayLiveness,
+  totalTokens,
+  watchableHerdrPaneId,
+} from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
@@ -39,6 +43,10 @@ export interface CliSession {
   host?: string;
   branch?: string;
   worktree?: string;
+  /** The session's herdr terminal on `host`; the join key, with `host`, for
+   * its live view (`sessionLiveViewUrl`). Absent once the session has
+   * recorded its end (`watchableHerdrPaneId`). */
+  herdrPaneId?: string;
   model?: string;
   turns: number;
   /** Cost-weighted token equivalent; see {@link totalTokens}. */
@@ -86,6 +94,7 @@ function toCliSession(doc: CliSessionDoc, now: string): CliSession {
     host: doc.host,
     branch: doc.branch,
     worktree: doc.worktree,
+    herdrPaneId: watchableHerdrPaneId(doc),
     model: doc.model,
     turns: doc.turns,
     totalTokens: totalTokens(doc.tokens),

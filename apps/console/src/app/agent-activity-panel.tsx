@@ -23,7 +23,7 @@ import {
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
-import { shareArtifactUrl } from '../lib/deployment';
+import { sessionLiveViewUrl, shareArtifactUrl } from '../lib/deployment';
 import {
   getWatchedRepos,
   repoDisplayName,
@@ -612,6 +612,7 @@ export function CliSessionRow({
 }) {
   const { host, artifacts } = session;
   const label = cliSessionLabel(session);
+  const liveViewUrl = sessionLiveViewUrl(session);
 
   if (variant === 'operations') {
     return (
@@ -715,6 +716,17 @@ export function CliSessionRow({
         <Text size="xs" c="dimmed">
           last active <RelativeTime iso={session.lastActivityAt} />
         </Text>
+        {liveViewUrl && (
+          <Anchor
+            href={liveViewUrl}
+            target="_blank"
+            rel="noreferrer"
+            size="xs"
+            data-testid="cli-session-live-view"
+          >
+            Open live ↗
+          </Anchor>
+        )}
       </Group>
       {host && artifacts && artifacts.length > 0 && (
         <Stack gap={2}>

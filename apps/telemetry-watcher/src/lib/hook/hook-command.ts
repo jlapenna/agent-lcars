@@ -33,6 +33,11 @@ import {
 import { SESSION_STATE_DIRECTORY } from '../session-title-paths';
 import { findCodexRollout } from './codex-rollout';
 import { acquireFileLock, releaseFileLock } from './file-lock';
+import {
+  defaultHerdrPaneDependencies,
+  type HerdrPaneLookup,
+  resolveHerdrPane,
+} from './herdr-pane';
 import { loadHookClientConfig } from './hook-config';
 import { appendHookLog } from './hook-log';
 import {
@@ -44,6 +49,7 @@ import {
 } from './hook-payload';
 import {
   hookSessionLockPath,
+  type HookSessionState,
   isHookFenced,
   readHookSessionState,
   shouldShipEvent,
@@ -107,6 +113,8 @@ export interface HookCommandDependencies {
   resolvePublicationCheckouts?: (
     cwd: string,
   ) => Promise<{ branch: string; head: string }[] | undefined>;
+  /** Finds the herdr terminal this hook runs in. Host sessions only. */
+  resolveHerdrPane?: () => Promise<HerdrPaneLookup>;
   /** Starts the flusher detached from the hook process. */
   spawnFlusher: () => void;
   /** Runs the flusher to completion (`lcars hook flush`, `--inline`). */
@@ -149,6 +157,7 @@ export function defaultHookCommandDependencies(
     resolveGitBranch: defaultResolveGitBranch,
     isInsideGitCheckout,
     resolvePublicationCheckouts,
+    resolveHerdrPane: () => resolveHerdrPane(defaultHerdrPaneDependencies(env)),
     resolveGithubActor: () =>
       new Promise((resolve) => {
         execFile(
@@ -189,6 +198,73 @@ export function defaultHookCommandDependencies(
     randomId: () => crypto.randomUUID(),
     hostname: () => os.hostname(),
     stderr: (line) => process.stderr.write(`${line}\n`),
+  };
+}
+
+type HerdrPaneState = Pick<
+  HookSessionState,
+  'herdrPaneId' | 'herdrPaneResolved' | 'herdrPaneCheckedAt'
+>;
+
+/** How long to wait before asking herdr-core again after it failed to answer. */
+const HERDR_PANE_RETRY_MS = 5 * 60 * 1000;
+
+function herdrPaneState(state: HookSessionState | undefined): HerdrPaneState {
+  return {
+    ...(state?.herdrPaneId && { herdrPaneId: state.herdrPaneId }),
+    ...(state?.herdrPaneResolved && { herdrPaneResolved: true }),
+    ...(state?.herdrPaneCheckedAt && {
+      herdrPaneCheckedAt: state.herdrPaneCheckedAt,
+    }),
+  };
+}
+
+/**
+ * Asks herdr-core which terminal this session runs in, when this event
+ * should ask at all. `undefined` means it did not ask.
+ *
+ * A session start asks again, because a resumed session can be in another
+ * terminal. Every other event reuses a definite earlier answer, and waits
+ * out {@link HERDR_PANE_RETRY_MS} after a failed one. A dispatched runner
+ * never runs in a herdr-core terminal, and a throttled event ships nothing.
+ */
+async function lookupHerdrPane(
+  deps: HookCommandDependencies,
+  runner: unknown,
+  kind: SessionEventKind,
+  state: HookSessionState | undefined,
+  now: string,
+): Promise<HerdrPaneLookup | undefined> {
+  if (runner || !deps.resolveHerdrPane) return undefined;
+  if (kind !== 'start') {
+    if (state?.herdrPaneResolved || !shouldShipEvent(kind, state, now)) {
+      return undefined;
+    }
+    const sinceFailure = state?.herdrPaneCheckedAt
+      ? Date.parse(now) - Date.parse(state.herdrPaneCheckedAt)
+      : Number.POSITIVE_INFINITY;
+    if (sinceFailure >= 0 && sinceFailure < HERDR_PANE_RETRY_MS) {
+      return undefined;
+    }
+  }
+  return deps
+    .resolveHerdrPane()
+    .catch((): HerdrPaneLookup => ({ status: 'unknown' }));
+}
+
+/** What to report and remember after {@link lookupHerdrPane}. When
+ * herdr-core could not answer, the earlier answer stands. */
+function applyHerdrPaneLookup(
+  state: HookSessionState | undefined,
+  lookup: HerdrPaneLookup | undefined,
+  now: string,
+): HerdrPaneState {
+  const known = herdrPaneState(state);
+  if (!lookup) return known;
+  if (lookup.status === 'unknown') return { ...known, herdrPaneCheckedAt: now };
+  return {
+    ...(lookup.status === 'found' && { herdrPaneId: lookup.paneId }),
+    herdrPaneResolved: true,
   };
 }
 
@@ -555,6 +631,18 @@ async function handleRuntimeHook(
     }
   }
 
+  // The terminal lookup runs herdr-core, so it happens before the session
+  // lock: a slow answer must not make the events queued behind this one give
+  // up on the lock. The state it reads here only decides whether to ask; the
+  // answer is merged into the state read under the lock.
+  const herdrPaneLookup = await lookupHerdrPane(
+    deps,
+    config.runner,
+    kind,
+    readHookSessionState(stateDirectory, payload.sessionId),
+    now,
+  );
+
   // Async hooks (PostToolUse, Stop, SessionEnd) can overlap; the per-session
   // lock makes read-state → append → write-state atomic so no two events
   // share a `seq` and the spool order matches the sequence order.
@@ -586,6 +674,7 @@ async function handleRuntimeHook(
         ...(state?.lastShippedAt && { lastShippedAt: state.lastShippedAt }),
         ...(state?.lastKind && { lastKind: state.lastKind }),
         ...(state?.repoScoped && { repoScoped: true }),
+        ...herdrPaneState(state),
         updatedAt: now,
       });
       log('throttled', `session=${sessionTag}`);
@@ -616,6 +705,7 @@ async function handleRuntimeHook(
         detail: 'unverified child transcript',
       };
     }
+    const herdrPane = applyHerdrPaneLookup(state, herdrPaneLookup, now);
     let summary: SessionSummary | undefined;
     if (reduced || kind !== 'end') {
       const base =
@@ -633,6 +723,10 @@ async function handleRuntimeHook(
       // Branch evidence must be observed from the hook checkout. Never keep a
       // reducer-supplied branch when git resolution fails.
       delete withHost.branch;
+      // The terminal is observed from the hook's own process, never read
+      // from the transcript.
+      delete withHost.herdrPaneId;
+      if (herdrPane.herdrPaneId) withHost.herdrPaneId = herdrPane.herdrPaneId;
       const withGit = await applyGitContext(
         withHost,
         deps.resolveGitBranch,
@@ -721,6 +815,7 @@ async function handleRuntimeHook(
       lastShippedAt: now,
       lastKind: kind,
       ...((repo || state?.repoScoped) && { repoScoped: true }),
+      ...herdrPane,
       updatedAt: now,
     });
     log('spooled', `session=${sessionTag} kind=${kind} seq=${seq}`);

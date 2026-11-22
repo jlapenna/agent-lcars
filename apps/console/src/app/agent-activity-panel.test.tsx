@@ -5,7 +5,7 @@ import type {
 } from '@agent-lcars/telemetry';
 import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentRun } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
@@ -714,4 +714,43 @@ describe('Agents title navigation', () => {
       }
     },
   );
+});
+
+describe('CliSessionRow live view link', () => {
+  const OVIS = 'AGENT_LCARS_OVIS_URL_BY_HOST';
+  afterEach(() => {
+    delete process.env[OVIS];
+  });
+
+  it('links a live session with a herdr pane to its host Ovis', () => {
+    process.env[OVIS] = '{"pike":"https://herdr.example.test"}';
+    render(
+      <MantineProvider>
+        <CliSessionRow
+          session={makeCliSession({ host: 'pike', herdrPaneId: 't36' })}
+        />
+      </MantineProvider>,
+    );
+    const link = screen.getByTestId('cli-session-live-view');
+    expect(link.getAttribute('href')).toBe(
+      'https://herdr.example.test/?pane=t36&view=chat',
+    );
+    expect(link.getAttribute('target')).toBe('_blank');
+  });
+
+  it('shows no link without a pane, or once the session has ended', () => {
+    process.env[OVIS] = '{"pike":"https://herdr.example.test"}';
+    for (const session of [
+      makeCliSession({ host: 'pike' }),
+      makeCliSession({ host: 'pike', herdrPaneId: 't36', liveness: 'ended' }),
+    ]) {
+      const { unmount } = render(
+        <MantineProvider>
+          <CliSessionRow session={session} />
+        </MantineProvider>,
+      );
+      expect(screen.queryByTestId('cli-session-live-view')).toBeNull();
+      unmount();
+    }
+  });
 });

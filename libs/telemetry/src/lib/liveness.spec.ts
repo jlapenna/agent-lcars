@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { displayLiveness } from './liveness';
+import { displayLiveness, watchableHerdrPaneId } from './liveness';
 
 const NOW = '2026-07-10T10:10:00.000Z';
 
@@ -61,5 +61,24 @@ describe('displayLiveness', () => {
         '2026-07-10T09:59:00.000Z',
       ),
     ).toBe('ended');
+  });
+});
+
+describe('watchableHerdrPaneId', () => {
+  it('offers the pane while the session has not recorded its end', () => {
+    for (const liveness of ['live', 'idle'] as const) {
+      expect(watchableHerdrPaneId({ liveness, herdrPaneId: 't36' })).toBe(
+        't36',
+      );
+    }
+    expect(watchableHerdrPaneId({ liveness: 'live' })).toBeUndefined();
+  });
+
+  it('withholds the pane once the session ended, though it may still display as live', () => {
+    for (const liveness of ['ended', 'stale'] as const) {
+      expect(
+        watchableHerdrPaneId({ liveness, herdrPaneId: 't36' }),
+      ).toBeUndefined();
+    }
   });
 });
