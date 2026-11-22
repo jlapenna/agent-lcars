@@ -148,12 +148,24 @@ path, not as one green light:
   `result.summary: pull-request`, and PR `result.ref` record publication.
   Independently confirm the merge on the PR, then that the binding reached
   `state: complete`, before treating the Task as complete.
-- **Report path:** confirm the private
-  `<!-- agent-result:v1:report:$ATTEMPT_ID -->` record with the attempt claim in
-  the same private outcome file **and** complete final findings in the same
-  round (stored whole at any length up to 4 MiB; never truncated).
-  Verify the accepted Run outcome; a bare final message settles nothing, and
-  a PR fails a report item.
+- **Report path:** follow the exact worker pod's log while it runs. Before
+  posting completion, the runner logs `Submitted report attempt=<id> sha256=<digest>`
+  for the saved body. Retain this line with the Run ID and pod UID. The log
+  contains only the digest and attempt ID. After settlement, check that the
+  same attempt finished with outcome `report`. Hash the full UTF-8
+  `result.message` from the single-item API response, for example with
+  `jq -je '.runs[] | select(.runId==$run) | .result.message' --arg run "$run" item.json | sha256sum`.
+  The hashes must match, including trailing newlines. For the continuation check, recover the
+  same attempt’s session history and identify a provider reply after the report
+  was saved. Require a content change beyond trailing line feeds between the
+  saved report and that final reply. Recreate the legacy payload for a
+  usable final message with `printf '%s' "$(cat final-message.txt)" | sha256sum`.
+  Shell command substitution strips trailing line feeds. Record the legacy
+  payload hash alongside the saved-body hash. Verify the regression only when
+  the saved body matches the API and the legacy payload hash differs. If the
+  comparison cannot be made, leave the continuation check unverified.
+  Legacy two-line records produce no saved-body digest. Record any missing
+  evidence before treating a live check as verified.
 
 Then let normal delivery and cleanup take their course. Do not close useful
 delivery to end the run sooner.

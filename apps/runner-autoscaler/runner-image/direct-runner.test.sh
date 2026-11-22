@@ -731,6 +731,9 @@ if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
   printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
     "$FAKE_NATIVE_OUTCOME" "$ATTEMPT_ID" "$ATTEMPT_ID" > "$NATIVE_WORK_OUTCOME_FILE"
 fi
+if [ -n "${FAKE_REPORT_BODY:-}" ]; then
+  printf '%s' "$FAKE_REPORT_BODY" >> "$NATIVE_WORK_OUTCOME_FILE"
+fi
 if [ "${FAKE_OPENCODE_CREATE_AMBIGUOUS_SESSIONS:-}" = 1 ]; then
   printf '[{"id":"ses_new_1","directory":"%s"},{"id":"ses_new_2","directory":"%s"}]\n' "$PWD" "$PWD" > "$OPENCODE_FAKE_SESSIONS_FILE"
 elif [ ! -f "$OPENCODE_FAKE_SESSIONS_FILE" ] || [ "$(cat "$OPENCODE_FAKE_SESSIONS_FILE")" = '[]' ]; then
@@ -2066,6 +2069,18 @@ grep -Fxq 'export sess_1' "$OPENCODE_SEQUENCE_LOG" ||
 [ "$(cat "$OPENCODE_LAST_MESSAGE_PRECHECK_LOG")" = absent ] ||
   fail "opencode native report: the pre-check wrote finalize's message file"
 echo "scenario opencode-native-report: OK"
+
+# A synthetic post-compaction turn acknowledges a report already delivered.
+export FAKE_REPORT_BODY=$'# Daily digest\nAll five findings\n\n' FAKE_OPENCODE_LAST_MESSAGE='Already delivered'
+run_scenario opencode-native-report-after-compaction opencode
+jq -e --arg body "$FAKE_REPORT_BODY" '.outcome == "report" and .message == $body' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "opencode native report: continuation replaced the submitted report"
+export FAKE_OPENCODE_LAST_MESSAGE="You've hit your weekly limit"
+run_scenario opencode-native-report-quota opencode
+jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "opencode native report: the submitted report masked a provider limit"
+unset FAKE_REPORT_BODY
+export FAKE_OPENCODE_LAST_MESSAGE='# OpenCode findings'
 
 # A report record whose round ended without a usable message earns the same
 # correction as Claude and Codex; the corrected round's report settles.

@@ -147,8 +147,9 @@ final message, so an empty last message cannot degrade it to a generic agent fai
 provider for exactly one bounded probe and never parses a reset, and it keeps the provider's cause
 in the reported message. A cross-provider successor still requires the explicit policy and current
 grant above; without them the attempt stays failed and the only change is an honest cause.
-A round's final message (a report's whole deliverable, a parked question, a PR summary) is never
-truncated for storage. `POST /runs/{runId}/complete` accepts it whole up to `RUN_MESSAGE_MAX_BYTES`
+The runner submits the saved report body or, for a legacy two-line record, the provider's final
+response. A resumed follow-up saves the complete updated answer and changed findings in that body.
+The completion message, including a parked question or PR summary, is stored whole. `POST /runs/{runId}/complete` accepts it whole up to `RUN_MESSAGE_MAX_BYTES`
 (4 MiB of UTF-8, `libs/dispatch-contracts/src/run-message.ts`); only a message past that bound is
 refused, and the direct runner refuses such a report before sending it so the round keeps its
 correction. The run document keeps the first 16,384 characters in `result.message`. A longer message

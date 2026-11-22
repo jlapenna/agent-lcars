@@ -93,6 +93,54 @@ async function githubHttpError(
 }
 
 describe('read-only onboarding audit', () => {
+  it.each([
+    ['pass', 'pass', '2026-11-19T12:00:00Z', 'pass'],
+    ['pass', 'unverifiable', '2026-11-19T12:00:00Z', 'bypass'],
+    ['fail', 'fail', '2026-11-19T12:00:00Z', 'bypass'],
+    ['pass', 'unverifiable', '2026-11-20T16:00:36.429Z', 'pass'],
+  ])(
+    'audits candidate checks using the protected push evaluation (%s)',
+    async (result, expected, updated_at, suiteResult) => {
+      const checks = [
+        { context: 'LCARS review (merge candidate)', integration_id: 4457090 },
+      ];
+      const rule = {
+        type: 'required_status_checks',
+        ruleset_id: 42,
+        ruleset_source_type: 'Repository',
+        parameters: { required_status_checks: checks },
+      };
+      const prefix = `/repos/${repo}/rulesets`;
+      const { api } = fixture({
+        [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: [rule],
+        [`${prefix}/rule-suites?ref=refs%2Fheads%2Fmain&time_period=month&rule_suite_result=all&per_page=100&page=1`]:
+          [
+            {
+              id: 7,
+              after_sha: 'abc123',
+              ref: 'refs/heads/main',
+              result: suiteResult,
+              pushed_at: '2026-11-20T16:00:36Z',
+            },
+          ],
+        [`${prefix}/rule-suites/7`]: {
+          rule_evaluations: [
+            {
+              enforcement: 'active',
+              rule_type: 'required_status_checks',
+              rule_source: { type: 'ruleset', id: 42 },
+              result,
+            },
+          ],
+        },
+        [`${prefix}/42`]: { updated_at, enforcement: 'active', rules: [rule] },
+      });
+      expect(
+        (await audit(api)).find(({ fact }) => fact === 'required-checks')
+          ?.status,
+      ).toBe(expected);
+    },
+  );
   it('falls back to the fleet token for an unset workflow secret', async () => {
     const base = fixture();
     const tokens: string[] = [];
@@ -359,6 +407,7 @@ describe('read-only onboarding audit', () => {
     'independent-failure',
     'mixed-legacy-first',
     'mixed-app-first',
+    'same-second',
     'before-enforcement',
     'different-branch',
     'inherited',
@@ -411,7 +460,11 @@ describe('read-only onboarding audit', () => {
                     name: 'LCARS review',
                     head_sha: 'reviewed',
                     external_id: 'lcars-review',
-                    app: { id: evidence === 'different-app' ? 42 : 4457090 },
+                    app: {
+                      id: ['different-app', 'same-second'].includes(evidence)
+                        ? 42
+                        : 4457090,
+                    },
                   },
                 ],
         },
@@ -438,7 +491,13 @@ describe('read-only onboarding audit', () => {
               ],
       },
       [`/repos/${repo}/rulesets/123/history?per_page=100&page=1`]: [
-        { version_id: 2, updated_at: '2026-11-05' },
+        {
+          version_id: 2,
+          updated_at:
+            evidence === 'same-second'
+              ? '2026-11-01T00:00:00.429Z'
+              : '2026-11-05',
+        },
         { version_id: 1, updated_at: '2026-10-01' },
       ],
       [`/repos/${repo}/rulesets/123/history/1`]: {
@@ -475,6 +534,7 @@ describe('read-only onboarding audit', () => {
               'unavailable',
               'before-enforcement',
               'different-branch',
+              'same-second',
               'inherited',
             ].includes(evidence)
           ? 'unverifiable'

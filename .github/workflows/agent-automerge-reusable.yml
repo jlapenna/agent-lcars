@@ -231,7 +231,9 @@ jobs:
       github.event_name == 'schedule' ||
       (github.event_name == 'push' && inputs.app-token-enabled) ||
       (github.event_name == 'workflow_run' && inputs.app-token-enabled &&
-       github.event.workflow_run.event == 'pull_request' &&
+       (github.event.workflow_run.event == 'pull_request' ||
+        (github.event.workflow_run.event == 'pull_request_review' &&
+         github.event.workflow_run.name == 'LCARS review event')) &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository) ||
       github.event_name == 'workflow_dispatch'

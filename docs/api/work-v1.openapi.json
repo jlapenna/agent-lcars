@@ -690,7 +690,7 @@
                                 },
                                 "message": {
                                   "type": "string",
-                                  "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                  "description": "The run message, including the saved report body for a report (final provider reply for legacy two-line reports). Single-item reads return it whole. Listings return its first 16,384 characters when messageOverflow is present."
                                 },
                                 "messageOverflow": {
                                   "type": "object",
@@ -2748,7 +2748,7 @@
                                 },
                                 "message": {
                                   "type": "string",
-                                  "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                  "description": "The run message, including the saved report body for a report (final provider reply for legacy two-line reports). Single-item reads return it whole. Listings return its first 16,384 characters when messageOverflow is present."
                                 },
                                 "messageOverflow": {
                                   "type": "object",
@@ -4611,7 +4611,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                "description": "The run message, including the saved report body for a report (final provider reply for legacy two-line reports). Single-item reads return it whole. Listings return its first 16,384 characters when messageOverflow is present."
                               },
                               "messageOverflow": {
                                 "type": "object",
@@ -5945,7 +5945,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                "description": "The run message, including the saved report body for a report (final provider reply for legacy two-line reports). Single-item reads return it whole. Listings return its first 16,384 characters when messageOverflow is present."
                               },
                               "messageOverflow": {
                                 "type": "object",
@@ -7283,7 +7283,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                "description": "The run message, including the saved report body for a report (final provider reply for legacy two-line reports). Single-item reads return it whole. Listings return its first 16,384 characters when messageOverflow is present."
                               },
                               "messageOverflow": {
                                 "type": "object",
@@ -8662,7 +8662,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                "description": "The run message, including the saved report body for a report (final provider reply for legacy two-line reports). Single-item reads return it whole. Listings return its first 16,384 characters when messageOverflow is present."
                               },
                               "messageOverflow": {
                                 "type": "object",
@@ -10081,7 +10081,7 @@
                                     },
                                     "message": {
                                       "type": "string",
-                                      "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                      "description": "The run message, including the saved report body for a report (final provider reply for legacy two-line reports). Single-item reads return it whole. Listings return its first 16,384 characters when messageOverflow is present."
                                     },
                                     "messageOverflow": {
                                       "type": "object",
@@ -11411,7 +11411,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                "description": "The run message, including the saved report body for a report (final provider reply for legacy two-line reports). Single-item reads return it whole. Listings return its first 16,384 characters when messageOverflow is present."
                               },
                               "messageOverflow": {
                                 "type": "object",
@@ -12787,7 +12787,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                "description": "The run message, including the saved report body for a report (final provider reply for legacy two-line reports). Single-item reads return it whole. Listings return its first 16,384 characters when messageOverflow is present."
                               },
                               "messageOverflow": {
                                 "type": "object",
@@ -14193,7 +14193,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                "description": "The run message, including the saved report body for a report (final provider reply for legacy two-line reports). Single-item reads return it whole. Listings return its first 16,384 characters when messageOverflow is present."
                               },
                               "messageOverflow": {
                                 "type": "object",

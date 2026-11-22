@@ -44,12 +44,17 @@ trap 'rm -rf "$tmp"' EXIT
 
 npm install -g --prefix "$tmp" "$pkg_dir" >/dev/null 2>&1
 
-for cmd in fleet-claude-agent-session fleet-codex-issue-guardrail fleet-identity; do
+for cmd in fleet-claude-agent-session fleet-codex-issue-guardrail; do
   if [ ! -x "$tmp/bin/$cmd" ]; then
     echo "FAIL: $cmd not installed or not executable" >&2
     exit 1
   fi
 done
+
+if [ -e "$tmp/bin/fleet-identity" ] || [ -L "$tmp/bin/fleet-identity" ]; then
+  echo "FAIL: fleet-identity must not be installed as a bin command" >&2
+  exit 1
+fi
 
 real="$(readlink -f "$tmp/bin/fleet-codex-issue-guardrail")"
 if [ ! -f "$(dirname "$real")/fleet-identity.cjs" ]; then
