@@ -42,11 +42,6 @@ bash tools/setup-nx-native-file-cache.sh
 echo "==> Regenerating git hooks"
 ./tools/setup-git-hooks.sh
 
-# The ignored package skills (.agents/skills/modern-web-guidance) come from
-# postinstall, which an up-to-date install also skips; resync them explicitly.
-echo "==> Syncing package agent skills"
-node tools/sync-package-skills.mjs
-
 # Agent sessions commit as the fleet identity, not the maintainer. An
 # interactive Claude/Codex session runs git under the maintainer's global
 # ~/.gitconfig, so without this every agent commit is authored "Joe LaPenna"

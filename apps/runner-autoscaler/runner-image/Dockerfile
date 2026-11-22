@@ -896,6 +896,20 @@ RUN codex plugin marketplace add /opt/repo-tools && \
     codex plugin add repo-tools@repo-tools
 RUN claude plugin marketplace add /opt/repo-tools && \
     claude plugin install repo-tools@repo-tools
+# Third-party web and Go guidance plugins follow their upstream default
+# branches directly, with no vendoring or review step. This layer sits after
+# the repo-tools layer, so each repo-tools-driven rebuild refreshes them.
+# DISABLE_TELEMETRY opts the modern-web-guidance CLI out of telemetry, as
+# upstream recommends (it also opts Claude Code out of Statsig metrics).
+ENV DISABLE_TELEMETRY=1
+RUN codex plugin marketplace add GoogleChrome/modern-web-guidance && \
+    codex plugin marketplace add JetBrains/go-modern-guidelines && \
+    codex plugin add modern-web-guidance@googlechrome && \
+    codex plugin add modern-go-guidelines@goland-codex-marketplace
+RUN claude plugin marketplace add GoogleChrome/modern-web-guidance && \
+    claude plugin marketplace add JetBrains/go-modern-guidelines && \
+    claude plugin install modern-web-guidance@googlechrome && \
+    claude plugin install modern-go-guidelines@goland-claude-marketplace
 
 # Stage the Hindsight coding-agent runtime and register hooks/MCP/skills for
 # Claude Code, Codex and Antigravity; OpenCode loads ~/.hindsight/coding-agents
