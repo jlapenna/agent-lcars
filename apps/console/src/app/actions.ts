@@ -31,6 +31,7 @@ import {
 import { AUTHORITATIVE_QUEUE_TAG } from '../lib/cache-tags';
 import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
 import { safeReturnPath } from '../lib/github-reauth';
+import type { IssueDecisionAnswer } from '../lib/human-ask';
 import type { Pipeline } from '../lib/primary-action';
 
 // LAN preview goes through the shared test-session adapter inside auth()
@@ -159,6 +160,7 @@ export async function replyToItem(
   assignedPipeline?: Pipeline,
   /** The operator chose `assignedPipeline` in the reply's hand-off control. */
   handoff = false,
+  answer?: IssueDecisionAnswer,
 ): Promise<ReplyResult> {
   const session = await requireAdmin();
   try {
@@ -169,6 +171,7 @@ export async function replyToItem(
       await operatorFor(session),
       assignedPipeline,
       handoff,
+      ...(answer ? [answer] : []),
     );
     revalidateDashboard();
     // A reply that dispatched nobody is a success, but not the one the

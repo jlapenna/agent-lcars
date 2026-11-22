@@ -70,6 +70,37 @@ function renderCard(
 }
 
 describe('ActionItemCard', () => {
+  it('posts the selected option as the operator reply in one click', async () => {
+    vi.mocked(replyToItem).mockResolvedValueOnce({
+      ok: true,
+      dispatched: false,
+      note: 'Posted as a comment',
+    });
+    const item = makeItem({
+      actionTypes: ['needs-human'],
+      lastCommentBody:
+        'Human ask: Choose a retention policy.\nHuman option: Keep 30 days\nHuman option: Keep 90 days',
+      lastCommentUrl: 'https://github.com/owner/repo/issues/1#issuecomment-1',
+    });
+    renderCard(item);
+    const selected = screen.getByRole('button', { name: 'Keep 90 days' });
+    expect(screen.getByRole('button', { name: 'Keep 30 days' })).toBeEnabled();
+    fireEvent.click(selected);
+    await waitFor(() => expect(selected).toBeDisabled());
+    expect(replyToItem).toHaveBeenCalledExactlyOnceWith(
+      item.repo,
+      item.number,
+      'Selected: Keep 90 days\n\nFor this request: Choose a retention policy.',
+      undefined,
+      false,
+      {
+        ask: 'Choose a retention policy.',
+        choice: { kind: 'option', label: 'Keep 90 days' },
+        commentUrl: item.lastCommentUrl,
+      },
+    );
+  });
+
   it('keeps superseded handoff actions historical while the current description and reply remain visible', () => {
     const { rerender } = render(
       <MantineProvider>

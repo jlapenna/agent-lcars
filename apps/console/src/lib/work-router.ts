@@ -691,6 +691,9 @@ export const workRouter = os.router({
         ...(input.requestId === undefined
           ? {}
           : { requestId: input.requestId }),
+        ...(input.expectedParkedRunId === undefined
+          ? {}
+          : { expectedParkedRunId: input.expectedParkedRunId }),
         ...(input.resume === undefined ? {} : { resume: input.resume }),
         ...(input.pipeline === undefined ? {} : { pipeline: input.pipeline }),
         ...(input.fallbackPipelines === undefined

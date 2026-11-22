@@ -5,9 +5,21 @@ import { workTitle } from '@agent-lcars/work/derive';
 import { Anchor, Button, Stack, Text, Textarea, Title } from '@mantine/core';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useEffectEvent, useState, useTransition } from 'react';
+import {
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  useTransition,
+} from 'react';
 
+import {
+  humanAskFromHandoff,
+  humanDecisionFromHandoff,
+  humanDecisionReply,
+} from '../lib/human-ask';
 import { DecisionWaiting } from './decision-waiting';
+import { HumanDecisionButtons } from './human-decision-buttons';
 import { HumanNeededSummary } from './human-needed-summary';
 import {
   nativeCardText,
@@ -36,6 +48,8 @@ export function NativeDecisionRow({
   const { work } = card;
   const report = card.kind === 'report';
   const reason = report ? 'report-ready' : 'needs-human';
+  const original = nativeCardText(card);
+  const ask = report ? undefined : humanAskFromHandoff(original);
   return (
     <div
       className="queue-item-row"
@@ -56,7 +70,7 @@ export function NativeDecisionRow({
             {workTitle(work)}
           </span>
           <span className="queue-item-row__question">
-            {card.decisionSummary ?? nativeCardText(card)}
+            {ask ?? card.decisionSummary ?? original}
           </span>
           <div className="ops-inbox__meta">
             <span className="ops-ref">
@@ -105,6 +119,14 @@ export function NativeDecisionDetail({
   onReplyDraftChange?: (hasDraft: boolean) => void;
 }) {
   const { work, canReply } = card;
+  const decision =
+    work.state === 'parked'
+      ? humanDecisionFromHandoff(nativeCardText(card))
+      : undefined;
+  const parkedRunId =
+    work.state === 'parked' ? work.runs.at(-1)?.runId : undefined;
+  const submitting = useRef(false);
+  const [answeredRunId, setAnsweredRunId] = useState<string>();
   const [text, setText] = useState('');
   const [feedback, setFeedback] = useState<string>();
   const [pending, startTransition] = useTransition();
@@ -115,25 +137,39 @@ export function NativeDecisionDetail({
     notifyDraft(Boolean(text) || pending);
   }, [text, pending]);
   const router = useRouter();
-  const reply = () =>
+  const reply = (body: string, decisionRunId?: string) => {
+    if (!replyToWorkItem || !canReply || !body.trim() || submitting.current)
+      return;
+    submitting.current = true;
     startTransition(async () => {
-      if (!replyToWorkItem || !canReply || !text.trim()) return;
-      const [error, result] = await replyToWorkItem({
-        id: work.anchor.workId,
-        text: text.trim(),
-      });
-      if (error) {
-        setFeedback(error.message);
-        return;
+      try {
+        const [error, result] = await replyToWorkItem({
+          id: work.anchor.workId,
+          text: body.trim(),
+          ...(decisionRunId === undefined
+            ? {}
+            : {
+                requestId: `inbox-decision:${decisionRunId}`,
+                expectedParkedRunId: decisionRunId,
+              }),
+        });
+        if (error) {
+          setFeedback(error.message);
+          return;
+        }
+        setAnsweredRunId(parkedRunId);
+        setText('');
+        const message = replyAdmissionMessage(result?.resumed === true);
+        if (onReplyAdmitted) {
+          setFeedback(undefined);
+          onReplyAdmitted(message);
+        } else setFeedback(message);
+        router.refresh();
+      } finally {
+        submitting.current = false;
       }
-      setText('');
-      const message = replyAdmissionMessage(result?.resumed === true);
-      if (onReplyAdmitted) {
-        setFeedback(undefined);
-        onReplyAdmitted(message);
-      } else setFeedback(message);
-      router.refresh();
     });
+  };
   return (
     <Stack
       className="queue-detail-state"
@@ -155,7 +191,26 @@ export function NativeDecisionDetail({
             : work.state}{' '}
         · <RelativeTime iso={nativeCardTime(card)} />
       </Text>
-      {card.decisionSummary && (
+      {decision && (
+        <Text size="sm" fw={600} aria-label="Human ask">
+          {decision.ask}
+        </Text>
+      )}
+      {decision && parkedRunId && (
+        <HumanDecisionButtons
+          decision={decision}
+          disabled={
+            !replyToWorkItem ||
+            !canReply ||
+            pending ||
+            answeredRunId === parkedRunId
+          }
+          onChoose={(choice) =>
+            reply(humanDecisionReply(decision.ask, choice), parkedRunId)
+          }
+        />
+      )}
+      {!decision && card.decisionSummary && (
         <Text size="sm" aria-label="Inbox summary">
           {card.decisionSummary}
         </Text>
@@ -196,7 +251,7 @@ export function NativeDecisionDetail({
             minRows={3}
           />
           <Button
-            onClick={reply}
+            onClick={() => reply(text)}
             loading={pending}
             disabled={!canReply || pending || !text.trim()}
           >

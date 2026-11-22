@@ -11,11 +11,15 @@ import { logger } from '@agent-lcars/logging';
 import type { Task } from '@agent-lcars/orchestrator';
 import { storedWorkPayloadSchema, workPayloadSchema } from '@agent-lcars/work';
 
+import { actionItemFromGithubAnchorProjection } from './action-items';
 import {
   stripConsoleReplyMarker,
   withConsoleReplyMarker,
 } from './console-reply-marker';
-import { refreshCurrentGithubAnchorProjection } from './github-anchor-refresh';
+import {
+  loadCurrentGithubAnchorProjection,
+  refreshCurrentGithubAnchorProjection,
+} from './github-anchor-refresh';
 import { REPO_HEADER } from './github-app-tokens';
 import {
   createGithubUserClient,
@@ -23,6 +27,11 @@ import {
   type WatchedRepo,
 } from './github-client';
 import { admitGithubWork } from './github-work-admission';
+import {
+  humanDecisionReply,
+  type IssueDecisionAnswer,
+  issueHumanDecision,
+} from './human-ask';
 import { recordOperatorComment } from './operator-comment-observability';
 import { describeRefusedOperatorToken } from './operator-token-check';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
@@ -315,6 +324,7 @@ export async function postComment(
    * choice may give an unlabeled PR or already-admitted item to an agent; a
    * stale assignment removed after render stays a plain comment. */
   handoff = false,
+  answer?: IssueDecisionAnswer,
 ): Promise<PostCommentResult> {
   if (!body.trim()) {
     throw new ActionError('Comment body is required', 400);
@@ -324,6 +334,32 @@ export async function postComment(
     throw new ActionError('Comment actor is required', 400);
   }
   requireOperatorToken(actor);
+  if (answer !== undefined) {
+    const projection = await loadCurrentGithubAnchorProjection(
+      getGithubClient(),
+      { repo: repoKey(repo), issue: issueNumber },
+    );
+    const item = actionItemFromGithubAnchorProjection(projection, repo);
+    const decision = issueHumanDecision(item);
+    const choice = decision?.choices.find(
+      (candidate) =>
+        candidate.kind === answer.choice?.kind &&
+        candidate.label === answer.choice?.label,
+    );
+    if (
+      projection.state !== 'open' ||
+      !decision ||
+      decision.ask !== answer.ask ||
+      item.lastCommentUrl !== answer.commentUrl ||
+      !choice ||
+      body !== humanDecisionReply(decision.ask, choice)
+    ) {
+      throw new ActionError(
+        'This decision changed. Refresh to see the current handoff.',
+        409,
+      );
+    }
+  }
   // Validate an explicit dispatch choice before creating any GitHub-side
   // comment. The UI only supplies canonical selections, but Server Action
   // arguments are still untrusted at the network boundary.

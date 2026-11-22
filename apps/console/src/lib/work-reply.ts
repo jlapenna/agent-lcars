@@ -55,6 +55,7 @@ export interface ReplyRequest {
   ref?: string;
   /** Optional native API retry key; scoped to task and verified principal. */
   requestId?: string;
+  expectedParkedRunId?: string;
   pipeline?: string;
   resume?: boolean;
   fallbackPipelines?: readonly string[];
@@ -73,6 +74,7 @@ function sameReply(run: Run, request: ReplyRequest): boolean {
     run.params?.['mode'] === 'reply' &&
     run.params['reply'] === request.text &&
     run.params['replyRequestId'] === request.requestId &&
+    run.params['replyExpectedParkedRunId'] === request.expectedParkedRunId &&
     run.params['replyResumeRequested'] === String(request.resume ?? true) &&
     // Bind the caller's selection, including inheritance, rather than
     // resolving an old retry against mutable later run history.
@@ -247,6 +249,11 @@ export async function requestReply(
   )
     return { ok: false, code: 'CONFLICT', message: 'task-closed' };
   const latest = latestRun(runs);
+  const staleDecision = {
+    ok: false,
+    code: 'CONFLICT',
+    message: 'This decision changed. Refresh to see the current handoff.',
+  } as const;
   // Widened to `string` by `Run.pipeline`/`ReplyRequest.pipeline` (both
   // opaque routing data, not the enum `WorkSpec.pipeline` is) -- always one
   // of the same three values in practice, since each was itself validated
@@ -258,6 +265,12 @@ export async function requestReply(
   const forbidden = forbiddenReason(principal, { ...spec, pipeline });
   if (forbidden !== undefined)
     return { ok: false, code: 'FORBIDDEN', message: forbidden };
+  if (
+    request.expectedParkedRunId !== undefined &&
+    (state !== 'parked' || latest?.runId !== request.expectedParkedRunId)
+  ) {
+    return staleDecision;
+  }
 
   const activeRun = runs.find((run) => run.runId === task.task.activeRunId);
   // An explicit provider switch may replace queued work, but never an
@@ -303,11 +316,17 @@ export async function requestReply(
       request.fallbackPipelines ?? spec.fallbackPipelines,
     ),
     ...(replaceQueuedRunId === undefined ? {} : { replaceQueuedRunId }),
+    ...(request.expectedParkedRunId === undefined
+      ? {}
+      : { expectedParkedRunId: request.expectedParkedRunId }),
     params: {
       mode: 'reply',
       reply: request.text,
       replyChannel: request.channel,
       replyPrincipal: request.principal,
+      ...(request.expectedParkedRunId === undefined
+        ? {}
+        : { replyExpectedParkedRunId: request.expectedParkedRunId }),
       ...(request.requestId === undefined
         ? {}
         : {
@@ -328,6 +347,12 @@ export async function requestReply(
       outcome.existingRun !== undefined
     ) {
       return authorizedReceipt(outcome.existingRun);
+    }
+    if (
+      request.expectedParkedRunId !== undefined &&
+      outcome.reason === 'stale-lease'
+    ) {
+      return staleDecision;
     }
     return { ok: false, code: 'CONFLICT', message: outcome.reason };
   }

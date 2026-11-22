@@ -371,7 +371,7 @@ export async function refreshGithubAnchorProjection(
   return applied ? projection : undefined;
 }
 
-async function loadCurrentGithubAnchorProjection(
+export async function loadCurrentGithubAnchorProjection(
   github: ReturnType<typeof getGithubClient>,
   anchor: GithubAnchorProjection['anchor'],
 ): Promise<GithubAnchorProjection> {

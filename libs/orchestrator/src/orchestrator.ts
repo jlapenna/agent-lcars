@@ -124,6 +124,7 @@ export interface RequestInput {
   /** Replace only this exact unclaimed queue attempt when changing provider.
    * Cancellation and admission share the request transaction and its claim fence. */
   replaceQueuedRunId?: string;
+  expectedParkedRunId?: string;
   /** Server-validated label intent; only its trusted adapter grants provider change. */
   labelProviderRequest?: {
     requestedAt: string;
@@ -187,6 +188,7 @@ export class Orchestrator {
         ? {}
         : { requestBinding: input.requestBinding }),
       readProviderRouting:
+        input.expectedParkedRunId !== undefined ||
         input.labelProviderRequest !== undefined ||
         input.useEffectivePipeline === true,
       decide: ({
@@ -249,6 +251,14 @@ export class Orchestrator {
         // the replacement run in the same store transaction.
         if (previousRun !== undefined) {
           return refused('duplicate-request', previousRun);
+        }
+        if (
+          input.expectedParkedRunId !== undefined &&
+          (task?.task.closedAt !== undefined ||
+            latestRun?.runId !== input.expectedParkedRunId ||
+            latestRun.result?.summary !== 'park')
+        ) {
+          return refused('stale-lease');
         }
         const providerFallback =
           input.providerFallbackForPipeline === undefined

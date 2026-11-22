@@ -400,6 +400,16 @@ the work that has stopped, and the work in flight.
   to decision SLA/oldest-decision selection, or trigger decision notifications.
   The owning lifetime and dismissal constants are in `app/inbox-card.ts`.
 
+  For a Human needed handoff, the Inbox shows the agent's exact
+  `Human ask:` line ahead of supporting context. When the handoff supplies
+  an approval or options in the
+  [parking format](../../agents/shared/skills/agent-protocol/reference/agent-protocol.md#4-parking--blocked-on-a-human),
+  the detail pane lets the operator send that answer with one click. The
+  reply records the original ask and the chosen answer, using the same
+  authorization and dispatch path as a typed reply. Native decisions bind
+  the answer to the parked run. GitHub decisions check the current handoff
+  before posting. Free-text replies and older handoffs remain supported.
+
 - **FE-IN-2 [Shipped] Primary action** (`lib/primary-action.ts`). Each GitHub card
   shows at most one primary action chosen from its state: **Approve & Merge**,
   **Approve & Rebase**, **Reply**, or **Open failing check ↗**. The last

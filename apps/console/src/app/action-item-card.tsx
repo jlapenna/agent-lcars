@@ -28,6 +28,11 @@ import {
 
 import type { ActionItem, MergeableState } from '../lib/action-items';
 import {
+  humanDecisionReply,
+  type IssueDecisionAnswer,
+  issueHumanDecision,
+} from '../lib/human-ask';
+import {
   localAgentCommand,
   localAgentDisplayName,
 } from '../lib/local-agent-prompt';
@@ -48,6 +53,7 @@ import {
   replyToItem,
 } from './actions';
 import { githubIssueUrl } from './format';
+import { HumanDecisionButtons } from './human-decision-buttons';
 import { HumanNeededSummary } from './human-needed-summary';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import { beginOperatorReauth, takePendingReply } from './operator-reauth';
@@ -254,6 +260,14 @@ export function ActionItemCard({
   variant?: 'card' | 'workspace';
   onReplyDraftChange?: (hasDraft: boolean) => void;
 }) {
+  const decision = issueHumanDecision(item);
+  const decisionKey = JSON.stringify([
+    decision,
+    item.lastCommentUrl,
+    item.updatedAt,
+  ]);
+  const [answeredDecision, setAnsweredDecision] = useState<string>();
+  const answeringDecision = useRef(false);
   const [expanded, setExpanded] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [labelsExpanded, setLabelsExpanded] = useState(false);
@@ -345,11 +359,19 @@ export function ActionItemCard({
    * assignment of its own. Takes both as arguments, not from state, so a
    * reply restored after a GitHub re-authorization can be sent in the same
    * pass that restores it. */
-  const submitReply = (body: string, chosenTarget: Pipeline | undefined) => {
+  const submitReply = (
+    body: string,
+    chosenTarget: Pipeline | undefined,
+    answer?: IssueDecisionAnswer,
+  ) => {
     if (!body.trim()) return;
     // The browser is already on its way to GitHub; a second click must not
     // race it into the "sign out" fallback.
     if (Date.now() - reauthorizingSince.current < 15_000) return;
+    if (answer) {
+      if (answeringDecision.current || answeredDecision === decisionKey) return;
+      answeringDecision.current = true;
+    }
     setError(undefined);
     startTransition(async () => {
       const result = await replyToItem(
@@ -362,13 +384,17 @@ export function ActionItemCard({
         // Only the hand-off control's choice may give an unlabeled PR or an
         // already-admitted item to an agent.
         pipeline === undefined && chosenTarget !== undefined,
-      );
+        ...(answer ? [answer] : []),
+      ).finally(() => {
+        if (answer) answeringDecision.current = false;
+      });
       if (!result.ok) {
         // GitHub refused the operator's token. Renew it and send this reply
         // again on return, instead of asking for a manual sign-out. The text
         // stays in the box in case the round trip does not happen.
         if (
           result.reauth &&
+          !answer &&
           beginOperatorReauth({
             reply: {
               itemKey,
@@ -387,6 +413,7 @@ export function ActionItemCard({
         setError(result.message);
         return;
       }
+      if (answer) setAnsweredDecision(decisionKey);
       setReplyRetry(result.retry);
       setReplyBody('');
       setChosenReplyTarget(undefined);
@@ -742,7 +769,25 @@ export function ActionItemCard({
           </Text>
         )}
 
-        {decisionSummary && (
+        {decision && (
+          <Text size="sm" fw={600} aria-label="Human ask">
+            {decision.ask}
+          </Text>
+        )}
+        {decision && (
+          <HumanDecisionButtons
+            decision={decision}
+            disabled={!ready || isPending || answeredDecision === decisionKey}
+            onChoose={(choice) =>
+              submitReply(humanDecisionReply(decision.ask, choice), undefined, {
+                ask: decision.ask,
+                choice,
+                commentUrl: item.lastCommentUrl,
+              })
+            }
+          />
+        )}
+        {!decision && decisionSummary && (
           <Text size="sm" aria-label="Inbox summary">
             {decisionSummary}
           </Text>

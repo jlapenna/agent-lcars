@@ -44,11 +44,16 @@ import { drainOutbox } from './orchestrator-dispatch';
 import { handleReconcile } from './orchestrator-routes';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 
-const { refreshCurrentGithubAnchorProjection } = vi.hoisted(() => ({
+const {
+  loadCurrentGithubAnchorProjection,
+  refreshCurrentGithubAnchorProjection,
+} = vi.hoisted(() => ({
+  loadCurrentGithubAnchorProjection: vi.fn(),
   refreshCurrentGithubAnchorProjection: vi.fn(),
 }));
 
 vi.mock('./github-anchor-refresh', () => ({
+  loadCurrentGithubAnchorProjection,
   refreshCurrentGithubAnchorProjection,
 }));
 
@@ -487,6 +492,57 @@ describe('postComment (direct Work admission)', () => {
     expect(createGithubUserClient).toHaveBeenCalledWith('operator-token');
     expect(createComment).toHaveBeenCalledOnce();
     expect(recordOperatorComment).toHaveBeenCalledExactlyOnceWith('posted');
+  });
+
+  it('checks the live handoff before posting a one-click decision', async () => {
+    const { createComment } = mockOctokit();
+    const ask = 'Approve the staging rollout.';
+    const source = {
+      anchor: { repo: DEFAULT_REPO_KEY, issue: 2709 },
+      kind: 'issue',
+      state: 'open',
+      title: 'Roll out to staging',
+      body: '',
+      url: `https://github.com/${DEFAULT_REPO_KEY}/issues/2709`,
+      labels: ['status:needs-human'],
+      assigneeLogins: [],
+      sourceUpdatedAt: '2026-11-22T00:00:00Z',
+    };
+    const commentUrl = `${source.url}#issuecomment-42`;
+    loadCurrentGithubAnchorProjection
+      .mockResolvedValueOnce({
+        ...source,
+        lastComment: {
+          body: 'The rollout already happened.',
+          url: `${source.url}#issuecomment-43`,
+        },
+      })
+      .mockResolvedValueOnce({
+        ...source,
+        lastComment: {
+          body: `Human ask: ${ask}\nHuman approval: Approve staging`,
+          url: commentUrl,
+        },
+      });
+    const submit = () =>
+      postComment(
+        DEFAULT_REPO,
+        2709,
+        `Approved: Approve staging\n\nFor this request: ${ask}`,
+        OPERATOR,
+        undefined,
+        false,
+        {
+          ask,
+          choice: { kind: 'approval', label: 'Approve staging' },
+          commentUrl,
+        },
+      );
+
+    await expect(submit()).rejects.toMatchObject({ statusCode: 409 });
+    expect(createComment).not.toHaveBeenCalled();
+    await submit();
+    expect(createComment).toHaveBeenCalledOnce();
   });
 
   it('asks for a fresh sign-in when the operator has no GitHub token', async () => {

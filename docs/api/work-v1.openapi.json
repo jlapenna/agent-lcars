@@ -13339,6 +13339,12 @@
                     "minLength": 1,
                     "maxLength": 128
                   },
+                  "expectedParkedRunId": {
+                    "description": "Only admit a new reply if this park still owns the decision.",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
                   "resume": {
                     "type": "boolean"
                   },
