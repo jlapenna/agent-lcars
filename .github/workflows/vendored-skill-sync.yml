@@ -114,31 +114,35 @@ jobs:
           # archive or checkout, so export-ignore and checkout filters cannot
           # drop or alter files. Only regular files are accepted: a symlink or
           # submodule entry fails the run, so nothing outside the upstream
-          # tree can reach the commit this job pushes.
-          stage="$work/stage"
-          mkdir "$stage"
-          found_skill=""
+          # tree can reach the commit this job pushes. Each blob is written
+          # unfiltered into this repository and staged by object ID and mode,
+          # so the caller's attributes (eol, filters, ignores) cannot change
+          # the bytes or hide a difference.
+          declare -A entries=()
+          stage_blob() { # <mode> <type> <oid> <upstream path> <vendored name>
+            [[ $2 == blob && ($1 == 100644 || $1 == 100755) ]] ||
+              fail "upstream $4 is not a regular file (mode $1)"
+            local local_oid
+            local_oid=$(git -C "$up" cat-file blob "$3" | git hash-object -w --no-filters --stdin)
+            [[ $local_oid == "$3" ]] || fail "upstream $4 changed while copying"
+            entries["$SKILL_DIR/$5"]="$1 $3"
+          }
           while IFS= read -r -d '' entry; do
-            meta=${entry%%$'\t'*}
             path=${entry#*$'\t'}
-            read -r mode type oid <<<"$meta"
-            [[ $type == blob && ($mode == 100644 || $mode == 100755) ]] ||
-              fail "upstream $path is not a regular file (mode $mode)"
-            rel=${path#"$UPSTREAM_PATH"/}
-            [[ $rel == SKILL.md ]] && found_skill=1
-            mkdir -p "$stage/$(dirname "$rel")"
-            git -C "$up" cat-file blob "$oid" > "$stage/$rel"
-            [[ $mode == 100755 ]] && chmod +x "$stage/$rel"
+            read -r mode type oid <<<"${entry%%$'\t'*}"
+            stage_blob "$mode" "$type" "$oid" "$path" "${path#"$UPSTREAM_PATH"/}"
           done < <(git -C "$up" ls-tree -r -z --full-tree FETCH_HEAD -- "$UPSTREAM_PATH/")
-          [[ -n $found_skill ]] || fail "$UPSTREAM_REPO@$sha has no SKILL.md in $UPSTREAM_PATH"
+          [[ -n ${entries["$SKILL_DIR/SKILL.md"]:-} ]] ||
+            fail "$UPSTREAM_REPO@$sha has no SKILL.md in $UPSTREAM_PATH"
           license=$(git -C "$up" ls-tree -z --full-tree FETCH_HEAD -- "$UPSTREAM_LICENSE" | tr -d '\0')
+          [[ -n $license ]] || fail "$UPSTREAM_REPO@$sha has no $UPSTREAM_LICENSE"
           read -r mode type oid <<<"${license%%$'\t'*}"
-          [[ -n $license && $type == blob && ($mode == 100644 || $mode == 100755) ]] ||
-            fail "$UPSTREAM_REPO@$sha has no regular file $UPSTREAM_LICENSE"
-          git -C "$up" cat-file blob "$oid" > "$stage/LICENSE"
-          rm -rf "$SKILL_DIR"
-          mkdir -p "$(dirname "$SKILL_DIR")"
-          cp -R "$stage" "$SKILL_DIR"
+          stage_blob "$mode" "$type" "$oid" "$UPSTREAM_LICENSE" LICENSE
+          git rm -r -q --cached --ignore-unmatch -- "$SKILL_DIR"
+          for path in "${!entries[@]}"; do
+            read -r mode oid <<<"${entries[$path]}"
+            printf '%s %s\t%s\0' "$mode" "$oid" "$path"
+          done | git update-index -z --add --index-info
           rm -rf "$work"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
@@ -181,11 +185,18 @@ jobs:
             fail "could not read refs/heads/$branch (git ls-remote exit $rc)"
           fi
           lease="--force-with-lease=refs/heads/$branch:$tip"
-          # -f stages upstream files that consumer ignore rules would skip.
-          git add -A -f -- "$SKILL_DIR"
+          # The copy step staged the exact upstream entries in the index.
           if git diff --cached --quiet; then
             echo "$SKILL_DIR matches $UPSTREAM_REPO@$SHA"
             if [[ -n $pr ]]; then
+              # Close only the PR state this run observed: a maintainer push,
+              # branch update or retarget since then leaves it alone.
+              now=$(gh api "repos/$REPO/pulls/$pr" \
+                --jq '[.state, .head.sha, .head.repo.full_name, .base.ref] | join(" ")')
+              if [[ $now != "open $tip $REPO $BASE" ]]; then
+                echo "PR #$pr changed since this run read it; leaving it open"
+                exit 0
+              fi
               gh pr close "$pr" --repo "$REPO" \
                 --comment "$SKILL_DIR already matches $UPSTREAM_REPO@$SHA."
             fi
