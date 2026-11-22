@@ -2289,7 +2289,7 @@ grep -Fq 'the pull-request review body must contain this exact literal' "$OPENCO
   fail "github review: review prompt did not require the marker on the review body ($(cat "$OPENCODE_ARGS_LOG"))"
 grep -Fq 'the Anthropic review procedure at $AGENT_REVIEW_PATH' "$OPENCODE_ARGS_LOG" ||
   fail "github review: provider was not directed to the trusted review procedure"
-jq -e '.agent.general.steps == 8' "$OPENCODE_ENV_LOG.config" >/dev/null ||
+jq -e '.agent.general.steps == 8 and .agent.general.disable == false' "$OPENCODE_ENV_LOG.config" >/dev/null ||
   fail "github review: missing inline general-agent finish reminder"
 jq -e '.permission.task == "allow"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
   fail "github review: OpenCode independent reviewers remain disabled"

@@ -281,7 +281,7 @@ if (provider === 'opencode') {
   // Match the direct runner's effective per-review configuration.
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
     permission: { task: 'allow' },
-    agent: { general: { steps: 8 } },
+    agent: { general: { disable: false, steps: 8 } },
     provider: {
       homelab: {
         models: { default: { options: { reasoningEffort: 'medium' } } },
