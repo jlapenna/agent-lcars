@@ -1,5 +1,3 @@
-import type { ActionItem } from './action-items';
-
 export interface HumanDecision {
   ask: string;
   choices: HumanChoice[];
@@ -47,13 +45,18 @@ export function humanDecisionReply(ask: string, choice: HumanChoice): string {
   return `${choice.kind === 'approval' ? 'Approved' : 'Selected'}: ${choice.label}\n\nFor this request: ${ask}`;
 }
 
+interface IssueHandoff {
+  actionTypes: readonly string[];
+  humanDecision?: HumanDecision & { runId: string };
+}
+
 export function issueHumanDecision(
-  item: ActionItem,
-): ActionItem['humanDecision'] {
+  item: IssueHandoff,
+): IssueHandoff['humanDecision'] {
   if (!item.actionTypes.includes('needs-human')) return undefined;
   return item.humanDecision;
 }
 
-export function issueHumanAsk(item: ActionItem): string | undefined {
+export function issueHumanAsk(item: IssueHandoff): string | undefined {
   return issueHumanDecision(item)?.ask;
 }
