@@ -134,6 +134,10 @@ jobs:
             read -r mode type oid <<<"${entry%%$'\t'*}"
             stage_blob "$mode" "$type" "$oid" "$path" "${path#"$UPSTREAM_PATH"/}"
           done < <(git -C "$up" ls-tree -r -z --full-tree FETCH_HEAD -- "$UPSTREAM_PATH/")
+          for path in "${!entries[@]}"; do
+            [[ $path != "$SKILL_DIR/LICENSE/"* ]] ||
+              fail "upstream skill path ${path#"$SKILL_DIR/"} collides with the vendored LICENSE"
+          done
           [[ -n ${entries["$SKILL_DIR/SKILL.md"]:-} ]] ||
             fail "$UPSTREAM_REPO@$sha has no SKILL.md in $UPSTREAM_PATH"
           license=$(git -C "$up" ls-tree -z --full-tree FETCH_HEAD -- "$UPSTREAM_LICENSE" | tr -d '\0')
@@ -190,6 +194,12 @@ jobs:
           # The copy step staged the exact upstream entries in the index.
           if git diff --cached --quiet; then
             echo "$SKILL_DIR matches $UPSTREAM_REPO@$SHA"
+            # A default branch that moved during the run may no longer match.
+            live=$(gh api "repos/$REPO/commits/$BASE" --jq .sha)
+            if [[ $live != "$(git rev-parse HEAD)" ]]; then
+              echo "$BASE moved during this run; leaving cleanup to the next run"
+              exit 0
+            fi
             if [[ -n $pr ]]; then
               # Close only the PR state this run observed: a maintainer push,
               # branch update or retarget since then leaves it alone.
