@@ -252,16 +252,33 @@ async function lookupHerdrPane(
     .catch((): HerdrPaneLookup => ({ status: 'unknown' }));
 }
 
-/** What to report and remember after {@link lookupHerdrPane}. When
- * herdr-core could not answer, the earlier answer stands. */
+/**
+ * What to report and remember after {@link lookupHerdrPane}.
+ *
+ * When herdr-core could not answer, the pane known before is still
+ * reported, but it is no longer a definite answer: later events ask again
+ * once {@link HERDR_PANE_RETRY_MS} has passed. That matters most on a
+ * session start, which asks because the session may have moved.
+ *
+ * The lookup ran before the session lock, on the state read then. If
+ * another event of this session settled the answer in the meantime, a
+ * failed lookup from an ordinary event does not unsettle it.
+ */
 function applyHerdrPaneLookup(
   state: HookSessionState | undefined,
   lookup: HerdrPaneLookup | undefined,
+  kind: SessionEventKind,
   now: string,
 ): HerdrPaneState {
   const known = herdrPaneState(state);
   if (!lookup) return known;
-  if (lookup.status === 'unknown') return { ...known, herdrPaneCheckedAt: now };
+  if (lookup.status === 'unknown') {
+    if (kind !== 'start' && known.herdrPaneResolved) return known;
+    return {
+      ...(known.herdrPaneId && { herdrPaneId: known.herdrPaneId }),
+      herdrPaneCheckedAt: now,
+    };
+  }
   return {
     ...(lookup.status === 'found' && { herdrPaneId: lookup.paneId }),
     herdrPaneResolved: true,
@@ -705,7 +722,7 @@ async function handleRuntimeHook(
         detail: 'unverified child transcript',
       };
     }
-    const herdrPane = applyHerdrPaneLookup(state, herdrPaneLookup, now);
+    const herdrPane = applyHerdrPaneLookup(state, herdrPaneLookup, kind, now);
     let summary: SessionSummary | undefined;
     if (reduced || kind !== 'end') {
       const base =

@@ -1318,6 +1318,84 @@ describe('lcars hook herdr pane', () => {
     expect(answered).toHaveBeenCalledTimes(1);
   });
 
+  it('asks again after a session start that herdr-core could not answer', async () => {
+    const home = tempHome();
+    const at = (minute: number) => ({
+      now: () => new Date(Date.UTC(2026, 9, 10, 12, minute)),
+    });
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('SessionStart'), {
+        ...at(0),
+        resolveHerdrPane: async () => ({ status: 'found', paneId: 't36' }),
+      }),
+    );
+    // Resumed, possibly in another terminal, while herdr-core is down.
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('SessionStart'), {
+        ...at(10),
+        resolveHerdrPane: async () => ({ status: 'unknown' }),
+      }),
+    );
+    const afterFailure = readHookSessionState(stateDirectory(home), SESSION_ID);
+    expect(afterFailure?.herdrPaneId).toBe('t36');
+    expect(afterFailure?.herdrPaneResolved).toBeUndefined();
+    expect(afterFailure?.herdrPaneCheckedAt).toBe('2026-10-10T12:10:00.000Z');
+
+    const moved = vi.fn(async () => ({
+      status: 'found' as const,
+      paneId: 't2j',
+    }));
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('Stop'), { ...at(12), resolveHerdrPane: moved }),
+    );
+    expect(moved).not.toHaveBeenCalled();
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('Stop'), { ...at(16), resolveHerdrPane: moved }),
+    );
+    expect(moved).toHaveBeenCalledTimes(1);
+
+    expect(
+      spooledEvents(home).map((event) => event.summary?.herdrPaneId),
+    ).toEqual(['t36', 't36', 't36', 't2j']);
+    expect(
+      readHookSessionState(stateDirectory(home), SESSION_ID),
+    ).toMatchObject({ herdrPaneId: 't2j', herdrPaneResolved: true });
+  });
+
+  it('does not unsettle an answer another event recorded while it was asking', async () => {
+    const home = tempHome();
+    // This event reads the state, finds no answer and asks. Before its own
+    // failed answer comes back, a second event of the session resolves t36.
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('Stop'), {
+        resolveHerdrPane: async () => {
+          await executeHookCommand(
+            ['claude'],
+            deps(home, payload('Stop'), {
+              resolveHerdrPane: async () => ({
+                status: 'found',
+                paneId: 't36',
+              }),
+            }),
+          );
+          return { status: 'unknown' };
+        },
+      }),
+    );
+
+    const state = readHookSessionState(stateDirectory(home), SESSION_ID);
+    expect(state).toMatchObject({
+      herdrPaneId: 't36',
+      herdrPaneResolved: true,
+    });
+    expect(state?.herdrPaneCheckedAt).toBeUndefined();
+  });
+
   it('asks before taking the session lock, so a slow answer blocks no other event', async () => {
     const home = tempHome();
     const lock = path.join(
