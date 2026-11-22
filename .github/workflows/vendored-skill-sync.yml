@@ -76,8 +76,10 @@ jobs:
             fail "skill-dir must be .agents/skills/<name>"
           [[ $UPSTREAM_REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
             fail "upstream-repo must be owner/name"
+          # Canonical relative paths only (no empty, `.` or `..` components,
+          # no leading or trailing slash), matching what `git ls-tree` prints.
           for value in "$UPSTREAM_PATH" "$UPSTREAM_LICENSE" "$UPSTREAM_REF"; do
-            [[ $value =~ ^[A-Za-z0-9._/-]+$ && $value != *..* && $value != /* ]] ||
+            [[ $value =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ && /$value/ != */./* && /$value/ != */../* ]] ||
               fail "invalid upstream path or ref: $value"
           done
 
@@ -213,10 +215,18 @@ jobs:
           vendored skill matches upstream \`$UPSTREAM_REF\`.
 
           Opened by the Vendored Skill Sync workflow; run $GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID."
-          # An open PR whose skill content already matches keeps its head, so
-          # a weekly run does not restart its review or checks; its body is
-          # still refreshed so the upstream link stays current.
+          # An open PR keeps its head, so a weekly run does not restart its
+          # review or checks, only while that head already carries this skill
+          # tree and the default branch has not touched the skill since the
+          # head forked; merging it then still yields exactly this tree. Its
+          # body is refreshed either way so the upstream link stays current.
+          # The checkout is shallow, so GitHub supplies the merge base.
+          fork=""
           if [[ -n $pr && -n $tip ]] && git diff --quiet HEAD "$tip" -- "$SKILL_DIR"; then
+            fork=$(gh api "repos/$REPO/compare/$(git rev-parse HEAD~1)...$tip" --jq .merge_base_commit.sha)
+            git fetch -q --depth 1 origin "$fork"
+          fi
+          if [[ -n $fork ]] && git diff --quiet "$fork" HEAD~1 -- "$SKILL_DIR"; then
             gh pr edit "$pr" --repo "$REPO" --body "$body"
             echo "PR #$pr already carries this content"
             exit 0
