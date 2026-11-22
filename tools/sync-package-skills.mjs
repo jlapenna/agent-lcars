@@ -42,6 +42,7 @@ const LAUNCHER = ABSOLUTE_LAUNCHER
 // The launcher sets DISABLE_TELEMETRY itself, so the command works unchanged
 // in POSIX shells, PowerShell and cmd.
 const LOCAL_CLI = `node ${LAUNCHER}`;
+const PLACEHOLDER = '\u0000launcher\u0000';
 const GUIDANCE_COMMANDS = [
   'search',
   'list',
@@ -120,18 +121,24 @@ function textFiles(dir) {
 }
 
 function pinCli(dir) {
+  // Rewrite and scan with the generated launcher held as a placeholder, so a
+  // checkout path containing "npx" or a versioned package name is neither
+  // rewritten nor mistaken for an unpinned runner. Binary files (which could
+  // contain NUL) are skipped by textFiles.
+  const hold = (value) => value.split(LOCAL_CLI).join(PLACEHOLDER);
   for (const file of textFiles(dir)) {
     const text = fs.readFileSync(file, 'utf8');
-    let next = text.replace(RUNNER_INVOCATION, LOCAL_CLI);
+    let held = hold(text).replace(RUNNER_INVOCATION, PLACEHOLDER);
     const isSkill = path.basename(file) === 'SKILL.md';
     if (isSkill) {
-      next = next
-        .replace(RUNNER_SECTION, LOCAL_RUNNER_SECTION)
+      held = held
+        .replace(RUNNER_SECTION, hold(LOCAL_RUNNER_SECTION))
         .replace(SKILL_RUNNER_PROSE, 'with the bundled CLI');
     }
+    const next = held.split(PLACEHOLDER).join(LOCAL_CLI);
     if (next !== text) fs.writeFileSync(file, next);
     const match =
-      next.match(UNPINNED) || (isSkill && next.match(SKILL_RUNNER_MENTION));
+      held.match(UNPINNED) || (isSkill && held.match(SKILL_RUNNER_MENTION));
     if (match) {
       throw new Error(
         `unpinned ${CLI_PACKAGE} runner remains in ${path.relative(dir, file)}: ${match[0]}`,
