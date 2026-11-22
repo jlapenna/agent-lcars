@@ -899,6 +899,8 @@ RUN claude plugin marketplace add /opt/repo-tools && \
 # Third-party web and Go guidance plugins follow their upstream default
 # branches directly, with no vendoring or review step. This layer sits after
 # the repo-tools layer, so each repo-tools-driven rebuild refreshes them.
+# Codex dispatches copy this ~/.codex; OpenCode (agents/opencode/opencode.json)
+# reads the skills from the Claude marketplace checkouts checked below.
 RUN codex plugin marketplace add GoogleChrome/modern-web-guidance && \
     codex plugin marketplace add JetBrains/go-modern-guidelines && \
     codex plugin add modern-web-guidance@googlechrome && \
@@ -906,7 +908,9 @@ RUN codex plugin marketplace add GoogleChrome/modern-web-guidance && \
 RUN claude plugin marketplace add GoogleChrome/modern-web-guidance && \
     claude plugin marketplace add JetBrains/go-modern-guidelines && \
     claude plugin install modern-web-guidance@googlechrome && \
-    claude plugin install modern-go-guidelines@goland-claude-marketplace
+    claude plugin install modern-go-guidelines@goland-claude-marketplace && \
+    test -f /home/runner/.claude/plugins/marketplaces/googlechrome/skills/modern-web-guidance/SKILL.md && \
+    test -f /home/runner/.claude/plugins/marketplaces/goland-claude-marketplace/plugin/skills/use-modern-go/SKILL.md
 
 # Stage the Hindsight coding-agent runtime and register hooks/MCP/skills for
 # Claude Code, Codex and Antigravity; OpenCode loads ~/.hindsight/coding-agents
