@@ -323,7 +323,9 @@ export async function requestReply(
       : { expectedParkedRunId: request.expectedParkedRunId }),
     ...(!isWorkAnchor(request.task) && request.expectedParkedRunId !== undefined
       ? {
-          githubDecisionParams: (projection: GithubAnchorProjection) =>
+          githubDecisionParams: (
+            projection: GithubAnchorProjection,
+          ): Record<string, string> | undefined =>
             projection.state === 'open' &&
             projection.labels.includes('status:needs-human')
               ? hasCrossRepoOption(projection.labels)

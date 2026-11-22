@@ -954,7 +954,7 @@ describe('native anchors', () => {
 describe('GitHub anchors', () => {
   it('fences a parked answer against the current tracker projection', async () => {
     const { store, orchestrator } = fixture();
-    const run = await started(orchestrator);
+    const { run } = await started(orchestrator);
     await orchestrator.report(run.runId, { ok: true, summary: 'park' });
     const projection = {
       anchor: TASK,
