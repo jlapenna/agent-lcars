@@ -915,7 +915,8 @@ RUN claude plugin marketplace add GoogleChrome/modern-web-guidance && \
     mkdir -p /home/runner/.gemini/antigravity-cli/skills && \
     for skill in googlechrome/skills/modern-web-guidance googlechrome/skills/chrome-extensions \
       goland-claude-marketplace/plugin/skills/use-modern-go; do \
-      cp -R "/home/runner/.claude/plugins/marketplaces/$skill" /home/runner/.gemini/antigravity-cli/skills/; \
+      src="/home/runner/.claude/plugins/marketplaces/$skill"; \
+      test -f "$src/SKILL.md" && cp -R "$src" /home/runner/.gemini/antigravity-cli/skills/ || exit 1; \
     done
 
 # Stage the Hindsight coding-agent runtime and register hooks/MCP/skills for
