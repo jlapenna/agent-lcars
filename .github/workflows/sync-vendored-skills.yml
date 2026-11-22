@@ -1,0 +1,27 @@
+name: Sync vendored skills
+
+# Weekly caller of vendored-skill-sync.yml (docs/published-actions.md): keeps
+# each vendored third-party skill identical to its upstream skill directory
+# and opens an agent PR when upstream changes.
+
+on:
+  schedule:
+    - cron: '41 14 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  use-modern-go:
+    uses: ./.github/workflows/vendored-skill-sync.yml
+    with:
+      runs-on: '["agent-lcars-ci-control"]'
+      skill-dir: .agents/skills/use-modern-go
+      upstream-repo: JetBrains/go-modern-guidelines
+      upstream-path: plugin/skills/use-modern-go
+    secrets:
+      APP_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
