@@ -738,6 +738,41 @@ describe('CliSessionRow live view link', () => {
     expect(link.getAttribute('target')).toBe('_blank');
   });
 
+  it('offers the live view on a list row, beside Open session', () => {
+    process.env[OVIS] = '{"pike":"https://herdr.example.test"}';
+    render(
+      <MantineProvider>
+        <CliSessionRow
+          session={makeCliSession({ host: 'pike', herdrPaneId: 't36' })}
+          variant="operations"
+        />
+      </MantineProvider>,
+    );
+    const link = screen.getByTestId('cli-session-live-view');
+    expect(link.getAttribute('href')).toBe(
+      'https://herdr.example.test/?pane=t36&view=chat',
+    );
+    expect(link.getAttribute('target')).toBe('_blank');
+    // Same actions group, so it stacks with the primary action on a phone.
+    expect(link.parentElement).toBe(
+      screen.getByTestId('cli-session-link').parentElement,
+    );
+  });
+
+  it('leaves a list row unchanged for a session with no live view', () => {
+    process.env[OVIS] = '{"pike":"https://herdr.example.test"}';
+    render(
+      <MantineProvider>
+        <CliSessionRow
+          session={makeCliSession({ host: 'pike' })}
+          variant="operations"
+        />
+      </MantineProvider>,
+    );
+    expect(screen.queryByTestId('cli-session-live-view')).toBeNull();
+    expect(screen.getByTestId('cli-session-link')).toBeTruthy();
+  });
+
   it('shows no link without a pane, or once the session has ended', () => {
     process.env[OVIS] = '{"pike":"https://herdr.example.test"}';
     for (const session of [

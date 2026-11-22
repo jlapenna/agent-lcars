@@ -122,6 +122,30 @@ function prFromDeliverables(doc: CliSessionDoc): JoinedPr | undefined {
   };
 }
 
+/**
+ * Leaves a pane with the session most recently active in it.
+ *
+ * A terminal outlives its sessions. One that died without recording its end
+ * stays `idle` for an hour and still names the pane, while the next session
+ * started there names it too; so does every session after a herdr-core
+ * restart hands the same addresses out again. Both links would open the
+ * same pane, which now shows only the newer session. `sessions` is ordered
+ * most recently active first.
+ */
+function withOnePaneOwner(sessions: CliSession[]): CliSession[] {
+  const owned = new Set<string>();
+  return sessions.map((session) => {
+    if (!session.herdrPaneId) return session;
+    const pane = `${session.host ?? ''}\u0000${session.herdrPaneId}`;
+    if (!owned.has(pane)) {
+      owned.add(pane);
+      return session;
+    }
+    const { herdrPaneId: _left, ...rest } = session;
+    return rest;
+  });
+}
+
 export interface CliSessionsResult {
   sessions: CliSession[];
   /** Human-readable notes when the store or a join degraded instead of
@@ -235,5 +259,5 @@ export async function getCliSessions({
   });
 
   sessions.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
-  return { sessions, warnings };
+  return { sessions: withOnePaneOwner(sessions), warnings };
 }

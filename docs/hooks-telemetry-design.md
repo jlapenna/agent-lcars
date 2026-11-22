@@ -375,12 +375,17 @@ them:
   identifier observed from the hook's process, never transcript content,
   and a dispatched runner never sets it.
 
-  A herdr-core terminal exports only `HERDR_SOCKET`, and `herdr-core get`
-  with no target cannot resolve itself from a hook, so the client lists the
-  live terminals and matches each one's shell and foreground PID against its
-  own ancestors (`apps/telemetry-watcher/src/lib/hook/herdr-pane.ts`). An
-  exported `HERDR_PANE_ID` is not trusted: every process started under a
-  pane inherits it. The lookup runs before the per-session lock, so a slow
+  A herdr-core terminal exports no identity of its own, and `herdr-core get`
+  with no target cannot resolve itself from a hook, so the client asks the
+  core for its live terminals and matches each one's shell and foreground
+  PID against its own ancestors
+  (`apps/telemetry-watcher/src/lib/hook/herdr-pane.ts`). It makes one
+  `terminal.list` call on the core's own socket and never runs the
+  `herdr-core` program: every command of that program but `--version` starts
+  a core when none is running, and finding it would depend on a `PATH` a
+  hook does not reliably inherit. No socket means no core, which is a
+  definite "not in a terminal". An exported `HERDR_PANE_ID` is not trusted:
+  every process started under a pane inherits it. The lookup runs before the per-session lock, so a slow
   herdr-core never makes a queued event give up. Its answer is kept in the
   per-session state file and asked for again only when the session starts
   again, or five minutes after herdr-core failed to answer. A write with no
@@ -395,7 +400,10 @@ them:
   from the browser to the host over the LAN or VPN: session content never
   passes through the console, Firestore or GCS, and nothing runs on the host
   until someone opens it. A session that dies without a `SessionEnd` keeps
-  its link until it stops displaying as idle. A later phase can join herdr's
+  its link until it stops displaying as idle. A terminal outlives its
+  sessions, so in a session list a pane's link goes only to the session most
+  recently active in it (`getCliSessions`); a session page reads one session
+  and cannot tell. A later phase can join herdr's
   `blocked` recognition, which sees approval UIs no hook reports.
 
 ## 5. Hook configuration

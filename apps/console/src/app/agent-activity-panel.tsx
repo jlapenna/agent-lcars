@@ -615,6 +615,17 @@ export function CliSessionRow({
   const liveViewUrl = sessionLiveViewUrl(session);
 
   if (variant === 'operations') {
+    const openSession = (
+      <BridgePaneLink
+        mobileHref={`/sessions/${session.sessionId}`}
+        paneHref={selectHref ?? `/sessions/${session.sessionId}`}
+        size="sm"
+        className="operations-primary-action"
+        data-testid="cli-session-link"
+      >
+        Open session
+      </BridgePaneLink>
+    );
     return (
       <div
         className="operations-row"
@@ -645,15 +656,27 @@ export function CliSessionRow({
             {session.repo && <RepoBadge repo={session.repo} />}
           </Group>
         </Stack>
-        <BridgePaneLink
-          mobileHref={`/sessions/${session.sessionId}`}
-          paneHref={selectHref ?? `/sessions/${session.sessionId}`}
-          size="sm"
-          className="operations-primary-action"
-          data-testid="cli-session-link"
-        >
-          Open session
-        </BridgePaneLink>
+        {liveViewUrl ? (
+          // One tap from the list, on a phone too: the row is where a
+          // session is chosen, and the live view is the reason to choose a
+          // running one. Without a live view the row keeps its single
+          // action exactly as it was.
+          <Group gap="sm" wrap="nowrap" className="operations-row__actions">
+            <Anchor
+              href={liveViewUrl}
+              target="_blank"
+              rel="noreferrer"
+              size="sm"
+              className="operations-secondary-action"
+              data-testid="cli-session-live-view"
+            >
+              Open live ↗
+            </Anchor>
+            {openSession}
+          </Group>
+        ) : (
+          openSession
+        )}
       </div>
     );
   }

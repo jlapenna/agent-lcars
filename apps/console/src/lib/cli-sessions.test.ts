@@ -109,6 +109,50 @@ describe('getCliSessions', () => {
     expect(warnings).toEqual([]);
   });
 
+  it('leaves a pane with the session most recently active in it', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([
+      // Died in t36 without recording its end; still idle for an hour.
+      makeCliDoc({
+        sessionId: 'old-in-t36',
+        host: 'pike',
+        herdrPaneId: 't36',
+        lastActivityAt: minutesAgo(30),
+      }),
+      makeCliDoc({
+        sessionId: 'now-in-t36',
+        host: 'pike',
+        herdrPaneId: 't36',
+        lastActivityAt: minutesAgo(1),
+      }),
+      // The same address on another host is another pane.
+      makeCliDoc({
+        sessionId: 'laptop-t36',
+        host: 'laptop',
+        herdrPaneId: 't36',
+        lastActivityAt: minutesAgo(20),
+      }),
+      makeCliDoc({
+        sessionId: 'pike-t2j',
+        host: 'pike',
+        herdrPaneId: 't2j',
+        lastActivityAt: minutesAgo(40),
+      }),
+    ]);
+
+    const { sessions } = await getCliSessions();
+
+    expect(
+      Object.fromEntries(
+        sessions.map((session) => [session.sessionId, session.herdrPaneId]),
+      ),
+    ).toEqual({
+      'now-in-t36': 't36',
+      'laptop-t36': 't36',
+      'old-in-t36': undefined,
+      'pike-t2j': 't2j',
+    });
+  });
+
   it('uses the transcript-recorded PR when its repository is recorded', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ deliverables: { prNumbers: [2650, 2662], commitShas: [] } }),
