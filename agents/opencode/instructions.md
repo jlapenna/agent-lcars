@@ -15,9 +15,7 @@ Keep this file short. It is re-sent on every request.
 For review dispatches, follow the trusted Anthropic procedure at
 `$AGENT_REVIEW_PATH`. Delegation is enabled for that mode only: run one fresh
 reviewer or validator at a time and synchronously wait for it before starting
-another. Prefer the native general subagent. If project settings make it
-unavailable for delegation, use an available read-only subagent such as explore
-for the same independent pass or validation. Start with
+another. Use the lcars-review subagent for each independent pass and validation. Start with
 the integration bug pass so it can trace changed configuration through its
 consumers and inherited defaults. Supply any recorded external inputs alongside
 the diff. Run all four distinct passes before validation.
