@@ -47,24 +47,27 @@ function run(command: string, args: string[], env: NodeJS.ProcessEnv = {}) {
   });
 }
 
-// Stand-ins for the real bundles: each prints which bundle ran, the
-// arguments it was given, and the usage line the pre-publication check reads.
-const BUNDLES = {
-  'telemetry-watcher-hook/lcars-hook.cjs': 'usage: lcars hook claude',
-  'telemetry-watcher-hook-flush/lcars-hook-flush.cjs': 'flush',
-  'telemetry-watcher-session-title-cli/lcars-session-title.cjs':
-    'usage: session title',
-} as const;
+// Stand-ins for the real bundles. Each prints which bundle ran and the
+// arguments it was given. Like the real one, the session-title bundle
+// answers `session archive --help` by loading the flusher from beside itself.
+const HOOK = 'telemetry-watcher-hook/lcars-hook.cjs';
+const FLUSH = 'telemetry-watcher-hook-flush/lcars-hook-flush.cjs';
+const TITLE = 'telemetry-watcher-session-title-cli/lcars-session-title.cjs';
+const print = (usage: string) =>
+  `console.log(${JSON.stringify(usage)}, JSON.stringify(process.argv.slice(2)));\n`;
+const BUNDLES: Record<string, string> = {
+  [HOOK]: print('usage: lcars hook claude'),
+  [FLUSH]: "console.log('usage: lcars session archive');\n",
+  [TITLE]: `if (process.argv.slice(2).join(' ') === 'session archive --help')
+  require(require('node:path').join(__dirname, 'lcars-hook-flush.cjs'));
+else ${print('usage: session title')}`,
+};
 
 function dist(root: string, overrides: Record<string, string> = {}): string {
   const dir = path.join(root, 'dist');
-  for (const [file, usage] of Object.entries(BUNDLES)) {
+  for (const [file, source] of Object.entries(BUNDLES)) {
     mkdirSync(path.join(dir, path.dirname(file)), { recursive: true });
-    writeFileSync(
-      path.join(dir, file),
-      overrides[file] ??
-        `console.log(${JSON.stringify(usage)}, JSON.stringify(process.argv.slice(2)));\n`,
-    );
+    writeFileSync(path.join(dir, file), overrides[file] ?? source);
   }
   return dir;
 }
@@ -160,7 +163,7 @@ describe('package-workstation-cli.sh', () => {
     expect(existsSync(short.archive)).toBe(false);
 
     const from = dist(root);
-    rmSync(path.join(from, 'telemetry-watcher-hook/lcars-hook.cjs'));
+    rmSync(path.join(from, HOOK));
     const missing = pack(root, SOURCE, 'missing', from);
     expect(missing.result.status).toBe(1);
     expect(missing.result.stderr).toContain('lcars-hook.cjs is missing');
@@ -178,22 +181,21 @@ describe('verify-workstation-cli.sh', () => {
 
   it('rejects a hook bundle that does not answer, although it exits 0', () => {
     const root = tempRoot();
-    const from = dist(root, {
-      'telemetry-watcher-hook/lcars-hook.cjs': 'process.exit(0);\n',
-    });
+    const from = dist(root, { [HOOK]: 'process.exit(0);\n' });
     const result = run(VERIFY, [pack(root, SOURCE, 'out', from).archive]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('did not reach the hook bundle');
   });
 
-  it('rejects a flusher that does not parse', () => {
+  it.each([
+    ['does not parse', 'const = ;\n'],
+    ['cannot load a dependency', "require('lcars-not-bundled');\n"],
+  ])('rejects a flusher that %s', (_name, source) => {
     const root = tempRoot();
-    const from = dist(root, {
-      'telemetry-watcher-hook-flush/lcars-hook-flush.cjs': 'const = ;\n',
-    });
+    const from = dist(root, { [FLUSH]: source });
     const result = run(VERIFY, [pack(root, SOURCE, 'out', from).archive]);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('flusher bundle does not parse');
+    expect(result.stderr).toContain('flusher bundle did not load');
   });
 
   it('rejects an archive carrying anything else', () => {
@@ -241,21 +243,30 @@ interface Step {
   with?: Record<string, unknown>;
 }
 interface Job {
+  if?: string;
   permissions?: Record<string, string>;
+  concurrency?: Record<string, unknown>;
   steps: Step[];
 }
 const workflow = parse(
   readFileSync('.github/workflows/publish-workstation-cli.yml', 'utf8'),
-) as { permissions: Record<string, string>; jobs: Record<string, Job> };
+) as {
+  permissions: Record<string, string>;
+  concurrency?: unknown;
+  jobs: Record<string, Job>;
+};
 
 describe('publish-workstation-cli.yml', () => {
+  const { build, publish: publishJob } = workflow.jobs;
+
   it('gives write access only to a job that runs no checkout code', () => {
     expect(workflow.permissions).toEqual({ contents: 'read' });
-    const { build, publish } = workflow.jobs;
     expect(build?.permissions).toBeUndefined();
-    expect(publish?.permissions).toEqual({ contents: 'write' });
+    expect(publishJob?.permissions).toEqual({ contents: 'write' });
     expect(
-      publish?.steps.some((step) => step.uses?.startsWith('actions/checkout')),
+      publishJob?.steps.some((step) =>
+        step.uses?.startsWith('actions/checkout'),
+      ),
     ).toBe(false);
     const checkout = build?.steps.find((step) =>
       step.uses?.startsWith('actions/checkout'),
@@ -263,131 +274,242 @@ describe('publish-workstation-cli.yml', () => {
     expect(checkout?.with?.['persist-credentials']).toBe(false);
   });
 
-  const script = workflow.jobs['publish']?.steps.find(
+  it('admits only a green push run of main, or a dispatch on main', () => {
+    const gate = build?.if?.replace(/\s+/g, ' ') ?? '';
+    expect(gate).toContain(
+      "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
+    );
+    for (const clause of [
+      "github.event.workflow_run.event == 'push'",
+      "github.event.workflow_run.head_branch == 'main'",
+      "github.event.workflow_run.conclusion == 'success'",
+    ])
+      expect(gate).toContain(clause);
+    expect(publishJob?.if).toBeUndefined();
+  });
+
+  it('serializes publications on the publish job, not the workflow', () => {
+    // Every CI completion starts a run of this workflow. A workflow-level
+    // group would let a pull request's run replace a pending main one
+    // before the build job's `if` turned it away.
+    expect(workflow.concurrency).toBeUndefined();
+    expect(build?.concurrency).toBeUndefined();
+    expect(publishJob?.concurrency).toEqual({
+      group: 'publish-workstation-cli',
+      'cancel-in-progress': false,
+    });
+  });
+
+  it('hands the archive over from a directory upload-artifact does not skip', () => {
+    const upload = build?.steps.find((step) =>
+      step.uses?.startsWith('actions/upload-artifact'),
+    );
+    const download = publishJob?.steps.find((step) =>
+      step.uses?.startsWith('actions/download-artifact'),
+    );
+    const uploaded = String(upload?.with?.['path']);
+    // upload-artifact leaves hidden paths out, the search root included.
+    expect(uploaded.split('/').some((part) => part.startsWith('.'))).toBe(
+      false,
+    );
+    expect(upload?.with?.['if-no-files-found']).toBe('error');
+    expect(upload?.with?.['name']).toBe(download?.with?.['name']);
+    expect(
+      build?.steps.some((step) =>
+        step.run?.includes(uploaded.replace(/\/$/, '')),
+      ),
+    ).toBe(true);
+  });
+
+  const script = publishJob?.steps.find(
     (step) => step.name === 'Publish when the CLI changed',
   )?.run as string;
+  const FAKE_GH = path.resolve(
+    'tools/contract-tests/fixtures/fake-gh-release.cjs',
+  );
+  const ASSET = { id: 1, name: ARCHIVE };
+  const SUMS = { id: 2, name: 'SHA256SUMS' };
+  const notes = (revision: string) =>
+    `Workstation CLI.\n\nSource revision: ${revision}\n`;
 
-  // Runs the workflow's own step against a fake `gh` that answers from files
-  // and records every call, so the decision is the workflow's.
-  function publish(state: {
-    tags?: string;
-    publishedSums?: string;
-    body?: string;
+  interface Release {
+    body: string;
+    draft: boolean;
+    assets: { id: number; name: string }[];
+  }
+  interface GhState {
+    release: Release | null;
+    sums?: string;
     compare?: string;
-    listFails?: boolean;
-  }) {
-    const root = tempRoot();
-    const bin = path.join(root, 'bin');
-    const gh = path.join(root, 'gh-state');
-    const work = path.join(root, 'work');
-    const temp = path.join(root, 'runner-temp');
-    for (const dir of [bin, gh, work, temp]) mkdirSync(dir);
-    writeFileSync(path.join(work, ARCHIVE), 'archive');
-    writeFileSync(path.join(work, 'SHA256SUMS'), 'new sums\n');
-    writeFileSync(path.join(gh, 'tags'), state.tags ?? '');
-    if (state.publishedSums !== undefined)
-      writeFileSync(path.join(gh, 'SHA256SUMS'), state.publishedSums);
-    writeFileSync(path.join(gh, 'body'), state.body ?? '');
-    writeFileSync(path.join(gh, 'compare'), state.compare ?? '');
-    if (state.listFails) writeFileSync(path.join(gh, 'list-fails'), '');
-    const log = path.join(root, 'gh.log');
-    writeFileSync(log, '');
-    writeFileSync(
-      path.join(bin, 'gh'),
-      `#!/bin/sh
-# One line per call: release notes span several.
-printf '%s\\n' "$(printf '%s' "$*" | tr '\\n' ' ')" >> "${log}"
-case "$1 $2" in
-  'release list') [ -e "${gh}/list-fails" ] && exit 1; cat "${gh}/tags" ;;
-  'release download')
-    while [ "$#" -gt 1 ]; do [ "$1" = --dir ] && dir="$2"; shift; done
-    [ -e "${gh}/SHA256SUMS" ] || exit 1
-    cp "${gh}/SHA256SUMS" "$dir/SHA256SUMS" ;;
-  'release view') cat "${gh}/body" ;;
-  api\\ *) cat "${gh}/compare" ;;
-esac
-`,
-    );
-    chmodSync(path.join(bin, 'gh'), 0o755);
-    const result = spawnSync('bash', ['-c', script], {
-      cwd: work,
-      encoding: 'utf8',
-      env: {
-        PATH: `${bin}:${process.env['PATH']}`,
-        GH_REPO: 'jlapenna/agent-lcars',
-        SOURCE_SHA: SOURCE,
-        TAG: 'workstation-cli',
-        RUNNER_TEMP: temp,
-      },
-    });
-    const calls = readFileSync(log, 'utf8').trim().split('\n');
-    const changes = calls.filter((call) =>
-      /^release (create|upload|edit) /.test(call),
-    );
-    return { result, changes };
+    fail?: string[];
   }
 
-  it('creates the release, at the built revision, the first time', () => {
-    const { result, changes } = publish({ tags: 'some-other-tag\n' });
+  // Runs the workflow's own step against the fake `gh`, which keeps a
+  // release, changes it as GitHub would and records every call.
+  function publisher(initial: GhState) {
+    const root = tempRoot();
+    const bin = path.join(root, 'bin');
+    const work = path.join(root, 'work');
+    for (const dir of [bin, work]) mkdirSync(dir);
+    symlinkSync(FAKE_GH, path.join(bin, 'gh'));
+    writeFileSync(path.join(work, ARCHIVE), 'archive');
+    writeFileSync(path.join(work, 'SHA256SUMS'), 'new sums\n');
+    const statePath = path.join(root, 'state.json');
+    const log = path.join(root, 'gh.log');
+    writeFileSync(statePath, JSON.stringify({ nextId: 10, ...initial }));
+    writeFileSync(log, '');
+    let attempt = 0;
+    return {
+      set(change: Partial<GhState>) {
+        const state = JSON.parse(readFileSync(statePath, 'utf8'));
+        writeFileSync(statePath, JSON.stringify({ ...state, ...change }));
+      },
+      run() {
+        const temp = path.join(root, `runner-temp-${attempt++}`);
+        mkdirSync(temp);
+        writeFileSync(log, '');
+        const result = spawnSync('bash', ['-c', script], {
+          cwd: work,
+          encoding: 'utf8',
+          env: {
+            PATH: `${bin}:${process.env['PATH']}`,
+            GH_REPO: 'jlapenna/agent-lcars',
+            SOURCE_SHA: SOURCE,
+            TAG: 'workstation-cli',
+            RUNNER_TEMP: temp,
+            FAKE_GH_STATE: statePath,
+            FAKE_GH_LOG: log,
+          },
+        });
+        const calls = readFileSync(log, 'utf8').trim().split('\n');
+        const state = JSON.parse(readFileSync(statePath, 'utf8')) as GhState;
+        return {
+          result,
+          calls,
+          // Everything that changed the release, in order.
+          changes: calls
+            .filter(
+              (call) =>
+                /^release (create|upload|edit) /.test(call) ||
+                /^api --method (DELETE|PATCH) /.test(call),
+            )
+            .map((call) => call.replace(/ \S*runner-temp-\d+\//, ' ')),
+          release: state.release,
+          sums: state.sums,
+          names: state.release?.assets.map((asset) => asset.name).sort(),
+        };
+      },
+    };
+  }
+  const published = (body: string, sums = 'old sums\n'): GhState => ({
+    release: { body, draft: false, assets: [ASSET, SUMS] },
+    sums,
+  });
+
+  it('creates the release empty at the built revision, then fills it', () => {
+    const { result, changes, release, names, sums } = publisher({
+      release: null,
+    }).run();
     expect(result.status, result.stderr).toBe(0);
-    expect(changes).toHaveLength(1);
+    // No files on create: with them the release would start as a draft.
     expect(changes[0]).toMatch(
-      new RegExp(`^release create workstation-cli --target ${SOURCE} `),
+      new RegExp(
+        `^release create workstation-cli --target ${SOURCE} --latest=false --title Workstation CLI --notes .*Source revision: ${SOURCE} *$`,
+      ),
     );
-    expect(changes[0]).toContain(`Source revision: ${SOURCE}`);
-    expect(changes[0]).toMatch(/lcars-workstation-cli\.tar\.gz SHA256SUMS$/);
+    expect(release?.draft).toBe(false);
+    expect(names).toEqual(['SHA256SUMS', ARCHIVE]);
+    expect(sums).toBe('new sums\n');
   });
 
   it('changes nothing when the published CLI already matches', () => {
-    const { result, changes } = publish({
-      tags: 'workstation-cli\n',
-      publishedSums: 'new sums\n',
-    });
+    const { result, changes } = publisher(
+      published(notes(NEWER), 'new sums\n'),
+    ).run();
     expect(result.status, result.stderr).toBe(0);
     expect(changes).toEqual([]);
   });
 
-  it('replaces the archive before its checksum list, then the notes', () => {
-    const { result, changes } = publish({
-      tags: 'workstation-cli\n',
-      publishedSums: 'old sums\n',
-      body: `Notes\n\nSource revision: ${NEWER}\n`,
-      compare: 'behind\n',
-    });
+  it('swaps the archive in under its name without first removing it', () => {
+    const { result, changes, release, names, sums } = publisher({
+      ...published(notes(NEWER)),
+      compare: 'behind',
+    }).run();
     expect(result.status, result.stderr).toBe(0);
     expect(
-      changes.map((call) => call.split(' ').slice(0, 4).join(' ')),
+      changes.map((call) => call.split(' ').slice(0, 5).join(' ')),
     ).toEqual([
-      'release upload workstation-cli lcars-workstation-cli.tar.gz',
-      'release upload workstation-cli SHA256SUMS',
-      'release edit workstation-cli --notes',
+      'release edit workstation-cli --draft=false --notes',
+      `release upload workstation-cli ${ARCHIVE}.new --clobber`,
+      'api --method DELETE repos/jlapenna/agent-lcars/releases/assets/1 --silent',
+      `api --method PATCH repos/jlapenna/agent-lcars/releases/assets/10 -f`,
+      'release upload workstation-cli SHA256SUMS --clobber',
     ]);
-    expect(changes[2]).toContain(`Source revision: ${SOURCE}`);
+    expect(changes[3]).toContain(`name=${ARCHIVE}`);
+    expect(release?.body).toContain(`Source revision: ${SOURCE}`);
+    expect(names).toEqual(['SHA256SUMS', ARCHIVE]);
+    expect(sums).toBe('new sums\n');
   });
 
   it('leaves a newer build in place when an older commit arrives late', () => {
-    const { result, changes } = publish({
-      tags: 'workstation-cli\n',
-      publishedSums: 'old sums\n',
-      body: `Notes\n\nSource revision: ${NEWER}\n`,
-      compare: 'ahead\n',
-    });
+    const { result, changes, calls } = publisher({
+      ...published(notes(NEWER)),
+      compare: 'ahead',
+    }).run();
     expect(result.status, result.stderr).toBe(0);
     expect(changes).toEqual([]);
+    // Base is this run's commit: "ahead" then means the published one is
+    // its descendant.
+    expect(calls).toContain(
+      `api repos/jlapenna/agent-lcars/compare/${SOURCE}...${NEWER} --jq .status`,
+    );
   });
 
-  it('publishes when the release has lost its checksum list', () => {
-    const { result, changes } = publish({
-      tags: 'workstation-cli\n',
-      body: `Notes\n\nSource revision: ${SOURCE}\n`,
-    });
-    expect(result.status, result.stderr).toBe(0);
-    expect(changes).toHaveLength(3);
-  });
-
-  it('fails without publishing when the releases cannot be read', () => {
-    const { result, changes } = publish({ listFails: true });
+  it('fails without publishing when the commits cannot be compared', () => {
+    const { result, changes } = publisher({
+      ...published(notes(NEWER)),
+      fail: ['compare'],
+    }).run();
     expect(result.status).not.toBe(0);
     expect(changes).toEqual([]);
+  });
+
+  it('fails without publishing when the release cannot be read', () => {
+    const { result, changes } = publisher({
+      ...published(notes(NEWER)),
+      fail: ['read'],
+    }).run();
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain('Could not read release');
+    expect(changes).toEqual([]);
+  });
+
+  it('keeps the live archive when the new upload fails, and finishes on the next run', () => {
+    const run = publisher({
+      ...published(notes(NEWER)),
+      compare: 'behind',
+      fail: [`upload:${ARCHIVE}.new`],
+    });
+    const failed = run.run();
+    expect(failed.result.status).not.toBe(0);
+    // What workstations fetch is untouched, and so is what the next run
+    // compares against.
+    expect(failed.release?.assets).toContainEqual(ASSET);
+    expect(failed.sums).toBe('old sums\n');
+
+    run.set({ fail: [] });
+    const retried = run.run();
+    expect(retried.result.status, retried.result.stderr).toBe(0);
+    expect(retried.names).toEqual(['SHA256SUMS', ARCHIVE]);
+    expect(retried.sums).toBe('new sums\n');
+  });
+
+  it('publishes again when the archive is missing although the checksums match', () => {
+    const { result, names } = publisher({
+      release: { body: notes(SOURCE), draft: false, assets: [SUMS] },
+      sums: 'new sums\n',
+    }).run();
+    expect(result.status, result.stderr).toBe(0);
+    expect(names).toEqual(['SHA256SUMS', ARCHIVE]);
   });
 });

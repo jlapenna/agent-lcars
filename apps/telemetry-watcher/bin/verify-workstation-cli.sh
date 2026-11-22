@@ -46,8 +46,13 @@ grep -q 'session title' <<<"$help" ||
 hook_usage="$(run hook)" || fail 'the hook bundle exited non-zero'
 grep -q 'usage: lcars hook claude' <<<"$hook_usage" ||
   fail 'the launcher did not reach the hook bundle'
-# The flusher holds the Firestore client and is spawned by the hook, never
-# run directly here: check that Node can parse it.
-node --check "$lib/lcars-hook-flush.cjs" || fail 'the flusher bundle does not parse'
+# The flusher holds the Firestore client and is only ever started by the
+# other bundles, from the file beside them. `session archive --help` starts
+# it that way and prints its usage without touching the network, which
+# proves the whole bundle loads and is found where the launcher puts it.
+flusher_usage="$(run session archive --help)" ||
+  fail 'the flusher bundle did not load from beside the CLI bundle'
+grep -q 'usage: lcars session archive' <<<"$flusher_usage" ||
+  fail 'the session-title bundle did not reach the flusher bundle'
 
 echo "Verified $archive at $(cat "$lib/REVISION")"

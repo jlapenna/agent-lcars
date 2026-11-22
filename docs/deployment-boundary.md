@@ -309,15 +309,17 @@ independent delivery paths:
 | Workstation CLI | [Publish workstation CLI](../.github/workflows/publish-workstation-cli.yml) builds the bundles and launcher from each `main` revision that passes CI and publishes them as the `workstation-cli` release asset `lcars-workstation-cli.tar.gz`, replacing it only when the CLI changed. Homegit owns installation: it unpacks that asset at `~/.local/share/agent-lcars-cli`, links `~/.local/bin/lcars` to the launcher inside, and refreshes it on apply, on the hosts it enrolls for telemetry. The release follows `main` and is never pinned. The [installer](../apps/telemetry-watcher/bin/install-session-title-cli.sh) is for development only and refuses to write over the managed copy. | Read `~/.local/share/agent-lcars-cli/REVISION` on the host, check `sha256sum -c SHA256SUMS` there, and invoke the installed launcher. |
 | Runner CLI      | Homelab owns publication and reconciliation under the [image-publish routing contract](image-publish-routing.md). The [runner Dockerfile](../apps/runner-autoscaler/runner-image/Dockerfile) bakes the CLI bundle and launcher. The former watcher-daemon image is retired (hooks telemetry phase 3).                                                                                                                                                                                                                                                                                                                                                                                             | Record the running image digest and source revision; test the CLI baked into that runner digest.                                      |
 
-For a CLI source change, hand the maintainer the reviewed main SHA and CI
-receipt, affected workstation installation targets and image consumers, the
-supported installer/image-publish links above, and the verification command
-below. Obtain approval for the specific host installation and any Homelab
-rollout before executing them. Follow the existing image selection contract;
-Console rollout does not update copied workstation bundles or prove image
-adoption.
+For a CLI source change, workstations need no handoff: the publish workflow
+and homegit deliver it. Confirm that the `workstation-cli` release notes name
+the merged revision or a later one, and that each affected host's
+`~/.local/share/agent-lcars-cli/REVISION` reaches it after homegit's next
+apply. For the runner image, hand the maintainer the reviewed main SHA and CI
+receipt, the affected image consumers, the image-publish link above, and the
+verification command below, and obtain approval for any Homelab rollout
+before executing it. Follow the existing image selection contract; Console
+rollout does not update workstation bundles or prove image adoption.
 
-After installation or rollout, invoke the installed workstation launcher or
+After delivery or rollout, invoke the installed workstation launcher or
 the runner image's baked `/usr/local/bin/lcars`, using an existing failed Work
 item that the caller is authorized to read:
 

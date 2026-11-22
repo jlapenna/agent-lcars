@@ -20,17 +20,13 @@ on:
 permissions:
   contents: read
 
-# One publication at a time, in arrival order. A newer commit's run waits
-# for an older one instead of cancelling it mid-upload.
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
-
 jobs:
   build:
     name: Build and verify the archive
-    # Only a `main` revision whose whole CI run passed. A cancelled or failed
-    # run publishes nothing; the next green one builds its own, newer head.
+    # From CI: only a `main` revision whose whole run passed. A cancelled or
+    # failed run publishes nothing; the next green one builds its own, newer
+    # head. A manual dispatch builds the head of `main` as it is, without
+    # waiting for its CI, like Deploy console's dispatch.
     if: |
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_run' &&
@@ -66,19 +62,30 @@ jobs:
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
           apps/telemetry-watcher/bin/package-workstation-cli.sh \
-            .workstation-cli "$SOURCE_SHA"
+            workstation-cli-out "$SOURCE_SHA"
           apps/telemetry-watcher/bin/verify-workstation-cli.sh \
-            .workstation-cli/lcars-workstation-cli.tar.gz
+            workstation-cli-out/lcars-workstation-cli.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: workstation-cli
-          path: .workstation-cli/
+          # Not a dot-directory: upload-artifact leaves hidden paths out.
+          path: workstation-cli-out/
           if-no-files-found: error
           retention-days: 7
 
   publish:
     name: Publish the archive
     needs: build
+    # One publication at a time. The group is on this job, not the workflow:
+    # every CI completion starts a run of this workflow, pull requests
+    # included, and a workflow-level group would let such a run replace a
+    # pending `main` publication before the `if` above turned it away. Only
+    # runs that built an archive reach this job. A newer one waiting here
+    # replaces an older one still waiting, which is the order wanted; a late
+    # run for an older commit is turned away by the descendant check below.
+    concurrency:
+      group: publish-workstation-cli
+      cancel-in-progress: false
     # Holds the only write permission, and runs no code from the checkout:
     # nothing a dependency's install script could reach can publish.
     runs-on: ubuntu-slim
@@ -94,46 +101,83 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: workstation-cli
-          path: .workstation-cli
+          path: workstation-cli-out
       - name: Publish when the CLI changed
-        working-directory: .workstation-cli
+        working-directory: workstation-cli-out
         run: |
           set -euo pipefail
+          asset=lcars-workstation-cli.tar.gz
+          release_api="repos/$GH_REPO/releases"
           notes="$(printf '%s\n\nSource revision: %s\n' \
             'The workstation lcars CLI built from main. Homegit installs and refreshes it; do not pin it.' \
             "$SOURCE_SHA")"
 
-          # A failed listing stops the job here (errexit): publishing over a
-          # release that could not be read would be a guess.
-          releases="$(gh release list --limit 100 --json tagName --jq '.[].tagName')"
-          if ! grep -qxF "$TAG" <<<"$releases"; then
+          # The release, or proof that there is none. Any other answer stops
+          # the job: publishing over a release that could not be read would
+          # be a guess.
+          if ! gh api "$release_api/tags/$TAG" --silent 2>"$RUNNER_TEMP/release.err"; then
+            if ! grep -q 'HTTP 404' "$RUNNER_TEMP/release.err"; then
+              cat "$RUNNER_TEMP/release.err" >&2
+              echo "::error::Could not read release $TAG."
+              exit 1
+            fi
+            # Created empty. With assets, gh makes a draft and publishes it
+            # after the uploads; a run interrupted in between would leave a
+            # draft that no later run publishes.
             gh release create "$TAG" --target "$SOURCE_SHA" --latest=false \
-              --title 'Workstation CLI' --notes "$notes" \
-              lcars-workstation-cli.tar.gz SHA256SUMS
-            echo "::notice::Published the first workstation CLI from $SOURCE_SHA."
-            exit 0
+              --title 'Workstation CLI' --notes "$notes"
           fi
+          asset_id() {
+            gh api "$release_api/tags/$TAG" \
+              --jq ".assets[] | select(.name == \"$1\") | .id"
+          }
 
           mkdir "$RUNNER_TEMP/published"
-          if gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP/published" &&
+          if [ -n "$(asset_id "$asset")" ] &&
+             gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP/published" &&
              cmp -s "$RUNNER_TEMP/published/SHA256SUMS" SHA256SUMS; then
             echo "::notice::The published workstation CLI already matches $SOURCE_SHA."
             exit 0
           fi
 
-          # Runs are serialized, but a re-run can deliver an older commit
-          # after a newer one. Never replace a descendant's build.
-          published="$(gh release view "$TAG" --json body --jq .body |
-            sed -n 's/^Source revision: \([0-9a-f]\{40\}\)$/\1/p' | head -n 1)"
-          if [ -n "$published" ] && [ "$published" != "$SOURCE_SHA" ] &&
-             [ "$(gh api "repos/$GH_REPO/compare/$SOURCE_SHA...$published" --jq .status)" = ahead ]; then
-            echo "::notice::Release $TAG already holds descendant $published; leaving it."
-            exit 0
+          # A re-run can deliver an older commit after a newer one. Never
+          # replace a descendant's build. A comparison that cannot be read
+          # stops the job (errexit) instead of counting as "not newer".
+          published="$(gh api "$release_api/tags/$TAG" --jq '.body // ""' |
+            tr -d '\r' | sed -n 's/^Source revision: \([0-9a-f]\{40\}\)$/\1/p')"
+          published="${published%%$'\n'*}"
+          if [ -n "$published" ] && [ "$published" != "$SOURCE_SHA" ]; then
+            relation="$(gh api "repos/$GH_REPO/compare/$SOURCE_SHA...$published" --jq .status)"
+            if [ "$relation" = ahead ]; then
+              echo "::notice::Release $TAG already holds descendant $published; leaving it."
+              exit 0
+            fi
           fi
 
+          # Notes first: they are what the check above reads, so a run that
+          # stops after this line still keeps an older commit from publishing
+          # over this one, and the next run for this or a newer commit
+          # finishes the job.
+          gh release edit "$TAG" --draft=false --notes "$notes"
+
+          # Workstations fetch the archive by name. Replacing it in place
+          # deletes it first and loses it if the upload then fails, so the
+          # new build goes up under another name and takes the real one in
+          # the last two calls.
+          cp "$asset" "$RUNNER_TEMP/$asset.new"
+          gh release upload "$TAG" "$RUNNER_TEMP/$asset.new" --clobber
+          new_id="$(asset_id "$asset.new")"
+          if [ -z "$new_id" ]; then
+            echo "::error::The uploaded archive is not on release $TAG."
+            exit 1
+          fi
+          old_id="$(asset_id "$asset")"
+          if [ -n "$old_id" ]; then
+            gh api --method DELETE "$release_api/assets/$old_id" --silent
+          fi
+          gh api --method PATCH "$release_api/assets/$new_id" -f name="$asset" --silent
+
           # The checksum list goes last: it is what the next run compares, so
-          # an upload interrupted before it is simply repeated.
-          gh release upload "$TAG" lcars-workstation-cli.tar.gz --clobber
+          # anything interrupted before it is simply repeated.
           gh release upload "$TAG" SHA256SUMS --clobber
-          gh release edit "$TAG" --notes "$notes"
           echo "::notice::Published the workstation CLI from $SOURCE_SHA."
