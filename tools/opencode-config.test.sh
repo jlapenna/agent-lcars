@@ -125,8 +125,10 @@ jq -e '
 # recreating the retired copy-on-every-run design.
 jq -e '.provider.homelab.options.apiKey == "{file:/run/secrets/opencode-llm-api-key}"' "$config" >/dev/null ||
   fail "the OpenCode provider must read its LiteLLM key from the file mount, never an agent-inherited environment variable"
-jq -e '.skills == ["/opt/repo-tools/plugins/repo-tools/skills"]' "$config" >/dev/null ||
-  fail "OpenCode must load repo-tools skills from the shared runner checkout"
+jq -e '.skills == ["/opt/repo-tools/plugins/repo-tools/skills",
+  "/home/runner/.claude/plugins/marketplaces/googlechrome/skills",
+  "/home/runner/.claude/plugins/marketplaces/goland-claude-marketplace/plugin/skills"]' "$config" >/dev/null ||
+  fail "OpenCode must load repo-tools skills from the shared runner checkout and the upstream guidance plugins from the runner's Claude marketplace checkouts"
 grep -Fq '/repo/agents/opencode/opencode.json' "$runner_dockerfile" ||
   fail "runner image no longer installs the shared opencode.json"
 grep -Fq '/home/runner/.config/opencode/opencode.json' "$runner_dockerfile" ||

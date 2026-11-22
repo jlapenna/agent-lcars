@@ -21,7 +21,6 @@
         "./lcars",
         "./lcars-session-updates",
         "./lcars-usage",
-        "./use-modern-go",
         "./verifying-console-session"
       ]
     }

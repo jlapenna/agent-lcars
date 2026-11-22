@@ -896,6 +896,30 @@ RUN codex plugin marketplace add /opt/repo-tools && \
     codex plugin add repo-tools@repo-tools
 RUN claude plugin marketplace add /opt/repo-tools && \
     claude plugin install repo-tools@repo-tools
+# Third-party web and Go guidance plugins follow their upstream default
+# branches directly, with no vendoring or review step. This layer sits after
+# the repo-tools layer, so each repo-tools-driven rebuild refreshes them.
+# Codex dispatches copy this ~/.codex; OpenCode (agents/opencode/opencode.json)
+# reads the skills from the Claude marketplace checkouts checked below, and
+# Antigravity and Goose get copies (Goose reads ~/.config/agents/skills,
+# which Codex and OpenCode ignore, so they see no duplicates).
+RUN codex plugin marketplace add GoogleChrome/modern-web-guidance && \
+    codex plugin marketplace add JetBrains/go-modern-guidelines && \
+    codex plugin add modern-web-guidance@googlechrome && \
+    codex plugin add modern-go-guidelines@goland-codex-marketplace
+RUN claude plugin marketplace add GoogleChrome/modern-web-guidance && \
+    claude plugin marketplace add JetBrains/go-modern-guidelines && \
+    claude plugin install modern-web-guidance@googlechrome && \
+    claude plugin install modern-go-guidelines@goland-claude-marketplace && \
+    test -f /home/runner/.claude/plugins/marketplaces/googlechrome/skills/modern-web-guidance/SKILL.md && \
+    test -f /home/runner/.claude/plugins/marketplaces/goland-claude-marketplace/plugin/skills/use-modern-go/SKILL.md && \
+    mkdir -p /home/runner/.gemini/antigravity-cli/skills /home/runner/.config/agents/skills && \
+    for skill in googlechrome/skills/modern-web-guidance googlechrome/skills/chrome-extensions \
+      goland-claude-marketplace/plugin/skills/use-modern-go; do \
+      src="/home/runner/.claude/plugins/marketplaces/$skill"; \
+      test -f "$src/SKILL.md" && cp -R "$src" /home/runner/.gemini/antigravity-cli/skills/ && \
+        cp -R "$src" /home/runner/.config/agents/skills/ || exit 1; \
+    done
 
 # Stage the Hindsight coding-agent runtime and register hooks/MCP/skills for
 # Claude Code, Codex and Antigravity; OpenCode loads ~/.hindsight/coding-agents
