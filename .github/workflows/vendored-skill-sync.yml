@@ -5,7 +5,7 @@ name: Vendored Skill Sync
 # version pin alone is not enough: an upstream change to the skill's
 # SKILL.md or scripts would never reach the vendored copy. Each run copies
 # the complete upstream skill directory, plus the upstream license, from the
-# current commit of `upstream-ref` and, when the copy differs from the
+# Git tree of the current commit of `upstream-ref` and, when the copy differs from the
 # default branch, opens or refreshes one PR authored by the Agent LCARS App.
 # That PR rides the caller's agent auto-merge and review gates like any other
 # agent PR. When upstream matches again, a stale sync PR is closed.
@@ -106,28 +106,39 @@ jobs:
           sha=$(gh api "repos/$UPSTREAM_REPO/commits/$UPSTREAM_REF" --jq .sha)
           [[ $sha =~ ^[0-9a-f]{40}$ ]] || fail "no commit for $UPSTREAM_REF"
           work=$(mktemp -d)
-          gh api "repos/$UPSTREAM_REPO/tarball/$sha" > "$work/src.tar.gz"
-          mkdir "$work/src" "$work/stage"
-          tar -xzf "$work/src.tar.gz" -C "$work/src" --strip-components=1
-          root=$(realpath "$work/src")
-          src="$work/src/$UPSTREAM_PATH"
-          license="$work/src/$UPSTREAM_LICENSE"
-          # Copy only regular files and directories that resolve inside the
-          # extracted archive, so a link can never pull a runner-local file
-          # into the commit this job pushes.
-          [[ -d $src && ! -L $src && $(realpath "$src") == "$root"/* ]] ||
-            fail "$UPSTREAM_REPO@$sha has no skill directory at $UPSTREAM_PATH"
-          [[ -f $src/SKILL.md && ! -L $src/SKILL.md ]] ||
-            fail "$UPSTREAM_REPO@$sha has no SKILL.md in $UPSTREAM_PATH"
-          [[ -f $license && ! -L $license && $(realpath "$license") == "$root"/* ]] ||
+          up="$work/upstream"
+          git init -q "$up"
+          git -C "$up" fetch -q --depth 1 "https://github.com/$UPSTREAM_REPO.git" "$sha"
+          [[ $(git -C "$up" rev-parse FETCH_HEAD) == "$sha" ]] || fail "fetched the wrong upstream commit"
+          # Read blobs straight from the commit's tree rather than a source
+          # archive or checkout, so export-ignore and checkout filters cannot
+          # drop or alter files. Only regular files are accepted: a symlink or
+          # submodule entry fails the run, so nothing outside the upstream
+          # tree can reach the commit this job pushes.
+          stage="$work/stage"
+          mkdir "$stage"
+          found_skill=""
+          while IFS= read -r -d '' entry; do
+            meta=${entry%%$'\t'*}
+            path=${entry#*$'\t'}
+            read -r mode type oid <<<"$meta"
+            [[ $type == blob && ($mode == 100644 || $mode == 100755) ]] ||
+              fail "upstream $path is not a regular file (mode $mode)"
+            rel=${path#"$UPSTREAM_PATH"/}
+            [[ $rel == SKILL.md ]] && found_skill=1
+            mkdir -p "$stage/$(dirname "$rel")"
+            git -C "$up" cat-file blob "$oid" > "$stage/$rel"
+            [[ $mode == 100755 ]] && chmod +x "$stage/$rel"
+          done < <(git -C "$up" ls-tree -r -z --full-tree FETCH_HEAD -- "$UPSTREAM_PATH/")
+          [[ -n $found_skill ]] || fail "$UPSTREAM_REPO@$sha has no SKILL.md in $UPSTREAM_PATH"
+          license=$(git -C "$up" ls-tree -z --full-tree FETCH_HEAD -- "$UPSTREAM_LICENSE" | tr -d '\0')
+          read -r mode type oid <<<"${license%%$'\t'*}"
+          [[ -n $license && $type == blob && ($mode == 100644 || $mode == 100755) ]] ||
             fail "$UPSTREAM_REPO@$sha has no regular file $UPSTREAM_LICENSE"
-          other=$(find "$src" ! -type f ! -type d -print -quit)
-          [[ -z $other ]] || fail "upstream skill contains a link or special file: ${other#"$work/src/"}"
-          cp -R "$src/." "$work/stage/"
-          cat "$license" > "$work/stage/LICENSE"
+          git -C "$up" cat-file blob "$oid" > "$stage/LICENSE"
           rm -rf "$SKILL_DIR"
           mkdir -p "$(dirname "$SKILL_DIR")"
-          cp -R "$work/stage" "$SKILL_DIR"
+          cp -R "$stage" "$SKILL_DIR"
           rm -rf "$work"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
@@ -144,32 +155,42 @@ jobs:
           name=${SKILL_DIR##*/}
           branch="chore/sync-skill-$name"
           # Only a same-repository PR into the base, authored by the App, is
-          # this workflow's; any other same-repo PR on the reserved branch
-          # name stops the run rather than being edited, closed or overwritten.
-          prs=$(gh pr list --repo "$REPO" --head "$branch" --state open \
-            --json number,author,baseRefName,isCrossRepository)
-          pr=$(jq -r --arg base "$BASE" '[.[] | select(.isCrossRepository == false
-            and .baseRefName == $base
-            and (.author.login == "app/agent-lcars" or .author.login == "agent-lcars[bot]"))][0].number // empty' <<<"$prs")
-          # Fork PRs cannot write this repository's branch, so only same-repo
-          # PRs count as foreign.
-          foreign=$(jq -r --arg pr "$pr" '[.[] | select(.isCrossRepository == false
+          # this workflow's. Fork PRs cannot write this repository's branch
+          # and are ignored; any other same-repository PR on the reserved
+          # branch stops the run rather than being edited or overwritten.
+          prs=$(gh api --paginate \
+            "repos/$REPO/pulls?state=open&head=${REPO%%/*}:$branch&per_page=100" \
+            --jq '.[] | {number, login: .user.login, base: .base.ref, head: .head.repo.full_name}' |
+            jq -s .)
+          pr=$(jq -r --arg repo "$REPO" --arg base "$BASE" '[.[] | select(.head == $repo
+            and .base == $base and .login == "agent-lcars[bot]")][0].number // empty' <<<"$prs")
+          foreign=$(jq -r --arg repo "$REPO" --arg pr "$pr" '[.[] | select(.head == $repo
             and (.number | tostring) != $pr)] | length' <<<"$prs")
           [[ $foreign == 0 ]] || fail "an unmanaged PR uses the reserved branch $branch"
-          remote_tip=""
-          if git fetch -q origin "refs/heads/$branch" 2>/dev/null; then
-            remote_tip=$(git rev-parse FETCH_HEAD)
-            if [[ -z $pr ]] && [[ $(git log -1 --format=%ae "$remote_tip") != "$bot_email" ]]; then
-              fail "branch $branch exists without a sync PR and was not written by this workflow"
-            fi
+          # Observe the branch tip once, failing closed on lookup errors; every
+          # write below is leased to exactly this tip (or to its absence).
+          tip=""
+          rc=0
+          out=$(git ls-remote --exit-code origin "refs/heads/$branch") || rc=$?
+          if [[ $rc == 0 ]]; then
+            tip=${out%%$'\t'*}
+            git fetch -q origin "$tip"
+            [[ $(git log -1 --format=%ae "$tip") == "$bot_email" ]] ||
+              fail "branch $branch was last written by someone other than this workflow"
+          elif [[ $rc != 2 ]]; then
+            fail "could not read refs/heads/$branch (git ls-remote exit $rc)"
           fi
+          lease="--force-with-lease=refs/heads/$branch:$tip"
           # -f stages upstream files that consumer ignore rules would skip.
           git add -A -f -- "$SKILL_DIR"
           if git diff --cached --quiet; then
             echo "$SKILL_DIR matches $UPSTREAM_REPO@$SHA"
             if [[ -n $pr ]]; then
-              gh pr close "$pr" --repo "$REPO" --delete-branch \
+              gh pr close "$pr" --repo "$REPO" \
                 --comment "$SKILL_DIR already matches $UPSTREAM_REPO@$SHA."
+            fi
+            if [[ -n $tip ]]; then
+              git push -q "$lease" origin ":refs/heads/$branch"
             fi
             exit 0
           fi
@@ -184,12 +205,12 @@ jobs:
           # An open PR whose skill content already matches keeps its head, so
           # a weekly run does not restart its review or checks; its body is
           # still refreshed so the upstream link stays current.
-          if [[ -n $pr && -n $remote_tip ]] && git diff --quiet HEAD "$remote_tip" -- "$SKILL_DIR"; then
+          if [[ -n $pr && -n $tip ]] && git diff --quiet HEAD "$tip" -- "$SKILL_DIR"; then
             gh pr edit "$pr" --repo "$REPO" --body "$body"
             echo "PR #$pr already carries this content"
             exit 0
           fi
-          git push -q --force origin "HEAD:refs/heads/$branch"
+          git push -q "$lease" origin "HEAD:refs/heads/$branch"
           if [[ -n $pr ]]; then
             gh pr edit "$pr" --repo "$REPO" --body "$body"
           else
