@@ -102,21 +102,32 @@ jobs:
           GH_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
           sha=$(gh api "repos/$UPSTREAM_REPO/commits/$UPSTREAM_REF" --jq .sha)
-          [[ $sha =~ ^[0-9a-f]{40}$ ]] || { echo "::error::no commit for $UPSTREAM_REF"; exit 1; }
+          [[ $sha =~ ^[0-9a-f]{40}$ ]] || fail "no commit for $UPSTREAM_REF"
           work=$(mktemp -d)
           gh api "repos/$UPSTREAM_REPO/tarball/$sha" > "$work/src.tar.gz"
-          mkdir "$work/src"
+          mkdir "$work/src" "$work/stage"
           tar -xzf "$work/src.tar.gz" -C "$work/src" --strip-components=1
+          root=$(realpath "$work/src")
           src="$work/src/$UPSTREAM_PATH"
-          [[ -f $src/SKILL.md && ! -L $src ]] ||
-            { echo "::error::$UPSTREAM_REPO@$sha has no skill at $UPSTREAM_PATH"; exit 1; }
-          [[ -f $work/src/$UPSTREAM_LICENSE ]] ||
-            { echo "::error::$UPSTREAM_REPO@$sha has no $UPSTREAM_LICENSE"; exit 1; }
+          license="$work/src/$UPSTREAM_LICENSE"
+          # Copy only regular files and directories that resolve inside the
+          # extracted archive, so a link can never pull a runner-local file
+          # into the commit this job pushes.
+          [[ -d $src && ! -L $src && $(realpath "$src") == "$root"/* ]] ||
+            fail "$UPSTREAM_REPO@$sha has no skill directory at $UPSTREAM_PATH"
+          [[ -f $src/SKILL.md && ! -L $src/SKILL.md ]] ||
+            fail "$UPSTREAM_REPO@$sha has no SKILL.md in $UPSTREAM_PATH"
+          [[ -f $license && ! -L $license && $(realpath "$license") == "$root"/* ]] ||
+            fail "$UPSTREAM_REPO@$sha has no regular file $UPSTREAM_LICENSE"
+          other=$(find "$src" ! -type f ! -type d -print -quit)
+          [[ -z $other ]] || fail "upstream skill contains a link or special file: ${other#"$work/src/"}"
+          cp -R "$src/." "$work/stage/"
+          cat "$license" > "$work/stage/LICENSE"
           rm -rf "$SKILL_DIR"
-          mkdir -p "$SKILL_DIR"
-          cp -R "$src/." "$SKILL_DIR/"
-          cp "$work/src/$UPSTREAM_LICENSE" "$SKILL_DIR/LICENSE"
+          mkdir -p "$(dirname "$SKILL_DIR")"
+          cp -R "$work/stage" "$SKILL_DIR"
           rm -rf "$work"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
@@ -128,11 +139,29 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          bot_email='311841118+agent-lcars[bot]@users.noreply.github.com'
           name=${SKILL_DIR##*/}
           branch="chore/sync-skill-$name"
-          pr=$(gh pr list --repo "$REPO" --head "$branch" --state open \
-            --json number --jq '.[0].number // empty')
-          git add -A -- "$SKILL_DIR"
+          # Only a same-repository PR into the base, authored by the App, is
+          # this workflow's; any other PR on the reserved branch name stops
+          # the run rather than being edited, closed or overwritten.
+          prs=$(gh pr list --repo "$REPO" --head "$branch" --state open \
+            --json number,author,baseRefName,isCrossRepository)
+          pr=$(jq -r --arg base "$BASE" '[.[] | select(.isCrossRepository == false
+            and .baseRefName == $base
+            and (.author.login == "app/agent-lcars" or .author.login == "agent-lcars[bot]"))][0].number // empty' <<<"$prs")
+          foreign=$(jq -r --arg pr "$pr" '[.[] | select((.number | tostring) != $pr)] | length' <<<"$prs")
+          [[ $foreign == 0 ]] || fail "an unmanaged PR uses the reserved branch $branch"
+          remote_tip=""
+          if git fetch -q origin "refs/heads/$branch" 2>/dev/null; then
+            remote_tip=$(git rev-parse FETCH_HEAD)
+            if [[ -z $pr ]] && [[ $(git log -1 --format=%ae "$remote_tip") != "$bot_email" ]]; then
+              fail "branch $branch exists without a sync PR and was not written by this workflow"
+            fi
+          fi
+          # -f stages upstream files that consumer ignore rules would skip.
+          git add -A -f -- "$SKILL_DIR"
           if git diff --cached --quiet; then
             echo "$SKILL_DIR matches $UPSTREAM_REPO@$SHA"
             if [[ -n $pr ]]; then
@@ -141,23 +170,23 @@ jobs:
             fi
             exit 0
           fi
-          git -c user.name='agent-lcars[bot]' \
-            -c user.email='311841118+agent-lcars[bot]@users.noreply.github.com' \
+          git -c user.name='agent-lcars[bot]' -c user.email="$bot_email" \
             commit -q -m "chore(skills): sync $name from $UPSTREAM_REPO" \
             -m "Copied $UPSTREAM_PATH and $UPSTREAM_LICENSE from $UPSTREAM_REPO@$SHA."
-          # An open PR whose skill content already matches keeps its head, so
-          # a weekly run does not restart its review or checks.
-          if git fetch -q origin "refs/heads/$branch" 2>/dev/null &&
-            git diff --quiet HEAD FETCH_HEAD -- "$SKILL_DIR" && [[ -n $pr ]]; then
-            echo "PR #$pr already carries this content"
-            exit 0
-          fi
-          git push -q --force origin "HEAD:refs/heads/$branch"
           body="Copies \`$UPSTREAM_PATH\` and \`$UPSTREAM_LICENSE\` from
           https://github.com/$UPSTREAM_REPO/tree/$SHA into \`$SKILL_DIR\`, so the
           vendored skill matches upstream \`$UPSTREAM_REF\`.
 
           Opened by the Vendored Skill Sync workflow; run $GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID."
+          # An open PR whose skill content already matches keeps its head, so
+          # a weekly run does not restart its review or checks; its body is
+          # still refreshed so the upstream link stays current.
+          if [[ -n $pr && -n $remote_tip ]] && git diff --quiet HEAD "$remote_tip" -- "$SKILL_DIR"; then
+            gh pr edit "$pr" --repo "$REPO" --body "$body"
+            echo "PR #$pr already carries this content"
+            exit 0
+          fi
+          git push -q --force origin "HEAD:refs/heads/$branch"
           if [[ -n $pr ]]; then
             gh pr edit "$pr" --repo "$REPO" --body "$body"
           else
