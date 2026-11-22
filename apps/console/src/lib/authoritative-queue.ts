@@ -1,7 +1,6 @@
 import 'server-only';
 
 import { logger } from '@agent-lcars/logging';
-import { isLive } from '@agent-lcars/orchestrator';
 import { latestRun } from '@agent-lcars/work/derive';
 
 import {
@@ -71,8 +70,8 @@ export async function getAuthoritativeQueueItems(): Promise<ActionItemsResult> {
             (type) => type !== 'needs-human',
           );
           if (
-            !isLive(run.state) &&
-            !run.result?.ok &&
+            (run.state === 'lost' ||
+              (run.state === 'finished' && !run.result?.ok)) &&
             !actionTypes.includes('run-failed')
           )
             actionTypes.push('run-failed');

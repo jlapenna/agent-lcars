@@ -295,6 +295,26 @@ it('shows only the current parked run summary, never an older handoff after new 
   expect(
     (await getAuthoritativeQueueItems()).items[0].actionTypes,
   ).not.toContain('needs-human');
+  for (const [state, actionTypes] of [
+    ['lost', ['run-failed']],
+    ['finished', ['run-failed']],
+    ['canceled', []],
+  ] as const) {
+    listRuns.mockResolvedValue([
+      parked,
+      {
+        ...parked,
+        runId: 'jlapenna/agent-lcars#42/r2',
+        createdAt: '2026-10-17T01:00:00Z',
+        state,
+        result: undefined,
+        params: { replyExpectedParkedRunId: parked.runId },
+      },
+    ]);
+    const [item] = (await getAuthoritativeQueueItems()).items;
+    expect(item.actionTypes).toEqual(actionTypes);
+    expect(item.humanDecision).toBeUndefined();
+  }
   listRuns.mockRejectedValue(new Error('datastore temporarily unavailable'));
   expect((await getAuthoritativeQueueItems()).items[0]).toMatchObject({
     number: 42,
