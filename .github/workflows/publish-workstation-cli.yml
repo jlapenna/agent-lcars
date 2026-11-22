@@ -1,0 +1,139 @@
+name: Publish workstation CLI
+
+# Builds the workstation `lcars` CLI -- the session-title, hook and
+# hook-flush bundles plus their launcher -- from `main` and publishes it as
+# the one asset of the `workstation-cli` release. Homegit installs that asset
+# on every enrolled workstation and refreshes it, so a merged change to the
+# hook client reaches them without anyone rerunning an installer. See the
+# Workstation CLI row in docs/deployment-boundary.md.
+#
+# The release follows `main`; it is not a version. Its tag is created once
+# and never moves: the release notes and the archive's REVISION name the
+# commit the published bundles came from.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One publication at a time, in arrival order. A newer commit's run waits
+# for an older one instead of cancelling it mid-upload.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and verify the archive
+    # Only a `main` revision whose whole CI run passed. A cancelled or failed
+    # run publishes nothing; the next green one builds its own, newer head.
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.conclusion == 'success')
+    # Three esbuild bundles and a dependency install: inside the hosted
+    # lane's 1 CPU / 5 GiB / 14 GiB / 15-minute envelope, like Deploy
+    # console's build. This job has no write access to the repository.
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+    env:
+      CI: 'true'
+      NX_DAEMON: 'false'
+      NX_PARALLEL: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Record the source revision
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup-node-pnpm
+      - name: Build the CLI bundles
+        run: |
+          ./tools/nx run-many -t session-title-cli hook-cli hook-flush-cli \
+            -p @agent-lcars/telemetry-watcher
+      - name: Pack and verify the archive
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          apps/telemetry-watcher/bin/package-workstation-cli.sh \
+            .workstation-cli "$SOURCE_SHA"
+          apps/telemetry-watcher/bin/verify-workstation-cli.sh \
+            .workstation-cli/lcars-workstation-cli.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: workstation-cli
+          path: .workstation-cli/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish the archive
+    needs: build
+    # Holds the only write permission, and runs no code from the checkout:
+    # nothing a dependency's install script could reach can publish.
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+      TAG: workstation-cli
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: workstation-cli
+          path: .workstation-cli
+      - name: Publish when the CLI changed
+        working-directory: .workstation-cli
+        run: |
+          set -euo pipefail
+          notes="$(printf '%s\n\nSource revision: %s\n' \
+            'The workstation lcars CLI built from main. Homegit installs and refreshes it; do not pin it.' \
+            "$SOURCE_SHA")"
+
+          # A failed listing stops the job here (errexit): publishing over a
+          # release that could not be read would be a guess.
+          releases="$(gh release list --limit 100 --json tagName --jq '.[].tagName')"
+          if ! grep -qxF "$TAG" <<<"$releases"; then
+            gh release create "$TAG" --target "$SOURCE_SHA" --latest=false \
+              --title 'Workstation CLI' --notes "$notes" \
+              lcars-workstation-cli.tar.gz SHA256SUMS
+            echo "::notice::Published the first workstation CLI from $SOURCE_SHA."
+            exit 0
+          fi
+
+          mkdir "$RUNNER_TEMP/published"
+          if gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP/published" &&
+             cmp -s "$RUNNER_TEMP/published/SHA256SUMS" SHA256SUMS; then
+            echo "::notice::The published workstation CLI already matches $SOURCE_SHA."
+            exit 0
+          fi
+
+          # Runs are serialized, but a re-run can deliver an older commit
+          # after a newer one. Never replace a descendant's build.
+          published="$(gh release view "$TAG" --json body --jq .body |
+            sed -n 's/^Source revision: \([0-9a-f]\{40\}\)$/\1/p' | head -n 1)"
+          if [ -n "$published" ] && [ "$published" != "$SOURCE_SHA" ] &&
+             [ "$(gh api "repos/$GH_REPO/compare/$SOURCE_SHA...$published" --jq .status)" = ahead ]; then
+            echo "::notice::Release $TAG already holds descendant $published; leaving it."
+            exit 0
+          fi
+
+          # The checksum list goes last: it is what the next run compares, so
+          # an upload interrupted before it is simply repeated.
+          gh release upload "$TAG" lcars-workstation-cli.tar.gz --clobber
+          gh release upload "$TAG" SHA256SUMS --clobber
+          gh release edit "$TAG" --notes "$notes"
+          echo "::notice::Published the workstation CLI from $SOURCE_SHA."
