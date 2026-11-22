@@ -144,14 +144,17 @@ jobs:
           name=${SKILL_DIR##*/}
           branch="chore/sync-skill-$name"
           # Only a same-repository PR into the base, authored by the App, is
-          # this workflow's; any other PR on the reserved branch name stops
-          # the run rather than being edited, closed or overwritten.
+          # this workflow's; any other same-repo PR on the reserved branch
+          # name stops the run rather than being edited, closed or overwritten.
           prs=$(gh pr list --repo "$REPO" --head "$branch" --state open \
             --json number,author,baseRefName,isCrossRepository)
           pr=$(jq -r --arg base "$BASE" '[.[] | select(.isCrossRepository == false
             and .baseRefName == $base
             and (.author.login == "app/agent-lcars" or .author.login == "agent-lcars[bot]"))][0].number // empty' <<<"$prs")
-          foreign=$(jq -r --arg pr "$pr" '[.[] | select((.number | tostring) != $pr)] | length' <<<"$prs")
+          # Fork PRs cannot write this repository's branch, so only same-repo
+          # PRs count as foreign.
+          foreign=$(jq -r --arg pr "$pr" '[.[] | select(.isCrossRepository == false
+            and (.number | tostring) != $pr)] | length' <<<"$prs")
           [[ $foreign == 0 ]] || fail "an unmanaged PR uses the reserved branch $branch"
           remote_tip=""
           if git fetch -q origin "refs/heads/$branch" 2>/dev/null; then
