@@ -70,12 +70,22 @@ guarantee a fresh approval for each PR in that case.
 
 ## Published reusable workflows
 
-| Workflow                       | Purpose                                        |
-| ------------------------------ | ---------------------------------------------- |
-| `renovate-auto-approve.yml`    | Approve a Renovate PR with a minted App token. |
-| `agent-automerge-reusable.yml` | Arm and reconcile agent PR auto-merge.         |
-| `repo-validation.yml`          | Run actionlint, runner-label, schedule checks. |
-| `codeql-reusable.yml`          | Run the caller-configured CodeQL analysis job. |
+| Workflow                       | Purpose                                          |
+| ------------------------------ | ------------------------------------------------ |
+| `renovate-auto-approve.yml`    | Approve a Renovate PR with a minted App token.   |
+| `agent-automerge-reusable.yml` | Arm and reconcile agent PR auto-merge.           |
+| `repo-validation.yml`          | Run actionlint, runner-label, schedule checks.   |
+| `codeql-reusable.yml`          | Run the caller-configured CodeQL analysis job.   |
+| `vendored-skill-sync.yml`      | Sync a vendored third-party skill from upstream. |
+
+`vendored-skill-sync.yml` copies a complete upstream skill directory and the
+upstream license into `.agents/skills/<name>`. When the copy differs from the
+default branch it opens or refreshes one `chore/sync-skill-<name>` PR as the
+Agent LCARS App, which the caller's agent auto-merge and review gates handle;
+it closes that PR once upstream matches again. Call it only from `schedule`
+and `workflow_dispatch` (the job refuses other events) and map
+`secrets.AGENT_LCARS_PRIVATE_KEY` to `APP_PRIVATE_KEY`. A skill synced this way
+must not also carry a Renovate version manager, which would fight the copy.
 
 Hosted provider workflows are retired; providers execute through the Console
 QueueExecutor instead.

@@ -1,0 +1,166 @@
+name: Vendored Skill Sync
+
+# Fleet-published reusable workflow (docs/published-actions.md) that keeps a
+# vendored third-party agent skill identical to its upstream source. A
+# version pin alone is not enough: an upstream change to the skill's
+# SKILL.md or scripts would never reach the vendored copy. Each run copies
+# the complete upstream skill directory, plus the upstream license, from the
+# current commit of `upstream-ref` and, when the copy differs from the
+# default branch, opens or refreshes one PR authored by the Agent LCARS App.
+# That PR rides the caller's agent auto-merge and review gates like any other
+# agent PR. When upstream matches again, a stale sync PR is closed.
+#
+# Nothing from a pull request is checked out or executed: callers trigger
+# this only on `schedule` and `workflow_dispatch`, and the job refuses any
+# other event. Upstream content is copied as files, never run.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: >-
+          Runner labels as a JSON array string, passed to fromJSON(). Use the
+          caller's short-lived glue-job pool.
+        required: true
+        type: string
+      skill-dir:
+        description: Vendored skill directory, `.agents/skills/<name>`.
+        required: true
+        type: string
+      upstream-repo:
+        description: Upstream GitHub repository, `owner/name`.
+        required: true
+        type: string
+      upstream-path:
+        description: Skill directory inside the upstream repository.
+        required: true
+        type: string
+      upstream-ref:
+        description: Upstream branch or tag to follow.
+        required: false
+        type: string
+        default: main
+      upstream-license:
+        description: >-
+          Upstream license file copied into the skill directory as LICENSE.
+        required: false
+        type: string
+        default: LICENSE
+    secrets:
+      APP_PRIVATE_KEY:
+        description: >-
+          Agent LCARS App private key -- the fleet's shared
+          AGENT_LCARS_PRIVATE_KEY repo secret.
+        required: true
+
+permissions: {}
+
+jobs:
+  sync:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 10
+    permissions: {}
+    env:
+      SKILL_DIR: ${{ inputs.skill-dir }}
+      UPSTREAM_REPO: ${{ inputs.upstream-repo }}
+      UPSTREAM_PATH: ${{ inputs.upstream-path }}
+      UPSTREAM_REF: ${{ inputs.upstream-ref }}
+      UPSTREAM_LICENSE: ${{ inputs.upstream-license }}
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          [[ $SKILL_DIR =~ ^\.agents/skills/[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+            fail "skill-dir must be .agents/skills/<name>"
+          [[ $UPSTREAM_REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
+            fail "upstream-repo must be owner/name"
+          for value in "$UPSTREAM_PATH" "$UPSTREAM_LICENSE" "$UPSTREAM_REF"; do
+            [[ $value =~ ^[A-Za-z0-9._/-]+$ && $value != *..* && $value != /* ]] ||
+              fail "invalid upstream path or ref: $value"
+          done
+
+      - name: Mint Agent LCARS identity token
+        id: token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3
+        with:
+          # Public App client ID (see renovate-auto-approve.yml).
+          client-id: Iv23liO6X8pLJLcTFzyv
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          token: ${{ steps.token.outputs.token }}
+
+      - name: Copy the upstream skill
+        id: copy
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          sha=$(gh api "repos/$UPSTREAM_REPO/commits/$UPSTREAM_REF" --jq .sha)
+          [[ $sha =~ ^[0-9a-f]{40}$ ]] || { echo "::error::no commit for $UPSTREAM_REF"; exit 1; }
+          work=$(mktemp -d)
+          gh api "repos/$UPSTREAM_REPO/tarball/$sha" > "$work/src.tar.gz"
+          mkdir "$work/src"
+          tar -xzf "$work/src.tar.gz" -C "$work/src" --strip-components=1
+          src="$work/src/$UPSTREAM_PATH"
+          [[ -f $src/SKILL.md && ! -L $src ]] ||
+            { echo "::error::$UPSTREAM_REPO@$sha has no skill at $UPSTREAM_PATH"; exit 1; }
+          [[ -f $work/src/$UPSTREAM_LICENSE ]] ||
+            { echo "::error::$UPSTREAM_REPO@$sha has no $UPSTREAM_LICENSE"; exit 1; }
+          rm -rf "$SKILL_DIR"
+          mkdir -p "$SKILL_DIR"
+          cp -R "$src/." "$SKILL_DIR/"
+          cp "$work/src/$UPSTREAM_LICENSE" "$SKILL_DIR/LICENSE"
+          rm -rf "$work"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Open, refresh or close the sync PR
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          BASE: ${{ github.event.repository.default_branch }}
+          SHA: ${{ steps.copy.outputs.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          name=${SKILL_DIR##*/}
+          branch="chore/sync-skill-$name"
+          pr=$(gh pr list --repo "$REPO" --head "$branch" --state open \
+            --json number --jq '.[0].number // empty')
+          git add -A -- "$SKILL_DIR"
+          if git diff --cached --quiet; then
+            echo "$SKILL_DIR matches $UPSTREAM_REPO@$SHA"
+            if [[ -n $pr ]]; then
+              gh pr close "$pr" --repo "$REPO" --delete-branch \
+                --comment "$SKILL_DIR already matches $UPSTREAM_REPO@$SHA."
+            fi
+            exit 0
+          fi
+          git -c user.name='agent-lcars[bot]' \
+            -c user.email='311841118+agent-lcars[bot]@users.noreply.github.com' \
+            commit -q -m "chore(skills): sync $name from $UPSTREAM_REPO" \
+            -m "Copied $UPSTREAM_PATH and $UPSTREAM_LICENSE from $UPSTREAM_REPO@$SHA."
+          # An open PR whose skill content already matches keeps its head, so
+          # a weekly run does not restart its review or checks.
+          if git fetch -q origin "refs/heads/$branch" 2>/dev/null &&
+            git diff --quiet HEAD FETCH_HEAD -- "$SKILL_DIR" && [[ -n $pr ]]; then
+            echo "PR #$pr already carries this content"
+            exit 0
+          fi
+          git push -q --force origin "HEAD:refs/heads/$branch"
+          body="Copies \`$UPSTREAM_PATH\` and \`$UPSTREAM_LICENSE\` from
+          https://github.com/$UPSTREAM_REPO/tree/$SHA into \`$SKILL_DIR\`, so the
+          vendored skill matches upstream \`$UPSTREAM_REF\`.
+
+          Opened by the Vendored Skill Sync workflow; run $GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID."
+          if [[ -n $pr ]]; then
+            gh pr edit "$pr" --repo "$REPO" --body "$body"
+          else
+            gh pr create --repo "$REPO" --base "$BASE" --head "$branch" \
+              --title "chore(skills): sync $name from $UPSTREAM_REPO" --body "$body"
+          fi
