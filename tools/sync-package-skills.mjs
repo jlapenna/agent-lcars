@@ -3,8 +3,8 @@
 // .agents/skills (the copies are gitignored). package.json pins each package
 // and Renovate bumps it, so the installed skill always matches the lockfile
 // without a vendored copy or a symlink that dangles before install. Runs from
-// postinstall; a package missing from node_modules (for example a production
-// install without devDependencies) is skipped.
+// postinstall. When a package is missing from node_modules (for example a
+// production install without devDependencies), its stale copy is removed.
 //
 // modern-web-guidance's skill text, guides and CLI output tell agents to run
 // `npx -y modern-web-guidance@latest`, which would bypass the lockfile and
@@ -83,20 +83,32 @@ function pinCli(dir) {
   }
 }
 
-function syncSkill(pkg, skill) {
-  const src = path.join(root, 'node_modules', pkg, 'skills', skill);
-  if (!fs.existsSync(path.join(src, 'SKILL.md'))) return;
-  const dest = path.join(skillsDir, skill);
+function syncSkills() {
   fs.mkdirSync(skillsDir, { recursive: true });
   const stage = fs.mkdtempSync(path.join(skillsDir, '.sync-'));
   try {
-    const staged = path.join(stage, skill);
-    fs.cpSync(src, staged, { recursive: true, dereference: true });
-    pinCli(staged);
-    fs.rmSync(dest, { recursive: true, force: true });
-    fs.renameSync(staged, dest);
+    // Stage and validate every skill before exposing any of them.
+    const staged = [];
+    for (const [pkg, skill] of SKILLS) {
+      const src = path.join(root, 'node_modules', pkg, 'skills', skill);
+      if (!fs.existsSync(path.join(src, 'SKILL.md'))) {
+        staged.push([skill, null]); // package absent: drop any stale copy
+        continue;
+      }
+      const copy = path.join(stage, skill);
+      fs.cpSync(src, copy, { recursive: true, dereference: true });
+      pinCli(copy);
+      staged.push([skill, copy]);
+    }
+    for (const [skill, copy] of staged) {
+      const dest = path.join(skillsDir, skill);
+      fs.rmSync(dest, { recursive: true, force: true });
+      if (copy) fs.renameSync(copy, dest);
+    }
   } catch (error) {
-    fs.rmSync(dest, { recursive: true, force: true });
+    for (const [, skill] of SKILLS) {
+      fs.rmSync(path.join(skillsDir, skill), { recursive: true, force: true });
+    }
     throw error;
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });
@@ -104,8 +116,8 @@ function syncSkill(pkg, skill) {
 }
 
 try {
-  for (const [pkg, skill] of SKILLS) syncSkill(pkg, skill);
+  syncSkills();
 } catch (error) {
-  console.error(`sync-package-skills: ${error.message}; skill not installed`);
+  console.error(`sync-package-skills: ${error.message}; skills not installed`);
   process.exit(1);
 }
