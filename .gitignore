@@ -167,3 +167,8 @@ vitest.config.*.timestamp*
 # Daemon-free Console deployment artifacts.
 .console-deploy/
 
+# Retired: copies tools/sync-package-skills.mjs generated before the web
+# guidance skill moved to its upstream plugin. setup-worktree.sh removes them.
+/.agents/skills/modern-web-guidance/
+/.agents/skills/.sync-*/
+
