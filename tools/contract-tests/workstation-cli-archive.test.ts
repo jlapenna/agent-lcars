@@ -548,7 +548,8 @@ describe('publish-workstation-cli.yml', () => {
     const run = publisher({
       ...published(notes(NEWER)),
       compare: 'behind',
-      fail: ['upload:SHA256SUMS'],
+      // Stopped between the swap and the upload of the new list.
+      fail: ['before-upload:SHA256SUMS'],
     });
     const stopped = run.run();
     expect(stopped.result.status).not.toBe(0);

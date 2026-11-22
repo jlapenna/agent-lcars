@@ -10,7 +10,8 @@
 //   compare   answer to a compare call's `.status`
 //   jobs      the CI run's jobs, [{ name, conclusion }]
 //   fail      names of calls that fail: 'read', 'compare', 'jobs', 'rename',
-//             or 'upload:<name>'
+//             'upload:<name>' (the upload fails, after --clobber deleted),
+//             or 'before-upload:<name>' (stopped before the command ran)
 //   nextId    next asset id
 // Calls are appended to FAKE_GH_LOG, one line each.
 'use strict';
@@ -102,6 +103,8 @@ if (args[0] === 'api') {
   } else if (verb === 'upload') {
     const file = rest.find((arg) => !arg.startsWith('-'));
     const name = path.basename(file);
+    // The job stopped before this command ran at all.
+    if (failing(`before-upload:${name}`)) die('interrupted');
     const existing = released().assets.find((entry) => entry.name === name);
     if (existing && !rest.includes('--clobber')) die('asset already exists');
     // --clobber deletes first: a failed upload loses what was there.
