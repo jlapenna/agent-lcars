@@ -371,6 +371,7 @@ describe('read-only onboarding audit', () => {
           parameters: {
             required_status_checks: [
               { context: 'LCARS review', integration_id: 4457090 },
+              { context: 'LCARS review', integration_id: 4457090 },
               ...(evidence === 'independent-failure'
                 ? [{ context: 'missing-check' }]
                 : []),

@@ -317,14 +317,14 @@ export async function auditRepository({
       ),
     );
     // PR-only statuses belong to the reviewed head, even after squash merge.
-    const reviewRule = required.find(
+    const reviewRules = required.filter(
       (rule) =>
         rule.context === 'LCARS review' &&
         [15368, 4457090].includes(rule.integration_id),
     );
     const missing = required.filter(
       (rule) =>
-        rule !== reviewRule &&
+        !reviewRules.includes(rule) &&
         !checks.some(
           (check) =>
             check.name === rule.context &&
@@ -361,8 +361,7 @@ export async function auditRepository({
         `Required checks absent on default-branch head: ${missing.map((check) => check.context).join(', ')}`,
       );
     }
-    let reviewStatusObserved = false;
-    if (reviewRule) {
+    if (reviewRules.length) {
       const pulls = await optionalMetadataRead(capability, () =>
         pages(api, `/repos/${repo}/commits/${commit.sha}/pulls`, metadataToken),
       );
@@ -374,115 +373,123 @@ export async function auditRepository({
           'Merged PR head unavailable for the required LCARS review',
         );
       }
-      if (reviewRule.integration_id === 4457090) {
-        const headChecks = await optionalMetadataRead(capability, () =>
-          pages(
-            api,
-            `/repos/${repo}/commits/${merged.head.sha}/check-runs?filter=all`,
-            metadataToken,
-            'check_runs',
-          ),
+      for (const integration of new Set(
+        reviewRules.map((rule) => rule.integration_id),
+      )) {
+        const reviewRule = reviewRules.find(
+          (rule) => rule.integration_id === integration,
         );
-        reviewStatusObserved = headChecks.some(
-          (check) =>
-            check.name === reviewRule.context &&
-            check.app?.id === reviewRule.integration_id &&
-            check.head_sha === merged.head.sha &&
-            check.external_id === 'lcars-review',
-        );
-      } else {
-        const headStatuses = await optionalMetadataRead(capability, () =>
-          pages(
-            api,
-            `/repos/${repo}/commits/${merged.head.sha}/statuses`,
-            metadataToken,
-          ),
-        );
-        reviewStatusObserved = headStatuses.some(
-          (status) =>
-            status.context === reviewRule.context &&
-            status.creator?.login === 'github-actions[bot]',
-        );
-      }
-      if (!reviewStatusObserved) {
-        // Current rules may have been introduced after this PR merged.
-        const requiresReview = (rule) =>
-          rule.parameters?.required_status_checks?.some(
-            (check) =>
-              check.context === reviewRule.context &&
-              check.integration_id === reviewRule.integration_id,
-          );
-        const ref = `refs/heads/${metadata.default_branch}`;
-        const suitesPath = `/repos/${repo}/rulesets/rule-suites`;
-        const suites = await optionalMetadataRead(capability, () =>
-          pages(
-            api,
-            `${suitesPath}?ref=${encodeURIComponent(ref)}&time_period=month&rule_suite_result=all`,
-            metadataToken,
-          ),
-        );
-        const suite = suites.find(
-          (item) =>
-            item.after_sha === commit.sha &&
-            item.ref === ref &&
-            ['pass', 'bypass'].includes(item.result),
-        );
-        if (!suite)
-          throw new UnverifiableError(
-            'No retained rule evaluation for the default-branch update',
-          );
-        const detail = await optionalMetadataRead(capability, () =>
-          api(`${suitesPath}/${suite.id}`, metadataToken),
-        );
-        // The recorded update establishes which rulesets actually targeted
-        // this branch, including when historical ref conditions differed.
-        const appliedSources = new Set(
-          detail.rule_evaluations
-            .filter(
-              (evaluation) =>
-                evaluation.enforcement === 'active' &&
-                evaluation.rule_type === 'required_status_checks' &&
-                evaluation.rule_source.type === 'ruleset',
-            )
-            .map((evaluation) => evaluation.rule_source.id),
-        );
-        for (const source of rules.filter(requiresReview)) {
-          if (
-            !appliedSources.has(source.ruleset_id) ||
-            source.ruleset_source_type !== 'Repository'
-          )
-            continue;
-          const historyPath = `/repos/${repo}/rulesets/${source.ruleset_id}/history`;
-          try {
-            const history = await pages(api, historyPath, metadataToken);
-            const prior = history
-              .filter(
-                (item) =>
-                  Date.parse(item.updated_at) <= Date.parse(suite.pushed_at),
-              )
-              .sort(
-                (a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at),
-              )[0];
-            if (!prior) continue;
-            const { state } = await api(
-              `${historyPath}/${prior.version_id}`,
+        let reviewStatusObserved;
+        if (reviewRule.integration_id === 4457090) {
+          const headChecks = await optionalMetadataRead(capability, () =>
+            pages(
+              api,
+              `/repos/${repo}/commits/${merged.head.sha}/check-runs?filter=all`,
               metadataToken,
-            );
-            if (
-              state.enforcement === 'active' &&
-              state.rules.some(requiresReview)
-            ) {
-              throw new AuditError(
-                'Required LCARS review absent on merged PR head',
-              );
-            }
-          } catch (error) {
-            if (!isAccessGap(error)) throw error;
-          }
+              'check_runs',
+            ),
+          );
+          reviewStatusObserved = headChecks.some(
+            (check) =>
+              check.name === reviewRule.context &&
+              check.app?.id === reviewRule.integration_id &&
+              check.head_sha === merged.head.sha &&
+              check.external_id === 'lcars-review',
+          );
+        } else {
+          const headStatuses = await optionalMetadataRead(capability, () =>
+            pages(
+              api,
+              `/repos/${repo}/commits/${merged.head.sha}/statuses`,
+              metadataToken,
+            ),
+          );
+          reviewStatusObserved = headStatuses.some(
+            (status) =>
+              status.context === reviewRule.context &&
+              status.creator?.login === 'github-actions[bot]',
+          );
         }
-        throw new UnverifiableError(
-          'LCARS review requirement at the merged update could not be established; verify after the next reviewed merge',
-        );
+        if (!reviewStatusObserved) {
+          // Current rules may have been introduced after this PR merged.
+          const requiresReview = (rule) =>
+            rule.parameters?.required_status_checks?.some(
+              (check) =>
+                check.context === reviewRule.context &&
+                check.integration_id === reviewRule.integration_id,
+            );
+          const ref = `refs/heads/${metadata.default_branch}`;
+          const suitesPath = `/repos/${repo}/rulesets/rule-suites`;
+          const suites = await optionalMetadataRead(capability, () =>
+            pages(
+              api,
+              `${suitesPath}?ref=${encodeURIComponent(ref)}&time_period=month&rule_suite_result=all`,
+              metadataToken,
+            ),
+          );
+          const suite = suites.find(
+            (item) =>
+              item.after_sha === commit.sha &&
+              item.ref === ref &&
+              ['pass', 'bypass'].includes(item.result),
+          );
+          if (!suite)
+            throw new UnverifiableError(
+              'No retained rule evaluation for the default-branch update',
+            );
+          const detail = await optionalMetadataRead(capability, () =>
+            api(`${suitesPath}/${suite.id}`, metadataToken),
+          );
+          // The recorded update establishes which rulesets actually targeted
+          // this branch, including when historical ref conditions differed.
+          const appliedSources = new Set(
+            detail.rule_evaluations
+              .filter(
+                (evaluation) =>
+                  evaluation.enforcement === 'active' &&
+                  evaluation.rule_type === 'required_status_checks' &&
+                  evaluation.rule_source.type === 'ruleset',
+              )
+              .map((evaluation) => evaluation.rule_source.id),
+          );
+          for (const source of rules.filter(requiresReview)) {
+            if (
+              !appliedSources.has(source.ruleset_id) ||
+              source.ruleset_source_type !== 'Repository'
+            )
+              continue;
+            const historyPath = `/repos/${repo}/rulesets/${source.ruleset_id}/history`;
+            try {
+              const history = await pages(api, historyPath, metadataToken);
+              const prior = history
+                .filter(
+                  (item) =>
+                    Date.parse(item.updated_at) <= Date.parse(suite.pushed_at),
+                )
+                .sort(
+                  (a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at),
+                )[0];
+              if (!prior) continue;
+              const { state } = await api(
+                `${historyPath}/${prior.version_id}`,
+                metadataToken,
+              );
+              if (
+                state.enforcement === 'active' &&
+                state.rules.some(requiresReview)
+              ) {
+                throw new AuditError(
+                  'Required LCARS review absent on merged PR head',
+                );
+              }
+            } catch (error) {
+              if (!isAccessGap(error)) throw error;
+            }
+          }
+          throw new UnverifiableError(
+            'LCARS review requirement at the merged update could not be established; verify after the next reviewed merge',
+          );
+        }
       }
     }
     return `${required.length} required contexts observed on ${commit.sha}`;

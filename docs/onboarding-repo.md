@@ -393,6 +393,9 @@ implementation. Required check names and App identities come from the effective
 default-branch rules and are compared with checks/statuses observed on its
 current head. A head whose CI has not emitted every context yet needs a repeat
 after CI completes; this audit does not wait for CI or grade check conclusions.
+For an App-backed `LCARS review`, the audit also checks the head of the merged
+pull request. If that merge predates review enforcement, rerunning its CI cannot
+produce the missing evidence. Run the audit after the next reviewed PR merges.
 
 `pass` means that particular setup fact was observed. `fail` identifies a
 measured mismatch or operational error. `unverifiable` means the necessary
