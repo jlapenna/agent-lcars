@@ -344,12 +344,8 @@ export async function auditRepository({
         );
       }
     }
-    const candidateContext = 'LCARS review (merge candidate)';
-    const isCandidateRule = (check) =>
-      check.context === candidateContext && check.integration_id === 4457090;
     const missing = required.filter(
       (rule) =>
-        !isCandidateRule(rule) &&
         !(rule === reviewRule && reviewStatusObserved) &&
         !checks.some(
           (check) =>
@@ -386,83 +382,6 @@ export async function auditRepository({
       throw new AuditError(
         `Required checks absent on default-branch head: ${missing.map((check) => check.context).join(', ')}`,
       );
-    }
-    if (required.some(isCandidateRule)) {
-      // Squash merges discard the test merge SHA. GitHub retains the rule
-      // evaluation for the push which actually advanced the protected ref.
-      const suitesPath = `/repos/${repo}/rulesets/rule-suites`;
-      const ref = `refs/heads/${metadata.default_branch}`;
-      const suites = await optionalMetadataRead(capability, () =>
-        pages(
-          api,
-          `${suitesPath}?ref=${encodeURIComponent(ref)}&time_period=month&rule_suite_result=all`,
-          metadataToken,
-        ),
-      );
-      const suite = suites.find(
-        (item) =>
-          item.after_sha === commit.sha &&
-          item.ref === ref &&
-          ['pass', 'bypass'].includes(item.result),
-      );
-      if (!suite)
-        throw new UnverifiableError(
-          'No retained rule evaluation for the default-branch update',
-        );
-      const detail = await optionalMetadataRead(capability, () =>
-        api(`${suitesPath}/${suite.id}`, metadataToken),
-      );
-      const sourceRules = rules.filter((rule) =>
-        rule.parameters?.required_status_checks?.some(isCandidateRule),
-      );
-      for (const source of sourceRules) {
-        if (!source.ruleset_id || source.ruleset_source_type !== 'Repository')
-          throw new UnverifiableError(
-            'Required review ruleset history unavailable',
-          );
-        const path = `/repos/${repo}/rulesets/${source.ruleset_id}/history`;
-        const history = await optionalMetadataRead(capability, () =>
-          pages(api, path, metadataToken),
-        );
-        const version = history
-          .filter(
-            (item) =>
-              Date.parse(item.updated_at) <= Date.parse(suite.pushed_at),
-          )
-          .sort(
-            (a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at),
-          )[0];
-        if (!version)
-          throw new UnverifiableError(
-            'No retained ruleset version for the default-branch update',
-          );
-        const { state } = await optionalMetadataRead(capability, () =>
-          api(`${path}/${version.version_id}`, metadataToken),
-        );
-        if (
-          state.enforcement !== 'active' ||
-          !state.rules.some((rule) =>
-            rule.parameters?.required_status_checks?.some(isCandidateRule),
-          )
-        )
-          throw new UnverifiableError(
-            'The default-branch update predates the candidate review requirement',
-          );
-        const result = detail.rule_evaluations.find(
-          (evaluation) =>
-            evaluation.rule_type === 'required_status_checks' &&
-            evaluation.rule_source.type === 'ruleset' &&
-            evaluation.rule_source.id === source.ruleset_id,
-        );
-        if (!result)
-          throw new UnverifiableError(
-            'Missing required-check evaluation for the protected update',
-          );
-        if (result.result !== 'pass')
-          throw new AuditError(
-            'The protected update did not pass its required status checks',
-          );
-      }
     }
     return `${required.length} required contexts observed on ${commit.sha}`;
   });
