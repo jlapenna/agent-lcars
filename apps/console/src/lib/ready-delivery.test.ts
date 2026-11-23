@@ -2183,14 +2183,33 @@ describe('nullable historical review identities', () => {
     expect(
       await observeGithubDelivery(
         fixture({
-          review: review([
-            {
-              state: 'COMMENTED',
-              body: 'Blocking issue\n<!-- lcars-review:block -->',
-              author: { login: 'agent-lcars[bot]' },
-              commit: { oid: HEAD },
+          review: {
+            ...review([
+              {
+                state: 'COMMENTED',
+                body: 'Blocking issue\n<!-- lcars-review:block -->',
+                authorAssociation: 'NONE',
+                author: { __typename: 'Bot', login: 'agent-lcars' },
+                commit: { oid: HEAD },
+              },
+            ]),
+            reviewThreads: {
+              pageInfo: { hasNextPage: false },
+              nodes: [
+                {
+                  isResolved: false,
+                  comments: {
+                    nodes: [
+                      {
+                        authorAssociation: 'NONE',
+                        author: { __typename: 'Bot', login: 'agent-lcars' },
+                      },
+                    ],
+                  },
+                },
+              ],
             },
-          ]),
+          },
         }),
         BINDING,
       ),

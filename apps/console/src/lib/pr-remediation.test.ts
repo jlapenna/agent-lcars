@@ -10,12 +10,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { drainOutbox } from './orchestrator-dispatch';
 import {
+  handleReconcile,
   handleWebhookDelivery,
   type OrchestratorRouteDeps,
 } from './orchestrator-routes';
 import {
   MAX_AUTO_PR_REMEDIATION_ROUNDS,
   reconcileMergedPullRequestConflicts,
+  reconcileOpenPullRequestRemediations,
   reconcilePullRequestRemediation,
 } from './pr-remediation';
 import { hashRunToken, mintRunToken } from './run-token';
@@ -46,7 +48,7 @@ interface MockPrSnapshot {
   threadsTruncated?: boolean;
   mergeable?: string;
   mergeStateStatus?: string;
-  author?: { login: string } | null;
+  author?: { __typename?: string | null; login: string } | null;
   labels?: string[];
   assignees?: string[];
   reviews?: {
@@ -54,7 +56,7 @@ interface MockPrSnapshot {
     state: string;
     body?: string | null;
     authorAssociation?: string | null;
-    author: { login: string } | null;
+    author: { __typename?: string | null; login: string } | null;
     commit: { oid: string } | null;
   }[];
   reviewThreads?: {
@@ -63,7 +65,7 @@ interface MockPrSnapshot {
     comments?: {
       nodes: {
         authorAssociation?: string | null;
-        author?: { login: string } | null;
+        author?: { __typename?: string | null; login: string } | null;
       }[];
     };
   }[];
@@ -95,7 +97,9 @@ function makeGraphqlPr(overrides: MockPrSnapshot = {}) {
     mergeable: overrides.mergeable ?? 'MERGEABLE',
     mergeStateStatus: overrides.mergeStateStatus ?? 'BLOCKED',
     author:
-      overrides.author === undefined ? { login: 'jlapenna' } : overrides.author,
+      overrides.author === undefined
+        ? { __typename: 'User', login: 'jlapenna' }
+        : overrides.author,
     labels: {
       nodes: (overrides.labels ?? []).map((name) => ({ name })),
     },
@@ -122,7 +126,7 @@ function makeGraphqlPr(overrides: MockPrSnapshot = {}) {
           nodes: [
             {
               authorAssociation: 'NONE',
-              author: { login: 'agent-lcars[bot]' },
+              author: { __typename: 'Bot', login: 'agent-lcars' },
             },
           ],
         },
@@ -217,6 +221,8 @@ function createFixture() {
       reconcilePullRequestRemediation(remediationDeps, anchor, options),
     reconcileMergedPullRequestConflicts: (input) =>
       reconcileMergedPullRequestConflicts(remediationDeps, input),
+    reconcileOpenPullRequestRemediations: (deadline) =>
+      reconcileOpenPullRequestRemediations(remediationDeps, deadline),
   };
 
   return {
@@ -1030,5 +1036,122 @@ describe('automatic pull-request review & conflict remediation', () => {
       pipeline: 'codex',
       priority: 'urgent',
     });
+  });
+
+  it('normalizes raw GraphQL Bot actors (authorAssociation: NONE, login without [bot]) and sweeps open PR projections during maintenance ticks', async () => {
+    const f = createFixture();
+    const anchor: TaskId = { repo: LCARS_REPO, issue: 3488 };
+
+    // Real GitHub GraphQL returns `{ __typename: 'Bot', login: 'agent-lcars' }` with `authorAssociation: 'NONE'`.
+    f.setPr(LCARS_REPO, 3488, {
+      headRepository: { nameWithOwner: LCARS_REPO },
+      author: { __typename: 'Bot', login: 'agent-lcars' },
+      body: 'Implemented by Codex.',
+      headRefName: 'codex/repo-jobs',
+      headRefOid: HEAD_1,
+      reviews: [
+        {
+          databaseId: 6019037936,
+          state: 'COMMENTED',
+          body: 'Pass\n<!-- lcars-review:pass -->',
+          authorAssociation: 'NONE',
+          author: { __typename: 'Bot', login: 'agent-lcars' },
+          commit: { oid: HEAD_1 },
+        },
+      ],
+      reviewThreads: [
+        {
+          id: 'PRRT_GRAPHQL_BOT',
+          isResolved: false,
+          comments: {
+            nodes: [
+              {
+                authorAssociation: 'NONE',
+                author: { __typename: 'Bot', login: 'agent-lcars' },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    // Seed the open PR projection in the store (simulating an open PR whose review webhook arrived before rollout).
+    const gen = await f.store.beginGithubAnchorProjectionRefresh(anchor);
+    await f.store.applyGithubAnchorProjectionRefresh({
+      anchor,
+      generation: gen,
+      projection: {
+        anchor,
+        kind: 'pr',
+        state: 'open',
+        draft: false,
+        mergedAt: null,
+        title: 'feat(jobs): operationalize repository jobs',
+        body: 'PR body',
+        url: `https://github.com/${LCARS_REPO}/pull/3488`,
+        author: 'agent-lcars[bot]',
+        labels: [],
+        assigneeLogins: [],
+        sourceUpdatedAt: T0,
+        observedAt: T0,
+        unresolvedReviewThreadCount: 1,
+        unresolvedReviewThreadIds: ['PRRT_GRAPHQL_BOT'],
+      },
+    });
+
+    const tick = await handleReconcile(f.routeDeps);
+    expect(tick).toMatchObject({
+      status: 200,
+      body: {
+        dispatched: [`${LCARS_REPO}#3488/r1`],
+      },
+    });
+
+    const active = await f.store.readActiveRun(anchor);
+    expect(active).toMatchObject({
+      runId: `${LCARS_REPO}#3488/r1`,
+      pipeline: 'codex',
+      params: {
+        mode: 'implement',
+        context: expect.stringContaining('1 unresolved review thread'),
+      },
+    });
+
+    // Conversely, a `User` actor cannot spoof a bot login even if its bare login matches a bot slug.
+    f.setPr(LCARS_REPO, 3489, {
+      headRepository: { nameWithOwner: LCARS_REPO },
+      author: { __typename: 'User', login: 'jlapenna' },
+      headRefOid: HEAD_1,
+      reviews: [
+        {
+          databaseId: 99,
+          state: 'COMMENTED',
+          body: 'Spoof\n<!-- lcars-review:block -->',
+          authorAssociation: 'NONE',
+          author: { __typename: 'User', login: 'agent-lcars' },
+          commit: { oid: HEAD_1 },
+        },
+      ],
+      reviewThreads: [
+        {
+          id: 'PRRT_USER_SPOOF',
+          isResolved: false,
+          comments: {
+            nodes: [
+              {
+                authorAssociation: 'NONE',
+                author: { __typename: 'User', login: 'agent-lcars' },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, {
+        repo: LCARS_REPO,
+        issue: 3489,
+      }),
+    ).toEqual({ action: 'ignored', reason: 'clean' });
   });
 });

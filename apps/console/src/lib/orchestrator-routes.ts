@@ -69,6 +69,7 @@ export interface OrchestratorRouteDeps {
     baseRef: string;
     mergedNumber: number;
   }) => Promise<void>;
+  reconcileOpenPullRequestRemediations?: (deadline: number) => Promise<void>;
   executeRepositoryJobs?: (deadline: number) => Promise<void>;
   observeJobCredentials?: () => Promise<JobCredentialObservation>;
   /** Repository-owned agent catalog health; a failed read omits it. */
@@ -745,6 +746,21 @@ export async function handleReconcile(
     // ten-second claim request. Every choice rechecks the requesting grant;
     // the ordinary claim transaction still enforces the executor grant.
     const rerouted = await deps.orchestrator.rerouteQueued();
+    // Enqueue any missed open-PR remediations before the single outbox drain
+    // below so newly minted `dispatch-run` entries share `drained` and its
+    // failed-entry exclusion without a second drain pass.
+    if (deps.reconcileOpenPullRequestRemediations !== undefined) {
+      try {
+        await deps.reconcileOpenPullRequestRemediations(
+          Math.min(modelDeadline, Date.now() + 25_000),
+        );
+      } catch (error) {
+        logger.warn(
+          'agent-lcars: open PR remediation sweep failed during reconcile:',
+          error,
+        );
+      }
+    }
     // One drain owns the whole bounded maintenance pass so its failed-entry
     // exclusion remains effective across all 30 claims. The five-minute
     // ticker continues any larger backlog on its next pass.
