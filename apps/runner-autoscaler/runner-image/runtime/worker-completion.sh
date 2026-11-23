@@ -121,11 +121,18 @@ supersede_prior_reviews() {
     | select(.state == "CHANGES_REQUESTED" and .user.login == $pass.user.login and .id < $id)
     | .id' <<< "$reviews")" || return 1
   url="$(jq -r --argjson id "$review_id" '[.[][] | select(.id == $id)][0].html_url // empty' <<< "$reviews")"
+  # Attempt every stale review; one failure (say, already dismissed) must not
+  # leave the rest in force.
+  local failed=0
   for id in $stale; do
-    gh api --method PUT "repos/$repo/pulls/$pr/reviews/$id/dismissals" -f event=DISMISS \
-      -f message="Superseded by this reviewer's passing review of $head: $url" >/dev/null || return 1
-    echo "Dismissed superseded requested-changes review $id on $repo#$pr"
+    if gh api --method PUT "repos/$repo/pulls/$pr/reviews/$id/dismissals" -f event=DISMISS \
+      -f message="Superseded by this reviewer's passing review of $head: $url" >/dev/null; then
+      echo "Dismissed superseded requested-changes review $id on $repo#$pr"
+    else
+      failed=1
+    fi
   done
+  return "$failed"
 }
 
 # Consumed by all three provider branches in the sourcing direct runner.

@@ -10,7 +10,10 @@ cat > "$fixture_dir/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
-  *'--method PUT'*'/dismissals'*) printf '%s\n' "$*" | grep -o 'reviews/[0-9]*' >> "$FIXTURE_DIR/dismissed" ;;
+  *'--method PUT'*'/dismissals'*)
+    id=$(printf '%s\n' "$*" | grep -o 'reviews/[0-9]*')
+    [ "$id" != "${FAIL_DISMISS:-}" ] || exit 1
+    printf '%s\n' "$id" >> "$FIXTURE_DIR/dismissed" ;;
   *'reviews?per_page=100'*) cat "$FIXTURE_DIR/reviews.json" ;;
   *'pulls/42 --jq .head.sha') echo head-sha ;;
   *) echo "unexpected gh $*" >&2; exit 13 ;;
@@ -45,4 +48,9 @@ reviews '{id:1,user:$bot,state:"CHANGES_REQUESTED",commit_id:"old"},
 for id in 5 6; do run "$id"; [ ! -s "$fixture_dir/dismissed" ] || fail "review $id dismissed something"; done
 reviews '{id:3,user:$bot,state:"COMMENTED",commit_id:"head-sha",body:"<!-- lcars-review:pass -->"},{id:7,user:$bot,state:"CHANGES_REQUESTED",commit_id:"head-sha"}'
 run 3; [ ! -s "$fixture_dir/dismissed" ] || fail "dismissed a newer block"
+# One failed dismissal still attempts the rest, then reports failure.
+reviews '{id:1,user:$bot,state:"CHANGES_REQUESTED",commit_id:"old"},{id:2,user:$bot,state:"CHANGES_REQUESTED",commit_id:"old"},{id:4,user:$bot,state:"APPROVED",commit_id:"head-sha",html_url:"u"}'
+: > "$fixture_dir/dismissed"
+if FAIL_DISMISS=reviews/1 supersede_prior_reviews octo/example 42 4 > /dev/null; then fail "a failed dismissal reported success"; fi
+[ "$(cat "$fixture_dir/dismissed")" = 'reviews/2' ] || fail "stopped after a failed dismissal"
 echo "supersede-reviews: OK"
