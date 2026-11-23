@@ -311,14 +311,18 @@ core-quota reserve:
   minutes per run and capped at `20` requests per owner per poll cycle, shared
   across that owner's configured repositories with rotating remainder priority
   and unused-slot rollover so an earlier busy repository cannot starve later
-  ones. Skipping or failing an optional lookup preserves any previously
+  ones. Within a repository, slots go to never-probed active runs first, then
+  to the least recently probed, so a long run list cannot keep its oldest
+  active runs `unknown`. Skipping or failing an optional lookup preserves any previously
   confirmed `concurrency_group` label in SQLite and marks newly seen active jobs
   `unknown` rather than `none`.
 - Failed-`pull_request` rerun probes normally run once every five minutes per
   repository and check up to `20` candidate runs per repository (least recently
   probed first); non-rate-limit probe errors are counted under
   `github_actions_exporter_poll_errors_total{repository,stage="pull_request_recheck"}`
-  without aborting core collection or skipping that five-minute cooldown. Each
+  without aborting core collection or skipping that five-minute cooldown. A
+  `404` (GitHub no longer has the run) is not counted there: it counts as an
+  attempted probe and keeps the stored result. Each
   probe rechecks the owner's `500`-request reserve before calling GitHub and
   advances the per-run recheck timestamp only for attempted runs. If quota drops
   below `500` partway through a batch, the repository cooldown stays due so

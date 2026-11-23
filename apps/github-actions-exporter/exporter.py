@@ -812,8 +812,13 @@ class GitHubAPI:
 
             delay = min(delay, MAX_RATE_LIMIT_BACKOFF_SECONDS)
             if remaining is not None:
+                # The reset describes the window this count was observed in.
+                # Replace it together with the count (even when the header is
+                # missing) so an elapsed reset from an older window cannot
+                # make has_optional_quota ignore a fresh low count.
                 quota.remaining = remaining
-            if reset_epoch is not None:
+                quota.reset_epoch = reset_epoch
+            elif reset_epoch is not None:
                 quota.reset_epoch = reset_epoch
             if delay > 0.0:
                 now_monotonic = self._now_monotonic()
@@ -2126,6 +2131,9 @@ class Poller:
         self._repo_concurrency_group_budget: dict[str, int] = {}
         self._owner_concurrency_group_rollover: dict[str, int] = {}
         self._current_repo_group_remaining = CONCURRENCY_GROUPS_PER_CYCLE_LIMIT
+        # Run IDs granted this repository's concurrency-group slots for the
+        # current run traversal; None lets any due run spend a remaining slot.
+        self._concurrency_group_grants: set[int] | None = None
         self._in_refresh_all = False
         self.pull_request_recheck_after: dict[str, float] = {}
         self.pull_request_rechecked_at: dict[str, dict[int, float]] = {}
@@ -2168,6 +2176,41 @@ class Poller:
                     1 if index in extra_indices else 0
                 )
 
+    def _grant_concurrency_group_lookups(
+        self, repository: str, runs: Sequence[dict[str, Any]]
+    ) -> set[int]:
+        """Choose which active runs spend this repository's lookup slots.
+
+        Traversal order is stable newest-first, so spending slots as runs are
+        visited would let the same newest runs take every slot each time their
+        refresh timers expire and leave older active runs `unknown`. Grant
+        never-probed runs first, then the least recently probed.
+        """
+        budget = self._current_repo_group_remaining
+        if budget <= 0:
+            return set()
+        listed_active = {
+            int(run["id"]) for run in runs if run.get("status") in ACTIVE_STATUSES
+        }
+        listed_inactive = {int(run["id"]) for run in runs} - listed_active
+        candidates = (
+            listed_active | self.database.active_run_ids(repository)
+        ) - listed_inactive
+        now = self._now_monotonic()
+        refresh_after = self.concurrency_groups_refresh_after.get(repository, {})
+        # Ties keep listing order; persisted runs missing from the listing
+        # follow it, oldest-ID first.
+        position = {int(run["id"]): index for index, run in enumerate(runs)}
+        due = sorted(
+            (run_id for run_id in candidates if now >= refresh_after.get(run_id, 0.0)),
+            key=lambda run_id: (
+                refresh_after.get(run_id, 0.0),
+                position.get(run_id, len(position)),
+                run_id,
+            ),
+        )
+        return set(due[:budget])
+
     def refresh_repository(self, repository: str) -> None:
         owner_key = owner_of_repository(repository).casefold()
         if self._in_refresh_all:
@@ -2197,6 +2240,9 @@ class Poller:
                 )
                 cutoff = min(now - overlap, recovery_cutoff)
             runs = self.api.list_runs(repository, cutoff, now)
+            self._concurrency_group_grants = self._grant_concurrency_group_lookups(
+                repository, runs
+            )
             discovered_ids: set[int] = set()
             for run in runs:
                 discovered_ids.add(int(run["id"]))
@@ -2220,6 +2266,9 @@ class Poller:
                     self.database.mark_run_missing(repository, run_id)
                     continue
                 self._store_run(repository, run)
+            # Every granted run has had its turn; slots a granted run left
+            # unspent (it completed, or its jobs fetch failed) stay available.
+            self._concurrency_group_grants = None
 
             # A rerun keeps its run's created_at, so one started after the
             # overlap is never listed again and its run is no longer active.
@@ -2319,6 +2368,7 @@ class Poller:
                 repository, initial=initial, timestamp=self._now_epoch()
             )
         finally:
+            self._concurrency_group_grants = None
             if self._in_refresh_all:
                 self._owner_concurrency_group_rollover[owner_key] = (
                     self._current_repo_group_remaining
@@ -2362,8 +2412,10 @@ class Poller:
                 run_refresh_after = self.concurrency_groups_refresh_after.get(
                     repository, {}
                 ).get(run_id, 0.0)
+                grants = self._concurrency_group_grants
                 if (
-                    now >= self.concurrency_groups_retry_after.get(repository, 0)
+                    (grants is None or run_id in grants)
+                    and now >= self.concurrency_groups_retry_after.get(repository, 0)
                     and now >= run_refresh_after
                     and self._current_repo_group_remaining > 0
                     and self._optional_metadata_allowed(repository)

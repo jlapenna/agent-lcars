@@ -1474,9 +1474,9 @@ class GitHubActionsExporterTests(unittest.TestCase):
         )
 
         with (
-            # One read per run for the concurrency-group retry, then one for
-            # the pull-request rerun check.
-            patch.object(exporter.time, "monotonic", side_effect=[100, 100, 100]),
+            # One read to grant concurrency-group slots, one per run for the
+            # concurrency-group retry, then one for the pull-request rerun check.
+            patch.object(exporter.time, "monotonic", side_effect=[100, 100, 100, 100]),
             self.assertLogs(exporter.LOGGER, level="WARNING") as logs,
         ):
             poller.refresh_repository(repository)
@@ -1504,7 +1504,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         )
 
         api.list_jobs.side_effect = [[running_job], [queued_job]]
-        with patch.object(exporter.time, "monotonic", side_effect=[401, 401, 401]):
+        with patch.object(exporter.time, "monotonic", side_effect=[401, 401, 401, 401]):
             poller.refresh_repository(repository)
 
         self.assertEqual(api.list_concurrency_groups.call_count, 3)
@@ -2895,13 +2895,15 @@ class PerOwnerQuotaTests(unittest.TestCase):
         )
         with self.assertRaises(exporter.GitHubRequestError):
             api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.advance(exporter.MIN_RATE_LIMIT_BACKOFF_SECONDS - 1)
+        # Documented contract: 60-second fallback, one-hour ceiling. Literal
+        # values so a changed constant fails here instead of moving the test.
+        self.advance(59)
         with self.assertRaises(exporter.GitHubRateLimitBackoffError):
             api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
         self.advance(2)
         with self.assertRaises(exporter.GitHubRequestError):
             api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.advance(exporter.MAX_RATE_LIMIT_BACKOFF_SECONDS - 1)
+        self.advance(3599)
         with self.assertRaises(exporter.GitHubRateLimitBackoffError):
             api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
         self.advance(2)
@@ -3301,7 +3303,7 @@ class PerOwnerQuotaTests(unittest.TestCase):
             api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs"),
             {"ok": True},
         )
-        self.advance(exporter.MIN_RATE_LIMIT_BACKOFF_SECONDS - 1)
+        self.advance(59)
         with self.assertRaises(exporter.GitHubRateLimitBackoffError):
             api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
         self.assertEqual(api.session.get.call_count, 1)
@@ -3501,7 +3503,7 @@ class PerOwnerQuotaTests(unittest.TestCase):
             api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
         self.assertTrue(sec_err.exception.rate_limited)
 
-        self.advance(exporter.MIN_RATE_LIMIT_BACKOFF_SECONDS - 1)
+        self.advance(59)
         with self.assertRaises(exporter.GitHubRateLimitBackoffError):
             api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
         self.assertEqual(api.session.get.call_count, 2)
@@ -3861,6 +3863,145 @@ class PerOwnerQuotaTests(unittest.TestCase):
             poller.refresh_all()
             self.assertEqual(len(group_calls_by_repo["jlapenna/busy-repo"]), 0)
             self.assertEqual(group_calls_by_repo["jlapenna/later-repo"], [302])
+
+    def test_concurrency_group_slots_reach_oldest_active_run_before_repeats(self):
+        repository = "jlapenna/busy-repo"
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=(repository,),
+        )
+        api = exporter.GitHubAPI(
+            config,
+            exporter.ExporterState(CollectorRegistry()),
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+        self.addCleanup(api.close)
+        poller = exporter.Poller(
+            config,
+            self.database,
+            api,
+            exporter.ExporterState(CollectorRegistry()),
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+        # 101 active runs listed newest-first, more than five polls of slots.
+        runs = [
+            workflow_run(id=1000 - idx, status="in_progress", conclusion=None)
+            for idx in range(101)
+        ]
+        oldest = runs[-1]["id"]
+        probed: list[int] = []
+
+        def busy_get(url, *, params=None, timeout=None, headers=None):
+            path = url.removeprefix(config.api_url)
+            rate_headers = {
+                "X-RateLimit-Remaining": "4000",
+                "X-RateLimit-Reset": str(int(self.now_epoch + 1800)),
+            }
+            if path.endswith("/actions/runs"):
+                return self.json_response(
+                    {"total_count": len(runs), "workflow_runs": runs},
+                    headers=rate_headers,
+                )
+            run_id = int(path.split("/")[-2])
+            if path.endswith("/jobs"):
+                return self.json_response(
+                    {
+                        "total_count": 1,
+                        "jobs": [
+                            workflow_job(
+                                id=run_id * 10,
+                                status="queued",
+                                conclusion=None,
+                                started_at=None,
+                                completed_at=None,
+                            )
+                        ],
+                    },
+                    headers=rate_headers,
+                )
+            if path.endswith("/concurrency_groups"):
+                probed.append(run_id)
+                return self.json_response(
+                    {
+                        "concurrency_groups": [
+                            {
+                                "group_name": "ci-main",
+                                "group_members": [{"job_id": run_id * 10}],
+                            }
+                        ]
+                    },
+                    headers=rate_headers,
+                )
+            return self.json_response({}, status_code=404, headers=rate_headers)
+
+        api.session.get = Mock(side_effect=busy_get)
+        per_poll: list[list[int]] = []
+        for _ in range(12):
+            probed.clear()
+            poller.refresh_all()
+            per_poll.append(list(probed))
+            self.advance(60)
+
+        self.assertTrue(all(len(calls) == 20 for calls in per_poll))
+        # Every active run gets a lookup before any run repeats one: the
+        # oldest is reached by the sixth one-minute poll, not starved by the
+        # newest runs whose five-minute timers keep expiring first.
+        first_five = [run_id for calls in per_poll[:5] for run_id in calls]
+        self.assertEqual(len(set(first_five)), 100)
+        self.assertNotIn(oldest, first_five)
+        self.assertIn(oldest, per_poll[5])
+        rows = self.database.connection.execute(
+            "SELECT concurrency_group FROM jobs WHERE id = ?", (oldest * 10,)
+        ).fetchall()
+        self.assertEqual([row["concurrency_group"] for row in rows], ["ci-main"])
+
+    def test_fresh_low_remaining_without_reset_header_respects_optional_reserve(
+        self,
+    ):
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=("jlapenna/homelab",),
+        )
+        api = exporter.GitHubAPI(
+            config,
+            exporter.ExporterState(CollectorRegistry()),
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+        self.addCleanup(api.close)
+        path = "/repos/jlapenna/homelab/actions/runs"
+        api.session.get = Mock(
+            side_effect=[
+                self.json_response(
+                    {"ok": True},
+                    headers={
+                        "x-ratelimit-remaining": "4000",
+                        "x-ratelimit-reset": str(int(self.now_epoch + 60)),
+                    },
+                ),
+                # The old window has reset; the next count is fresh and low
+                # but its reset header is missing or malformed.
+                self.json_response(
+                    {"ok": True}, headers={"x-ratelimit-remaining": "499"}
+                ),
+                self.json_response(
+                    {"ok": True},
+                    headers={
+                        "x-ratelimit-remaining": "499",
+                        "x-ratelimit-reset": "not-a-number",
+                    },
+                ),
+            ]
+        )
+        api.get(path, endpoint="runs")
+        self.assertTrue(api.has_optional_quota("jlapenna"))
+        self.advance(120)
+        api.get(path, endpoint="runs")
+        self.assertFalse(api.has_optional_quota("jlapenna"))
+        api.get(path, endpoint="runs")
+        self.assertFalse(api.has_optional_quota("jlapenna"))
 
 
 class InstallationReinstallTests(unittest.TestCase):
