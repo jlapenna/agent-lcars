@@ -18308,6 +18308,11 @@
                         },
                         "crossRepo": {
                           "type": "boolean"
+                        },
+                        "timeoutMinutes": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 80
                         }
                       },
                       "required": [
@@ -18633,6 +18638,11 @@
                         },
                         "crossRepo": {
                           "type": "boolean"
+                        },
+                        "timeoutMinutes": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 80
                         }
                       },
                       "required": [
@@ -18936,6 +18946,11 @@
                         },
                         "crossRepo": {
                           "type": "boolean"
+                        },
+                        "timeoutMinutes": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 80
                         },
                         "claw": {
                           "anyOf": [
