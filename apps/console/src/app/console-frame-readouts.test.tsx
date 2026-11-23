@@ -264,6 +264,25 @@ describe('console frame readouts', () => {
     );
     expect(screen.queryByTestId('console-identity')).toBeNull();
   });
+
+  it('reuses fresh figures when a navigation remounts the frame', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    respond(admin);
+    await renderFrame();
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    // A client navigation unmounts the old frame before the new one mounts.
+    cleanup();
+    await renderFrame();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('rail-readout-queue')).toHaveTextContent('9');
+
+    cleanup();
+    vi.setSystemTime(Date.now() + 30_000);
+    await renderFrame();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
 });
 
 describe('the frame at first paint', () => {
