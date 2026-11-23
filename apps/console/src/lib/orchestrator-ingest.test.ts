@@ -1284,7 +1284,7 @@ describe('unified cross-model PR review intake', () => {
     });
   });
 
-  it('ignores drafts and requests a review for dependency bot PRs in LCARS', () => {
+  it('ignores drafts and unattended dependency-bot PRs while keeping qualified runtime/submodule updates reviewable', () => {
     expect(
       interpretDelivery({
         event: 'pull_request',
@@ -1305,6 +1305,29 @@ describe('unified cross-model PR review intake', () => {
       }),
     ).toEqual({ kind: 'ignore', reason: 'draft-pull-request' });
 
+    for (const action of ['opened', 'synchronize', 'reopened']) {
+      expect(
+        interpretDelivery({
+          event: 'pull_request',
+          deliveryId: DELIVERY_ID,
+          payload: {
+            action,
+            repository: { full_name: REPO },
+            pull_request: {
+              state: 'open',
+              draft: false,
+              number: 81,
+              title: 'chore(deps): update deps',
+              user: { login: 'renovate[bot]' },
+              head: { ref: 'renovate/all-minor-patch', sha: 'd'.repeat(40) },
+              labels: [],
+            },
+            sender: { login: 'renovate[bot]' },
+          },
+        }),
+      ).toEqual({ kind: 'ignore', reason: 'excluded-review-author' });
+    }
+
     expect(
       interpretDelivery({
         event: 'pull_request',
@@ -1315,15 +1338,45 @@ describe('unified cross-model PR review intake', () => {
           pull_request: {
             state: 'open',
             draft: false,
-            number: 81,
-            title: 'chore(deps): update deps',
-            user: { login: 'renovate[bot]' },
+            number: 811,
+            title: 'chore(deps): bump actions/checkout',
+            user: { login: 'dependabot[bot]' },
+            head: {
+              ref: 'dependabot/github_actions/actions-checkout-5',
+              sha: 'e'.repeat(40),
+            },
             labels: [],
           },
-          sender: { login: 'renovate[bot]' },
+          sender: { login: 'dependabot[bot]' },
         },
       }),
-    ).toMatchObject({ kind: 'request' });
+    ).toEqual({ kind: 'ignore', reason: 'excluded-review-author' });
+
+    for (const headRef of [
+      'renovate/runner-cli-runtimes',
+      'renovate/anthropic-review-workflow',
+    ]) {
+      expect(
+        interpretDelivery({
+          event: 'pull_request',
+          deliveryId: DELIVERY_ID,
+          payload: {
+            action: 'ready_for_review',
+            repository: { full_name: REPO },
+            pull_request: {
+              state: 'open',
+              draft: false,
+              number: 812,
+              title: 'chore(deps): update qualified dependency',
+              user: { login: 'renovate[bot]' },
+              head: { ref: headRef, sha: 'f'.repeat(40) },
+              labels: [],
+            },
+            sender: { login: 'jlapenna' },
+          },
+        }),
+      ).toMatchObject({ kind: 'request', params: { mode: 'review' } });
+    }
   });
 
   it('supports the unified review label and redirects same-model review:* labels to the opposite model', () => {

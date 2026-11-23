@@ -86,6 +86,10 @@ function publisher(options: {
   rules?: unknown[];
   candidate?: boolean;
   second?: Review[];
+  author?: { __typename: string; login: string };
+  isDraft?: boolean;
+  headRefName?: string;
+  commits?: Array<{ oid: string; authorLogin: string | null }>;
 }) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'review-publisher-'));
   roots.push(root);
@@ -99,6 +103,10 @@ function publisher(options: {
       number: 7,
       head: HEAD,
       baseOid: BASE,
+      ...(options.author && { author: options.author }),
+      ...(options.isDraft !== undefined && { isDraft: options.isDraft }),
+      ...(options.headRefName && { headRefName: options.headRefName }),
+      ...(options.commits && { commits: options.commits }),
       candidate:
         options.candidate === false
           ? null
@@ -268,5 +276,67 @@ describe('shared LCARS review publisher', () => {
       [`d:${CANDIDATE_CHECK}`]: 'success',
       [`a:${HEAD_CHECK}`]: 'success',
     });
+  });
+
+  it.each(['renovate', 'dependabot'])(
+    'auto-passes non-draft %s PRs when every commit belongs to the bot and revokes on a blocking review',
+    (bot) => {
+      const subject = publisher({
+        author: { __typename: 'Bot', login: bot },
+        headRefName: `${bot}/lock-file-maintenance`,
+      });
+      const state = subject.run();
+      expect(conclusions(state)).toEqual({
+        [`c:${CANDIDATE_CHECK}`]: 'success',
+        [`a:${HEAD_CHECK}`]: 'success',
+      });
+
+      // An explicit /review that requests changes revokes the automated pass.
+      subject.setReviews([review('CHANGES_REQUESTED', 1)]);
+      expect(conclusions(subject.run())).toEqual({
+        [`c:${CANDIDATE_CHECK}`]: 'failure',
+        [`a:${HEAD_CHECK}`]: 'failure',
+      });
+    },
+  );
+
+  it.each([
+    [
+      'draft PR',
+      {
+        author: { __typename: 'Bot', login: 'renovate' },
+        isDraft: true,
+      },
+    ],
+    [
+      'non-bot commit on Renovate branch',
+      {
+        author: { __typename: 'Bot', login: 'renovate' },
+        commits: [{ oid: HEAD, authorLogin: 'jlapenna' }],
+      },
+    ],
+    [
+      'qualification-required runner CLI branch',
+      {
+        author: { __typename: 'Bot', login: 'renovate' },
+        headRefName: 'renovate/runner-cli-runtimes',
+      },
+    ],
+    [
+      'qualification-required Anthropic review branch',
+      {
+        author: { __typename: 'Bot', login: 'renovate' },
+        headRefName: 'renovate/anthropic-review-workflow',
+      },
+    ],
+  ])('refuses the dependency-bot fast path for %s', (_case, overrides) => {
+    expect(
+      conclusions(
+        publisher({
+          ...overrides,
+          rules: requires(HEAD_CHECK),
+        }).run(),
+      ),
+    ).toEqual({ [`a:${HEAD_CHECK}`]: 'failure' });
   });
 });

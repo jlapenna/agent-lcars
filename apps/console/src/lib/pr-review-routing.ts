@@ -7,12 +7,26 @@ import {
 export const UNIFIED_REVIEW_LABEL = 'review';
 export const UNIFIED_REVIEW_COMMAND = '/review';
 
-const AUTOMATED_BOT_LOGINS = new Set([
+const DEPENDENCY_BOT_LOGINS = new Set([
   'renovate[bot]',
   'app/renovate',
   'dependabot[bot]',
   'app/dependabot',
+]);
+
+const AUTOMATED_BOT_LOGINS = new Set([
+  ...DEPENDENCY_BOT_LOGINS,
   'github-actions[bot]',
+]);
+
+/**
+ * Renovate groups in `jlapenna/agent-lcars` whose updates change executable
+ * review/runtime pins and require explicit review + qualification once a
+ * maintainer marks their draft PR ready for review (`renovate.json`).
+ */
+const QUALIFICATION_REQUIRED_RENOVATE_REFS = new Set([
+  'renovate/runner-cli-runtimes',
+  'renovate/anthropic-review-workflow',
 ]);
 
 const ATTEMPT_CLAIM_RE = /<!--\s*attempt-claim:g\d+:([^\s>]+)\s*-->/gu;
@@ -37,6 +51,16 @@ export function isAutomatedReviewExcludedAuthor(
 ): boolean {
   if (!login) return false;
   return AUTOMATED_BOT_LOGINS.has(login.toLowerCase());
+}
+
+export function isUnattendedDependencyBotPullRequest(input: {
+  userLogin: string | undefined;
+  headRef?: string | undefined;
+}): boolean {
+  if (!input.userLogin) return false;
+  if (!DEPENDENCY_BOT_LOGINS.has(input.userLogin.toLowerCase())) return false;
+  const normalizedRef = input.headRef?.toLowerCase() ?? '';
+  return !QUALIFICATION_REQUIRED_RENOVATE_REFS.has(normalizedRef);
 }
 
 export interface PullRequestAuthorSignals {

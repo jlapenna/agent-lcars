@@ -4,7 +4,16 @@ name: Publish LCARS review status
 # Never check out PR code or consume artifacts from the triggering run.
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize, closed, edited]
+    types:
+      [
+        opened,
+        reopened,
+        synchronize,
+        closed,
+        edited,
+        ready_for_review,
+        converted_to_draft,
+      ]
   workflow_run:
     workflows: ['LCARS review event']
     types: [completed]
@@ -32,9 +41,9 @@ jobs:
           set -euo pipefail
           # Re-read every open head. Fork events can lack PR numbers, and
           # GitHub may coalesce queued runs in the concurrency group.
-          pulls=$(gh api --paginate "repos/$REPO/pulls?base=$BASE&state=open&per_page=100" --jq '.[] | [.number, .head.sha] | @tsv')
+          pulls=$(gh api --paginate "repos/$REPO/pulls?base=$BASE&state=open&per_page=100" --jq '.[] | [.number, .head.sha, .draft, .user.login, .head.ref] | @tsv')
           declare -A states descriptions prs
-          while read -r pr head; do
+          while IFS=$'\t' read -r pr head is_draft pr_user head_ref; do
             [[ -n "$pr" ]] || continue
             reviews=$(gh api --paginate --slurp "repos/$REPO/pulls/$pr/reviews?per_page=100")
             state=$(jq -r --arg head "$head" '
@@ -47,9 +56,24 @@ jobs:
                     ($r.state == "APPROVED" or ($r.state == "COMMENTED" and ($r.body | split("\n") | any(rtrimstr("\r") == "<!-- lcars-review:pass -->")) and . != "blocked"))
                   then "success" else . end)
             ' <<< "$reviews")
+            if [[ "$state" == pending && "$is_draft" == false &&
+                  ( "$pr_user" == "renovate[bot]" || "$pr_user" == "dependabot[bot]" ) &&
+                  "$head_ref" != "renovate/runner-cli-runtimes" &&
+                  "$head_ref" != "renovate/anthropic-review-workflow" ]]; then
+              pr_commits=$(gh api --paginate --slurp "repos/$REPO/pulls/$pr/commits?per_page=100")
+              if jq -e --arg head "$head" --arg author "$pr_user" '
+                [.[][]] as $commits |
+                ($commits | length) >= 1 and ($commits | length) <= 100 and
+                any($commits[]; .sha == $head) and
+                all($commits[]; .author.login == $author)
+              ' <<< "$pr_commits" >/dev/null; then
+                state=automated_pass
+              fi
+            fi
             case "$state" in
               blocked|comment_blocked) state=pending; description="LCARS requested changes" ;;
               pending) description="Awaiting LCARS code review; comment /review to request one" ;;
+              automated_pass) state=success; description="Automated dependency update; CI gates merge" ;;
               success) description="LCARS reviewed this commit" ;;
             esac
             # A commit status is shared across PRs with the same SHA.

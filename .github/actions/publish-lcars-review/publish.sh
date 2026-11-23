@@ -50,7 +50,12 @@ read_candidate() {
   comparison=$(gh api graphql -f owner="${REPO%/*}" -f repo="${REPO#*/}" -F pr="$pr" \
     -f query='query($owner:String!, $repo:String!, $pr:Int!) {
       repository(owner:$owner, name:$repo) { pullRequest(number:$pr) {
-        state baseRefName headRefOid baseRef { target { oid } }
+        state isDraft baseRefName headRefName headRefOid baseRef { target { oid } }
+        author { __typename login }
+        commits(last:100) {
+          totalCount
+          nodes { commit { oid author { user { login } } } }
+        }
         potentialMergeCommit { oid parents(first:2) { nodes { oid } } }
         timelineItems(last:1, itemTypes:[BASE_REF_CHANGED_EVENT]) {
           nodes { ... on BaseRefChangedEvent { id createdAt } }
@@ -88,13 +93,25 @@ read_verdict() {
         select(.user.login == "agent-lcars[bot]" and ((.body // "") | startswith($prefix))) |
         {lines: (.body | split("\n")[:2]), created_at}]')
   fi
-  state=$(jq -r --argjson base_event "$base_event" --arg head "$head" --arg task "$REPO#$pr" \
+  state=$(jq -r --argjson base_event "$base_event" --argjson pr_meta "$comparison" \
+    --arg head "$head" --arg task "$REPO#$pr" \
     --slurpfile completions <(printf '%s\n' "$completions") '
     def marked($marker): (.body // "" | split("\n") | any(rtrimstr("\r") == $marker));
     def attempt:
       [.body // "" | split("\n")[] | rtrimstr("\r") |
        capture("^<!-- attempt-claim:g[0-9]+:(?<task>[^[:space:]]+)/r(?<run>[1-9][0-9]*) -->$") |
        select(.task == $task) | .run | tonumber] | if length == 1 then first else null end;
+    def automated_dependency_pass:
+      ($pr_meta.isDraft == false) and
+      ($pr_meta.author.__typename == "Bot") and
+      ($pr_meta.author.login == "renovate" or $pr_meta.author.login == "dependabot") and
+      ($pr_meta.headRefName != "renovate/runner-cli-runtimes") and
+      ($pr_meta.headRefName != "renovate/anthropic-review-workflow") and
+      (($pr_meta.author.login + "[bot]") as $expected_author |
+        ($pr_meta.commits.totalCount >= 1 and $pr_meta.commits.totalCount <= 100) and
+        (($pr_meta.commits.nodes | length) == $pr_meta.commits.totalCount) and
+        any($pr_meta.commits.nodes[]; .commit.oid == $head) and
+        all($pr_meta.commits.nodes[]; .commit.author.user.login == $expected_author));
     [.[][] | select(.user.login == "agent-lcars[bot]") | . + {run: attempt}] as $reviews
     | [if $base_event.id != null then
          $reviews[] | select(.run != null and .submitted_at > $base_event.createdAt) as $review |
@@ -106,17 +123,19 @@ read_verdict() {
     | [$reviews[] | select(.commit_id == $head) |
        . as $review | . + {fresh: (.run != null and
          ($base_event.id == null or any($finished[]; .run < $review.run and .at < $review.submitted_at)))}]
-    | reduce .[] as $r ("pending";
+    | (reduce .[] as $r ("pending";
         if $r.state == "CHANGES_REQUESTED" then "blocked"
         elif $r.state == "COMMENTED" and . != "blocked" and
           ($r | marked("<!-- lcars-review:block -->")) then "comment_blocked"
         elif $r.fresh and
           ($r.state == "APPROVED" or ($r.state == "COMMENTED" and ($r.body | split("\n") | any(rtrimstr("\r") == "<!-- lcars-review:pass -->")) and . != "blocked"))
-        then "success" else . end)
+        then "success" else . end))
+    | if . == "pending" and automated_dependency_pass then "automated_pass" else . end
   ' <<< "$reviews")
   case "$state" in
     blocked|comment_blocked) state=pending; description="LCARS requested changes" ;;
     pending) description="Awaiting LCARS code review; ask a maintainer to comment /review" ;;
+    automated_pass) state=success; description="Automated dependency update; CI gates merge" ;;
     success) description="LCARS reviewed this commit" ;;
   esac
 }
