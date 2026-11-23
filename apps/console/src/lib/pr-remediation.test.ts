@@ -43,6 +43,7 @@ interface MockPrSnapshot {
   headRefOid?: string;
   headRepository?: { nameWithOwner: string } | null;
   closingIssues?: { number: number; repo: string }[];
+  threadsTruncated?: boolean;
   mergeable?: string;
   mergeStateStatus?: string;
   author?: { login: string } | null;
@@ -114,7 +115,7 @@ function makeGraphqlPr(overrides: MockPrSnapshot = {}) {
       })),
     },
     reviewThreads: {
-      pageInfo: { hasNextPage: false },
+      pageInfo: { hasNextPage: overrides.threadsTruncated ?? false },
       nodes: (overrides.reviewThreads ?? []).map((thread) => ({
         ...thread,
         comments: thread.comments ?? {
@@ -696,6 +697,40 @@ describe('automatic pull-request review & conflict remediation', () => {
       anchor,
     );
     expect(settled).toMatchObject({ action: 'remediated' });
+  });
+
+  it('parks a truncated review snapshot only when the PR conflicts', async () => {
+    const f = createFixture();
+    const anchor = { repo: REPO, issue: 4003 };
+    const labelUrl = expect.stringContaining(
+      `/repos/${REPO}/issues/4003/labels`,
+    );
+
+    f.setPr(REPO, 4003, {
+      threadsTruncated: true,
+      mergeable: 'MERGEABLE',
+      mergeStateStatus: 'BLOCKED',
+    });
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+    ).toEqual({ action: 'ignored', reason: 'truncated-reviews' });
+    expect(f.fetchImpl).not.toHaveBeenCalledWith(labelUrl, expect.anything());
+
+    f.setPr(REPO, 4003, {
+      threadsTruncated: true,
+      mergeable: 'CONFLICTING',
+      mergeStateStatus: 'DIRTY',
+    });
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+    ).toEqual({ action: 'ignored', reason: 'truncated-reviews' });
+    expect(f.fetchImpl).toHaveBeenCalledWith(
+      labelUrl,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ labels: ['status:needs-human'] }),
+      }),
+    );
   });
 
   it('deduplicates identical state and caps consecutive automatic remediation rounds', async () => {

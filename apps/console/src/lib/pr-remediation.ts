@@ -676,10 +676,11 @@ export async function reconcilePullRequestRemediation(
       anchor.repo,
       anchor.issue,
     );
+    // `BLOCKED` is the normal state while checks or approval are pending;
+    // only a conflict proves this PR needs a human.
     if (
       snapshot.mergeable === 'CONFLICTING' ||
-      snapshot.mergeStateStatus === 'DIRTY' ||
-      snapshot.mergeStateStatus === 'BLOCKED'
+      snapshot.mergeStateStatus === 'DIRTY'
     ) {
       await applyNeedsHumanLabel(deps, anchor);
     }
