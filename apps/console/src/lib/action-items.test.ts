@@ -175,3 +175,28 @@ describe('automated PR review requests', () => {
     ).toContain('needs-human');
   });
 });
+
+describe('agent-owned PR merge blockers', () => {
+  it.each([
+    { mergeableState: 'behind' as const, unresolvedReviewThreadCount: 0 },
+    { mergeableState: 'dirty' as const, unresolvedReviewThreadCount: 0 },
+    { mergeableState: 'blocked' as const, unresolvedReviewThreadCount: 3 },
+  ])(
+    'never queues a PR into the human Decision Inbox solely for %j',
+    (override) => {
+      const item = actionItemFromGithubAnchorProjection(
+        makeProjection({
+          kind: 'pr',
+          draft: false,
+          author: 'jlapenna',
+          assigneeLogins: ['agent-lcars-bot'],
+          ...override,
+        }),
+      );
+      expect(item.actionTypes).toEqual([]);
+      expect(item.unresolvedReviewThreadCount).toBe(
+        override.unresolvedReviewThreadCount,
+      );
+    },
+  );
+});

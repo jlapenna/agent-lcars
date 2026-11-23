@@ -1720,6 +1720,13 @@ export function runOrchestratorStoreContract(
           ).map((entry) => entry.task.task),
         ).toEqual([run.task]);
         expect(
+          (
+            await store.readWaitingDeliveryTasks({
+              repo: 'octo/example',
+            })
+          ).map((entry) => entry.task.task),
+        ).toEqual([run.task]);
+        expect(
           await store.readWaitingDeliveryTasks({
             repo: 'octo/example',
             number: 13,
@@ -1750,6 +1757,11 @@ export function runOrchestratorStoreContract(
           await store.readWaitingDeliveryTasks({
             repo: 'octo/example',
             number: 12,
+          }),
+        ).toEqual([]);
+        expect(
+          await store.readWaitingDeliveryTasks({
+            repo: 'octo/example',
           }),
         ).toEqual([]);
       });

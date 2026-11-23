@@ -675,14 +675,15 @@ export class MemoryStore implements OrchestratorStore {
 
   async readWaitingDeliveryTasks(binding: {
     repo: string;
-    number: number;
+    number?: number;
   }): Promise<VersionedTask[]> {
     return [...this.#tasks.values()]
       .filter(
         (entry) =>
           entry.task.delivery?.state === 'waiting' &&
           entry.task.delivery.repo === binding.repo &&
-          entry.task.delivery.number === binding.number,
+          (binding.number === undefined ||
+            entry.task.delivery.number === binding.number),
       )
       .map((entry) => structuredClone(entry));
   }

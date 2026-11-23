@@ -469,10 +469,10 @@ export interface OrchestratorStore {
    * Returns false when the entry is missing, not pending, or already due, so
    * a webhook wake never touches a leased or settled entry. */
   wakeOutbox(input: { entryId: string; now: string }): Promise<boolean>;
-  /** Tasks whose waiting delivery binding is this exact pull request. */
+  /** Tasks whose waiting delivery binding matches this pull request or repository. */
   readWaitingDeliveryTasks(binding: {
     repo: string;
-    number: number;
+    number?: number;
   }): Promise<VersionedTask[]>;
 
   /** Live runs whose startup or execution deadline expired at `now`; excludes queued waits. */

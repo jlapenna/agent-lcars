@@ -971,13 +971,16 @@ export class FirestoreStore implements OrchestratorStore {
   /** Equality-only filters on the binding, so no composite index is needed. */
   async readWaitingDeliveryTasks(binding: {
     repo: string;
-    number: number;
+    number?: number;
   }): Promise<VersionedTask[]> {
-    const snapshot = await this.#tasks
+    let query = this.#tasks
       .where('task.delivery.state', '==', 'waiting')
-      .where('task.delivery.repo', '==', binding.repo)
-      .where('task.delivery.number', '==', binding.number)
-      .limit(10)
+      .where('task.delivery.repo', '==', binding.repo);
+    if (binding.number !== undefined) {
+      query = query.where('task.delivery.number', '==', binding.number);
+    }
+    const snapshot = await query
+      .limit(binding.number === undefined ? 50 : 10)
       .get();
     return snapshot.docs.map((doc) => taskDocSchema.parse(doc.data()));
   }

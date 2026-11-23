@@ -2526,10 +2526,6 @@ td.costs-repo-spend__num {
   --queue-row-accent: var(--mantine-color-red-5);
 }
 
-.queue-item-row[data-reason='merge-blocked'] {
-  --queue-row-accent: var(--mantine-color-yellow-5);
-}
-
 .queue-item-row[data-reason='silent-error'] {
   --queue-row-accent: var(--mantine-color-orange-5);
 }

@@ -403,7 +403,7 @@ describe('handleWebhookDelivery', () => {
         check_run: { pull_requests: [{ number: 99 }] },
       },
     });
-    expect(drain).toHaveBeenCalledWith(1);
+    expect(drain).toHaveBeenCalledWith(10);
     const woken = (await claimable()).filter(
       (entry) => entry.kind === 'monitor-delivery',
     );
