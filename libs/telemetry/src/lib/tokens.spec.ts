@@ -91,4 +91,43 @@ describe('estimateCostUsd', () => {
       }),
     ).toBe(0);
   });
+
+  it('prices Codex GPT-6 Sol and Astra models without cross-matching sibling tiers', () => {
+    // gpt-6.2-sol / gpt-6.1-sol: $2 input, $10 output, $2.50 cache write, $0.10 cache read
+    expect(estimateCostUsd('gpt-6.2-sol', usage)).toBeCloseTo(
+      2 + 10 + 2.5 + 0.1,
+      6,
+    );
+    expect(estimateCostUsd('gpt-6.1-sol', usage)).toBeCloseTo(
+      2 + 10 + 2.5 + 0.1,
+      6,
+    );
+    // gpt-6.2-astra ($8/$40) vs gpt-6-astra ($10/$50)
+    expect(estimateCostUsd('gpt-6.2-astra', usage)).toBeCloseTo(
+      8 + 40 + 10 + 0.4,
+      6,
+    );
+    expect(estimateCostUsd('gpt-6-astra', usage)).toBeCloseTo(
+      10 + 50 + 12.5 + 1,
+      6,
+    );
+  });
+
+  it('prices Gemini 4 effort-suffixed Antigravity models while leaving gateway aliases unpriced', () => {
+    // gemini-4-neon-high resolves via longest-prefix 'gemini-4-neon' ($3/$15, $0.15 cached)
+    expect(estimateCostUsd('gemini-4-neon-high', usage)).toBeCloseTo(
+      3 + 15 + 3 + 0.15,
+      6,
+    );
+    // gemini-4-argon-medium and gemini-4-carbon-medium ($2/$10, $0.10 cached)
+    expect(estimateCostUsd('gemini-4-argon-medium', usage)).toBeCloseTo(
+      2 + 10 + 2 + 0.1,
+      6,
+    );
+    expect(estimateCostUsd('gemini-4-carbon-medium', usage)).toBeCloseTo(
+      2 + 10 + 2 + 0.1,
+      6,
+    );
+    expect(estimateCostUsd('homelab/default', usage)).toBeUndefined();
+  });
 });

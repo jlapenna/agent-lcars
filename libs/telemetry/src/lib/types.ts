@@ -227,6 +227,9 @@ export interface SessionSummary {
 export interface ReduceTranscriptOptions {
   /** Attached by the host watcher (not present in the transcript itself). */
   host?: string;
+  /** Source file path when known; identifies standalone Claude subagent files
+   * (`<parentSessionId>/subagents/agent-<agentId>.jsonl`). */
+  filePath?: string;
 }
 
 export type SessionLiveness = 'live' | 'idle' | 'ended' | 'stale';
