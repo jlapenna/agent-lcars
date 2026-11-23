@@ -75,6 +75,10 @@ main() {
     echo "Not a .jsonl transcript URI: $gcs_uri" >&2
     exit 1
   fi
+  if [[ "$session_id" == *--subagent--* ]]; then
+    echo "Cannot run claude --resume on a subagent transcript ($session_id); pass the parent session URI instead." >&2
+    exit 1
+  fi
 
   slug="$(claude_project_slug_for "$PWD")"
   dest_dir="$HOME/.claude/projects/$slug"

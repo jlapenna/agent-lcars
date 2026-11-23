@@ -339,14 +339,11 @@ describe('ActionItemCard', () => {
     expect(button.disabled).toBe(true);
   });
 
-  // #538: the retro (#521) found ten green-checked, auto-merge-armed PRs
-  // sitting unmergeable behind unresolved review threads with nothing on
-  // the card explaining why - this badge is the fix.
-  it('shows the unresolved review-thread count as the merge-blocked reason', () => {
+  it('shows the unresolved review-thread count badge when threads remain open', () => {
     renderCard(
       makeItem({
         kind: 'pr',
-        actionTypes: ['merge-blocked'],
+        actionTypes: ['review-requested'],
         mergeableState: 'blocked',
         unresolvedReviewThreadCount: 3,
       }),
@@ -355,11 +352,11 @@ describe('ActionItemCard', () => {
     expect(screen.getByText('3 unresolved review threads')).toBeTruthy();
   });
 
-  it('omits the thread-count badge for a merge-blocked PR whose reason is a behind base', () => {
+  it('omits the thread-count badge for a PR whose warning is a behind base', () => {
     renderCard(
       makeItem({
         kind: 'pr',
-        actionTypes: ['merge-blocked'],
+        actionTypes: ['review-requested'],
         mergeableState: 'behind',
       }),
       { kind: 'approve-rebase' },
@@ -368,13 +365,13 @@ describe('ActionItemCard', () => {
     expect(screen.queryByText(/unresolved review thread/)).toBeNull();
   });
 
-  it('shows the merge-blocked reason badge in workspace mode too', () => {
+  it('shows the unresolved review-thread badge in workspace mode too', () => {
     render(
       <MantineProvider>
         <ActionItemCard
           item={makeItem({
             kind: 'pr',
-            actionTypes: ['merge-blocked'],
+            actionTypes: ['needs-human'],
             mergeableState: 'blocked',
             unresolvedReviewThreadCount: 1,
           })}

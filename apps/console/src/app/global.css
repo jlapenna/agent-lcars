@@ -2526,10 +2526,6 @@ td.costs-repo-spend__num {
   --queue-row-accent: var(--mantine-color-red-5);
 }
 
-.queue-item-row[data-reason='merge-blocked'] {
-  --queue-row-accent: var(--mantine-color-yellow-5);
-}
-
 .queue-item-row[data-reason='silent-error'] {
   --queue-row-accent: var(--mantine-color-orange-5);
 }
@@ -3596,7 +3592,9 @@ td.costs-repo-spend__num {
     border-radius: 0;
   }
 
-  .session-mobile-row a {
+  .session-mobile-row a,
+  .sessions-show-all,
+  .costs-ledger-show-all {
     display: inline-flex;
     min-width: 44px;
     min-height: 44px;

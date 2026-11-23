@@ -119,6 +119,16 @@ h1 { margin: 0; font: 700 46px/.95 var(--f-display); letter-spacing: .04em; text
 .nav a:hover { background: var(--accent-muted-hover); }
 .nav a[aria-current="page"] { background: var(--accent); color: var(--ink-on-accent); }
 .nav a:active { transform: translateY(1px); }
+/* A navigation still loading: the clicked pill flashes between full and
+   resting signal once the wait outlasts 120 ms, and holds full signal under
+   reduced motion. A destination chosen from the ⋯ menu spins its trigger. */
+.nav a[data-pending] { animation: nav-pending 720ms steps(1, end) 120ms infinite; }
+@keyframes nav-pending { 0% { background: var(--accent); color: var(--ink-on-accent); } 50% { background: var(--accent-muted); color: var(--ink-on-muted); } }
+#menu-btn[data-pending] .icon { visibility: hidden; }
+#menu-btn[data-pending] { position: relative; }
+#menu-btn[data-pending]::after { content: ""; position: absolute; inset: 0; margin: auto; width: 18px; height: 18px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: menu-wait 700ms linear infinite; }
+@keyframes menu-wait { to { transform: rotate(1turn); } }
+@media (prefers-reduced-motion: reduce) { .nav a[data-pending] { animation: none; background: var(--accent); color: var(--ink-on-accent); } #menu-btn[data-pending]::after { animation: none; } }
 
 /* readout strip: the rail's figures on one line where the rail is hidden */
 .strip { display: none; font: 400 11px/1.4 var(--f-mono); color: var(--ink-dim); }
@@ -573,7 +583,7 @@ body[data-destination="jobs"] :focus-visible, body[data-destination="jobs"] .sea
    console renders. */
 const DEST = [
   { key: 'deck', label: 'Bridge', accent: 'amber', w: 168, live: true, title: 'Bridge', sub: 'Fleet overview · 4 repos' },
-  { key: 'inbox', label: 'Inbox', accent: 'blue', w: 132, count: 5, live: true, title: 'Decision Inbox', sub: 'Pending decisions and completed reports · 4 repos' },
+  { key: 'inbox', label: 'Inbox', accent: 'blue', w: 132, count: 4, live: true, title: 'Decision Inbox', sub: 'Pending decisions and completed reports · 4 repos' },
   { key: 'agents', label: 'Agents', accent: 'periwinkle', w: 132, count: 7, live: true, title: 'Agents', sub: 'Active runs, claimed work and recent outcomes · 4 repos' },
   { key: 'shuttlebay', label: 'Shuttlebay', accent: 'blue', w: 156, title: 'Shuttlebay', sub: 'Runner fleet · live runners and queue status' },
   { key: 'work', label: 'Work', accent: 'violet', w: 112, count: 5, title: 'Work', sub: 'Admitted queue, capacity holds and <a href="#work">schedules</a>' },
@@ -598,7 +608,6 @@ const INBOX = [
   { kind: 'Plan approval', summary: 'Decide whether to approve the proposed capacity policy and identity trust changes before implementation.', title: 'Plan changes production capacity policy and identity trust roots', repo: 'homelab', ref: '#2245', agent: 'claude', age: '3h 12m', late: true, by: 'jlapenna', notes: 2 },
   { kind: 'Takeover requested', summary: 'Decide how to provide the missing GHCR publishing permission so this run can continue.', title: 'Run paused: needs GHCR packages:write, which its grant cannot request', repo: 'messages-control', ref: '#117', agent: 'codex', age: '2h 20m', late: true, by: 'agent-lcars-bot', notes: 1 },
   { kind: 'Review requested', summary: 'Review the token sync changes and decide whether to approve the pull request.', title: 'members app: adopt the .ss-* token sync layer', repo: 'sprinkles', ref: 'PR #6036', agent: 'opencode', age: '1h 05m', by: 'agent-lcars-bot' },
-  { kind: 'Merge blocked', summary: 'Decide how to address the failing e2e-console check before merging; the reported flake is not yet confirmed.', title: 'Required check e2e-console failed twice on retry; flake suspected in claim-release spec', repo: 'agent-lcars', ref: 'PR #2475', agent: 'codex', age: '47m', by: 'agent-lcars-bot' },
   { kind: 'Budget extension', summary: 'Decide whether to raise the run budget from $8 to $12 to finish review fixes.', title: 'At 89% of its $8.00 cap with review fixes outstanding; asks for +$4.00', repo: 'agent-lcars', ref: '#2473', agent: 'claude', age: '14m', by: 'agent-lcars-bot', notes: 1 },
 ];
 
@@ -866,10 +875,11 @@ function sessionsPanel() {
     <td><span class="state ${s[5]}">${s[6]}</span>${s[7] ? `<span class="links"><a href="#" class="ref">${s[7]}</a></span>` : ''}</td><td class="num">${s[8]}</td><td class="num">${s[9]}</td><td class="num dim">${s[10]}</td></tr>`;
   const groups = SESSION_GROUPS.map((g) => `<div class="group-head"><h3>${g.ref}</h3><span class="tag">${g.repo}</span><span>${g.title}</span><span class="dim">${g.rows.length} session${g.rows.length === 1 ? '' : 's'}</span></div>
     <table class="sess">${SESS_COLS}<tbody>${g.rows.map(row).join('')}</tbody></table>`).join('');
-  return `<section class="panel" data-od-id="panel-sessions"><div><div class="panel-head"><h2>Sessions · 14d</h2><span class="count">31</span><span class="meta">grouped by issue · retained 365 days · CLI 30</span>
+  return `<section class="panel" data-od-id="panel-sessions"><div><div class="panel-head"><h2>Sessions · 14d</h2><span class="count">5913</span><span class="meta">grouped by issue · retained 365 days · CLI 30</span>
     <div class="seg" role="group" aria-label="View"><button type="button" aria-pressed="false">Flat</button><button type="button" aria-pressed="true">By issue</button></div></div>
     <table class="sess">${SESS_COLS}<thead><tr><th>Session</th><th>Issue</th><th>Agent</th><th>Outcome</th><th class="num">Duration</th><th class="num">Tokens</th><th class="num">Started</th></tr></thead></table>
-    <div class="group-head"><h3 class="dim">› No issue</h3><span class="dim">12 sessions</span></div>${groups}</div></section>`;
+    <div class="group-head"><h3 class="dim">› No issue</h3><span class="dim">12 sessions</span></div>${groups}
+    <div class="group-head" data-od-id="sessions-show-all"><a href="#">Show all 5913 sessions (5713 more)</a></div></div></section>`;
 }
 function costsPanel() {
   const max = Math.max(...COSTS.map((c) => c[2]));
@@ -908,6 +918,8 @@ function ledgerPanels() {
     <table><thead><tr><th>${label}</th><th class="num">Sessions</th><th class="num">Reported</th><th class="num">Estimated</th><th class="num">Unpriced</th><th>Merged PRs</th><th class="num">Cost / merged PR</th></tr></thead>
     <tbody>${rows.map((r) => `<tr><td class="mono">${r[0]}</td><td class="num">${r[1]}</td><td class="num">${r[2]}</td><td class="num">${r[3]}</td><td class="num">${r[4]}</td><td class="mono" style="font-size:12px">${r[5]}</td><td class="num">${r[6]}</td></tr>`).join('')}</tbody></table></div></section>`;
   const issues = [['no issue', 139, 14823, '837,340,213', '~ $2,951.00'], ['GitHub #2536', 1, 52, '723,541', '~ $1.70'], ['GitHub #1389', 1, 26, '444,338', '~ $1.11']];
+  // The disclosure carries the next 85 issues, then links to every issue.
+  const moreIssues = [['GitHub #2601', 1, 18, '301,224', '~ $0.74'], ['GitHub #2577', 1, 11, '188,902', '~ $0.46']];
   const weeks = [['2026-W42', 180, 6070, '208,297,025', '~ $902.58'], ['2026-W41', 18, 9171, '643,670,241', '~ $2,056.57']];
   const tbl = (head, rows) => `<table><thead><tr>${head.map((h, i) => `<th class="${i ? 'num' : ''}">${h}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td class="${i ? 'num' : 'mono'}" ${i ? '' : 'style="white-space:nowrap;font-size:13px"'}>${i === 4 ? `${c} <span class="est">est.</span>` : c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   return `<section class="panel" aria-label="Spend summary" data-od-id="panel-spend-summary"><div><div class="panel-head"><h2>Known session spend</h2><span class="count">$2,960.26</span><span class="meta">includes estimates</span></div>
@@ -916,7 +928,7 @@ function ledgerPanels() {
     ${BREAKDOWNS.map(breakdown).join('')}
     <section class="panel" aria-label="Deliverable attribution" data-od-id="panel-deliverables"><div><div class="panel-head"><h2>Deliverable attribution</h2><span class="count">2</span><span class="meta">known cost split across publication references</span></div>
       <div class="ops-rows">${[['jlapenna/agent-lcars#2282', 'unknown · 1 sessions · reported $0.00 · estimated $0.00 · 0.33 unpriced session shares'], ['jlapenna/homelab#2632', 'merged · 1 sessions · reported $0.00 · estimated $0.00 · 1 unpriced session shares']].map((d) => `<div class="op-row"><div><a href="#">GitHub ${d[0]}</a><div class="line">${d[1]}</div></div></div>`).join('')}</div></div></section>
-    <div class="cols"><section class="panel" aria-label="By issue"><div><div class="panel-head"><h2>By issue</h2><span class="count">53</span><span class="meta">sessions · turns · cost</span></div>${tbl(['Issue', 'Sessions', 'Turns', 'Cost-weighted tokens', 'Cost'], issues)}<div class="empty-note">Showing 3 of 53</div></div></section>
+    <div class="cols"><section class="panel" aria-label="By issue"><div><div class="panel-head"><h2>By issue</h2><span class="count">618</span><span class="meta">sessions · turns · cost</span></div>${tbl(['Issue', 'Sessions', 'Turns', 'Cost-weighted tokens', 'Cost'], issues)}<details data-od-id="ledger-issue-remainder"><summary class="empty-note">Showing 3 of 618 · show 615 more issues</summary>${tbl(['Issue', 'Sessions', 'Turns', 'Cost-weighted tokens', 'Cost'], moreIssues)}<div class="group-head" data-od-id="costs-ledger-show-all"><a href="#">Show all 618 issues (530 more)</a></div></details></div></section>
     <section class="panel" aria-label="By week"><div><div class="panel-head"><h2>By week</h2><span class="count">2</span><span class="meta">ISO weeks</span></div>${tbl(['Week', 'Sessions', 'Turns', 'Cost-weighted tokens', 'Cost'], weeks)}</div></section></div>`;
 }
 
@@ -934,7 +946,7 @@ const ARCHIVE_WINDOWS = ['1h', '24h', '7d', '14d', '30d', '90d'];
 
 const VIEWS = {
   /* No repository select on the Bridge: its panels summarise the whole fleet. */
-  deck: { warn: true, folded: [agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('issue, PR, session id'), asof], primary: '<a class="btn btn-primary push" href="#inbox" data-od-id="primary-action">Review 5 decisions</a>',
+  deck: { warn: true, folded: [agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('issue, PR, session id'), asof], primary: '<a class="btn btn-primary push" href="#inbox" data-od-id="primary-action">Review 4 decisions</a>',
     body: () => `${readouts()}<div class="cols"><div class="stack">${runsPanel(false)}${donePanel()}${eventWorkPanel()}${stoppedPanel()}${waitPanel('waiting-on-deploy', 'Waiting on deploy', 'Waiting for the next deploy before verification can continue.', WAITS.deploy)}${waitPanel('blocked', 'Blocked', 'Waiting on an external dependency or prerequisite; nothing to decide yet.', WAITS.blocked)}</div><div class="stack">${inboxPanel(false)}${fleetPanel()}${cliPanel()}</div></div>` },
   inbox: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, #, author, label', true), '<span class="asof desk-only">Data as of just now</span>'], primary: '<button class="btn btn-primary push wrap-start" type="button" data-od-id="primary-action">Respond to oldest</button>', body: () => `<div><div class="list-meta phone-only"><span class="eyebrow">4 repos</span><span>Updated just now</span></div>${inboxPanel(true)}</div>` },
   agents: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('issue, PR, run id'), asof],
@@ -1043,6 +1055,10 @@ function render(key) {
   try { localStorage.setItem('lcars.dest', d.key); } catch (e) {}
 }
 
+// One simulated navigation at a time: a newer click, any route change and a
+// click on the current destination all settle the pending cue.
+let navTimer, navCue;
+function clearNavPending() { clearTimeout(navTimer); navTimer = undefined; if (navCue) { navCue.removeAttribute('data-pending'); navCue = undefined; } }
 function closeMenu() { $('#menu').removeAttribute('data-open'); $('#menu-btn').setAttribute('aria-expanded', 'false'); }
 
 document.addEventListener('click', (e) => {
@@ -1056,13 +1072,15 @@ document.addEventListener('click', (e) => {
   // Sample links lead nowhere; they must not reset the route.
   if (e.target.closest('a[href="#"]')) { e.preventDefault(); return; }
   const nav = e.target.closest('.nav a, .menu a[data-key]');
-  if (nav) { e.preventDefault(); closeMenu(); location.hash = nav.dataset.key; return; }
+  // Navigation keeps the current page until the next is ready; the control
+  // that started it carries the wait (simulated here as 900 ms).
+  if (nav) { e.preventDefault(); closeMenu(); clearNavPending(); if (nav.dataset.key === document.body.dataset.destination) return; navCue = nav.closest('.menu') ? $('#menu-btn') : nav; navCue.setAttribute('data-pending', ''); const key = nav.dataset.key; navTimer = setTimeout(() => { clearNavPending(); location.hash = key; }, 900); return; }
   if (!e.target.closest('#menu')) closeMenu();
   const seg = e.target.closest('.seg button');
   if (seg && !seg.disabled) seg.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === seg)));
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
-window.addEventListener('hashchange', () => { render(location.hash.slice(1)); window.scrollTo(0, 0); });
+window.addEventListener('hashchange', () => { clearNavPending(); render(location.hash.slice(1)); window.scrollTo(0, 0); });
 
 let start = 'jobs';
 try { document.documentElement.dataset.mantineColorScheme = localStorage.getItem('lcars.scheme') || 'dark'; } catch (e) {}

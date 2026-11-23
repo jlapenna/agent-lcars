@@ -151,7 +151,7 @@ History families are rebuilt from SQLite once per poll; counters carry the
 | `github_actions_exporter_last_success_timestamp_seconds`         | gauge     | `repository`                                                                              | Last successful repository refresh.                                                                                                                                                                                                                                                        |
 | `github_actions_exporter_poll_errors_total`                      | counter   | `repository`, `stage`                                                                     | Collection errors.                                                                                                                                                                                                                                                                         |
 | `github_actions_exporter_backfill_in_progress`                   | gauge     | `repository`                                                                              | 1 while the initial history import runs.                                                                                                                                                                                                                                                   |
-| `github_actions_exporter_api_requests_total`                     | counter   | `endpoint`, `status`                                                                      | GitHub REST requests.                                                                                                                                                                                                                                                                      |
+| `github_actions_exporter_api_requests_total`                     | counter   | `owner`, `endpoint`, `status`                                                             | GitHub REST requests per repository owner / App installation.                                                                                                                                                                                                                              |
 | `github_actions_exporter_api_rate_limit_{remaining,limit,used}`  | gauge     | `owner`                                                                                   | Core-quota window per App installation ([quota metrics](#github-api-quota-metrics)).                                                                                                                                                                                                       |
 | `github_actions_exporter_api_rate_limit_reset_timestamp_seconds` | gauge     | `owner`                                                                                   | When that window resets.                                                                                                                                                                                                                                                                   |
 
@@ -277,8 +277,9 @@ minutes. The five-run pre-change baseline is recorded in Agent LCARS issue
 ## GitHub API quota metrics
 
 Every GitHub REST response increments the bounded
-`github_actions_exporter_api_requests_total{endpoint,status}` counter and, when
-the corresponding header is valid, updates these per-owner gauges (`{owner}`):
+`github_actions_exporter_api_requests_total{owner,endpoint,status}` counter and,
+when the corresponding header is valid, updates these per-owner gauges
+(`{owner}`):
 
 - `github_actions_exporter_api_rate_limit_remaining{owner}`
 - `github_actions_exporter_api_rate_limit_limit{owner}`
@@ -288,6 +289,46 @@ the corresponding header is valid, updates these per-owner gauges (`{owner}`):
 Missing or malformed rate-limit headers leave the previous valid observation
 intact. This makes the metrics safe for projected-exhaustion alerts while an
 individual GitHub response is incomplete or otherwise malformed.
+
+When an owner's installation hits `X-RateLimit-Remaining: 0` (including on a
+`200` response carrying the final allowed request) or returns a rate-limited
+`403`/`429` (including secondary-limit `403` responses without `Retry-After`,
+while excluding ordinary `5xx` `Retry-After` errors), `GitHubAPI` arms a
+per-owner backoff until `X-RateLimit-Reset` or `Retry-After` (delta-seconds or
+RFC 7231 HTTP-date, with a 60-second minimum fallback when neither yields a
+future delay and a one-hour ceiling). Repositories under that owner skip
+outbound requests while backed off, increment
+`github_actions_exporter_poll_errors_total{repository,stage="rate_limit"}`, and
+leave `github_actions_exporter_last_success_timestamp_seconds{repository}`
+unchanged so staleness alerts observe the gap, while repositories under other
+owners continue refreshing normally and the affected owner backfills from its
+last successful poll once the window resets.
+
+Optional metadata calls have separate bounds and share a per-probe `500`-request
+core-quota reserve:
+
+- Active-run `concurrency_groups` lookups are throttled to once every five
+  minutes per run and capped at `20` requests per owner per poll cycle, shared
+  across that owner's configured repositories with rotating remainder priority
+  and unused-slot rollover so an earlier busy repository cannot starve later
+  ones. Within a repository, slots go to never-probed active runs first, then
+  to the least recently probed, so a long run list cannot keep its oldest
+  active runs `unknown`. Skipping or failing an optional lookup preserves any previously
+  confirmed `concurrency_group` label in SQLite and marks newly seen active jobs
+  `unknown` rather than `none`.
+- Failed-`pull_request` rerun probes normally run once every five minutes per
+  repository and check up to `20` candidate runs per repository (least recently
+  probed first); non-rate-limit probe errors are counted under
+  `github_actions_exporter_poll_errors_total{repository,stage="pull_request_recheck"}`
+  without aborting core collection or skipping that five-minute cooldown. A
+  `404` (GitHub no longer has the run) is not counted there: it counts as an
+  attempted probe and keeps the stored result. Each
+  probe rechecks the owner's `500`-request reserve before calling GitHub and
+  advances the per-run recheck timestamp only for attempted runs. If quota drops
+  below `500` partway through a batch, the repository cooldown stays due so
+  deferred candidates are probed first on the next poll once quota recovers to
+  at least `500` (which can run inside five minutes after a window reset and
+  include already-probed candidates when fewer than `20` runs remain).
 
 ## Verification
 

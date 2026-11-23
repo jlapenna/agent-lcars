@@ -8,13 +8,16 @@ import {
   antigravityAdapter,
   applySessionTitleOverlay,
   claudeCodeAdapter,
+  claudeSubagentSessionId,
   codexAdapter,
   isSafeIdentifier,
   opencodeAdapter,
+  parseClaudeSubagentPath,
   type SessionAgent,
   type SessionEventKind,
   type SessionEventV1,
   type SessionSummary,
+  totalTokens,
   type TranscriptAdapter,
 } from '@agent-lcars/telemetry';
 
@@ -490,6 +493,79 @@ function reduceCodexChildTranscript(
   }
 }
 
+/**
+ * Resolves the child JSONL path for a Claude Code `SubagentStop` hook.
+ * Prefers `agent_transcript_path` when supplied; otherwise derives the
+ * canonical `<projectDir>/<parentId>/subagents/agent-<agentId>.jsonl` sibling
+ * when `transcript_path` names `<projectDir>/<parentId>.jsonl`. Never falls
+ * back to the parent's own transcript.
+ */
+function resolveClaudeChildTranscriptPath(
+  payload: HookPayload,
+): string | undefined {
+  if (payload.agentTranscriptPath) {
+    const parsed = parseClaudeSubagentPath(payload.agentTranscriptPath);
+    return parsed &&
+      parsed.parentSessionId === payload.sessionId &&
+      parsed.agentId === payload.agentId
+      ? payload.agentTranscriptPath
+      : undefined;
+  }
+  if (
+    !payload.transcriptPath ||
+    !payload.agentId ||
+    path.basename(payload.transcriptPath) !== `${payload.sessionId}.jsonl`
+  ) {
+    return undefined;
+  }
+  return path.join(
+    path.dirname(payload.transcriptPath),
+    payload.sessionId,
+    'subagents',
+    `agent-${payload.agentId}.jsonl`,
+  );
+}
+
+/**
+ * Reduces a verified standalone Claude Code `Agent` subagent transcript.
+ * Requires the path to match `<parentId>/subagents/agent-<agentId>.jsonl`,
+ * every JSONL record to carry `sessionId === parentId`, `agentId`, and
+ * `isSidechain: true`, and at least one observed turn or token count so an
+ * empty or mismatched file never produces a synthetic child session.
+ */
+function reduceClaudeChildTranscript(
+  deps: HookCommandDependencies,
+  transcriptPath: string | undefined,
+  childSessionId: string,
+  expectedParentId: string | undefined,
+  expectedAgentId: string | undefined,
+): SessionSummary | undefined {
+  if (!transcriptPath || !expectedParentId || !expectedAgentId) {
+    return undefined;
+  }
+  const parsedPath = parseClaudeSubagentPath(transcriptPath);
+  if (
+    !parsedPath ||
+    parsedPath.parentSessionId !== expectedParentId ||
+    parsedPath.agentId !== expectedAgentId ||
+    parsedPath.sessionId !== childSessionId
+  ) {
+    return undefined;
+  }
+  try {
+    const summary = claudeCodeAdapter.reduce(
+      deps.readTranscriptLines(transcriptPath),
+      transcriptPath,
+    )[0];
+    return summary?.sessionId === childSessionId &&
+      (summary.turns > 0 || totalTokens(summary.tokens) > 0)
+      ? summary
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function applyAnnotationOverlays(
   stateDirectory: string,
   summary: SessionSummary,
@@ -574,7 +650,8 @@ async function handleRuntimeHook(
     return { action: 'ignored', detail: 'unparseable payload' };
   }
   const kind: SessionEventKind | undefined =
-    runtime === 'codex' && payload.hookEventName === 'SubagentStop'
+    (runtime === 'codex' || runtime === 'claude') &&
+    payload.hookEventName === 'SubagentStop'
       ? 'stop'
       : HOOK_EVENT_KINDS[payload.hookEventName];
   if (!kind) {
@@ -586,32 +663,61 @@ async function handleRuntimeHook(
     return { action: 'ignored', detail: 'missing child identity' };
   }
   let codexParentId: string | undefined;
+  let claudeSubagent:
+    { parentId: string; agentId: string; childSessionId: string } | undefined;
   if (payload.isSubagent) {
-    if (
-      runtime !== 'codex' ||
-      !payload.agentId ||
-      !isSafeIdentifier(payload.agentId) ||
-      !isSafeIdentifier(payload.sessionId) ||
-      payload.agentId === payload.sessionId
-    ) {
+    const initialPayload = payload;
+    const skipSubagent = () => {
       // Name the identities (when safe to print) so a skipped event can be
       // matched to a session instead of only to a timestamp.
       const tag = (id: string | undefined) =>
         id && isSafeIdentifier(id) ? id.slice(0, 8) : 'unsafe';
       log(
         'skipped-subagent',
-        `parent=${tag(payload.sessionId)} child=${tag(payload.agentId)} event=${payload.hookEventName}`,
+        `parent=${tag(initialPayload.sessionId)} child=${tag(initialPayload.agentId)} event=${initialPayload.hookEventName}`,
       );
-      return { action: 'skipped-subagent' };
-    }
-    // Codex hook session_id identifies the parent. Use only the explicit child
-    // path or exact agent_id rollout lookup; the common transcript is parent-owned.
-    codexParentId = payload.sessionId;
-    payload = {
-      ...payload,
-      sessionId: payload.agentId,
-      transcriptPath: payload.agentTranscriptPath,
+      return { action: 'skipped-subagent' as const };
     };
+    if (runtime === 'codex') {
+      if (
+        !payload.agentId ||
+        !isSafeIdentifier(payload.agentId) ||
+        !isSafeIdentifier(payload.sessionId) ||
+        payload.agentId === payload.sessionId
+      ) {
+        return skipSubagent();
+      }
+      // Codex hook session_id identifies the parent. Use only the explicit child
+      // path or exact agent_id rollout lookup; the common transcript is parent-owned.
+      codexParentId = payload.sessionId;
+      payload = {
+        ...payload,
+        sessionId: payload.agentId,
+        transcriptPath: payload.agentTranscriptPath,
+      };
+    } else if (
+      runtime === 'claude' &&
+      payload.hookEventName === 'SubagentStop'
+    ) {
+      const childSessionId = payload.agentId
+        ? claudeSubagentSessionId(payload.sessionId, payload.agentId)
+        : undefined;
+      if (!childSessionId || !payload.agentId) {
+        return skipSubagent();
+      }
+      claudeSubagent = {
+        parentId: payload.sessionId,
+        agentId: payload.agentId,
+        childSessionId,
+      };
+      payload = {
+        ...payload,
+        sessionId: childSessionId,
+        transcriptPath: resolveClaudeChildTranscriptPath(payload),
+      };
+    } else {
+      return skipSubagent();
+    }
   }
   if (!isSafeIdentifier(payload.sessionId)) {
     log('ignored', 'unsafe session id');
@@ -700,12 +806,20 @@ async function handleRuntimeHook(
 
     const transcriptPath = resolveTranscriptPath(deps, runtime, payload);
     const reduced = payload.isSubagent
-      ? reduceCodexChildTranscript(
-          deps,
-          transcriptPath,
-          payload.sessionId,
-          codexParentId,
-        )
+      ? claudeSubagent
+        ? reduceClaudeChildTranscript(
+            deps,
+            transcriptPath,
+            claudeSubagent.childSessionId,
+            claudeSubagent.parentId,
+            claudeSubagent.agentId,
+          )
+        : reduceCodexChildTranscript(
+            deps,
+            transcriptPath,
+            payload.sessionId,
+            codexParentId,
+          )
       : reduceTranscript(
           deps,
           profile.adapter,

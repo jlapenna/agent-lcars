@@ -95,7 +95,7 @@ describe('Inbox decision descriptions', () => {
       inboxDecisionContext({
         item: {
           ...card.item,
-          actionTypes: ['merge-blocked'],
+          actionTypes: ['review-requested'],
           unresolvedReviewThreadCount: 2,
         },
       }),

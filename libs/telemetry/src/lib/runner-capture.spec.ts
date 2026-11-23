@@ -87,6 +87,18 @@ describe('transcriptObjectPath', () => {
       }),
     ).toBe('runs/unknown/claude-code/session-c.jsonl');
   });
+
+  it('archives claude subagent transcripts under a subagents/ prefix so root globs stay unambiguous', () => {
+    expect(
+      transcriptObjectPath({
+        runId: '42',
+        adapter: 'claude-code',
+        sessionId: 'parent-uuid--subagent--a889900',
+      }),
+    ).toBe(
+      'runs/42/claude-code/subagents/parent-uuid--subagent--a889900.jsonl',
+    );
+  });
 });
 
 describe('resumeObjectPath', () => {

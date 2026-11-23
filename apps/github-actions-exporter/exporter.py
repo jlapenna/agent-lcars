@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import math
 import os
 import sqlite3
 import threading
@@ -13,6 +14,7 @@ from collections.abc import Callable, Iterable, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -68,6 +70,11 @@ PAGE_SIZE = 100
 RUN_SEARCH_LIMIT = 1000
 ONE_SECOND = timedelta(seconds=1)
 OPTIONAL_METADATA_RETRY_SECONDS = 300
+CONCURRENCY_GROUPS_REFRESH_SECONDS = 300
+CONCURRENCY_GROUPS_PER_CYCLE_LIMIT = 20
+OPTIONAL_METADATA_MIN_REMAINING = 500
+MIN_RATE_LIMIT_BACKOFF_SECONDS = 60.0
+MAX_RATE_LIMIT_BACKOFF_SECONDS = 3600.0
 # A GitHub App installation token lives one hour. Re-mint with enough margin
 # that a token cannot expire between the check and the request that uses it,
 # including a slow paginated sweep.
@@ -202,9 +209,69 @@ def owner_of(path: str) -> str:
     as the wrong account.
     """
     parts = path.split("/")
-    if len(parts) < 4 or parts[1] != "repos":
+    if len(parts) < 4 or parts[1] != "repos" or not parts[2]:
         raise ValueError(f"cannot determine repository owner from path: {path}")
     return parts[2]
+
+
+def owner_of_repository(repository: str) -> str:
+    """Return the account segment of an `owner/repository` identifier."""
+    owner, separator, name = repository.partition("/")
+    if not separator or not owner or not name:
+        raise ValueError(f"cannot determine repository owner from: {repository}")
+    return owner
+
+
+def _header(headers: Any, name: str) -> str | None:
+    """Read an HTTP header case-insensitively across real and mock mappings."""
+    value = headers.get(name)
+    if value is not None or not isinstance(headers, dict):
+        return value
+    wanted = name.lower()
+    for key, candidate in headers.items():
+        if isinstance(key, str) and key.lower() == wanted:
+            return candidate
+    return None
+
+
+def _non_negative_int_header(headers: Any, name: str) -> int | None:
+    raw = _header(headers, name)
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        value = int(text)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+def parse_retry_after(value: str | None, *, now: float) -> float | None:
+    """Parse a Retry-After header (delta-seconds or RFC 7231 HTTP-date)."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        seconds = float(text)
+    except ValueError:
+        pass
+    else:
+        if math.isfinite(seconds) and seconds >= 0:
+            return seconds
+        return None
+    try:
+        retry_at = parsedate_to_datetime(text)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if retry_at is None:
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    return max(0.0, retry_at.timestamp() - now)
 
 
 def _b64url(raw: bytes) -> str:
@@ -467,7 +534,7 @@ class ExporterState:
         self.api_requests = Counter(
             "github_actions_exporter_api_requests_total",
             "GitHub API requests made by the exporter.",
-            ("endpoint", "status"),
+            ("owner", "endpoint", "status"),
             registry=registry,
         )
         self.api_rate_remaining = Gauge(
@@ -510,14 +577,15 @@ class ExporterState:
     def record_response(
         self, endpoint: str, response: requests.Response, owner: str = ""
     ) -> None:
-        self.api_requests.labels(endpoint, str(response.status_code)).inc()
+        owner_label = owner.casefold()
+        self.api_requests.labels(owner_label, endpoint, str(response.status_code)).inc()
         for header, metric in (
             ("x-ratelimit-remaining", self.api_rate_remaining),
             ("x-ratelimit-limit", self.api_rate_limit),
             ("x-ratelimit-used", self.api_rate_used),
             ("x-ratelimit-reset", self.api_rate_reset_timestamp),
         ):
-            value = response.headers.get(header)
+            value = _header(response.headers, header)
             if value is None:
                 continue
             try:
@@ -532,7 +600,41 @@ class ExporterState:
                         "GitHub returned an invalid rate-limit header: %s", header
                     )
                 else:
-                    metric.labels(owner).set(count)
+                    metric.labels(owner_label).set(count)
+
+
+SECONDARY_RATE_LIMIT_MARKERS = (
+    "secondary rate limit",
+    "secondary-rate-limits",
+    "abuse detection",
+    "abuse-rate-limits",
+)
+
+
+def _is_secondary_rate_limit_403(response: requests.Response) -> bool:
+    """Recognize GitHub's 403 secondary-limit body without matching permission errors."""
+    if response.status_code != 403:
+        return False
+    candidates: list[str] = []
+    json_method = getattr(response, "json", None)
+    if callable(json_method):
+        try:
+            payload = json_method()
+        except (ValueError, TypeError):
+            payload = None
+        if isinstance(payload, dict):
+            for field in ("message", "documentation_url"):
+                value = payload.get(field)
+                if isinstance(value, str):
+                    candidates.append(value)
+    if not candidates:
+        text = getattr(response, "text", None)
+        if isinstance(text, str) and text:
+            candidates.append(text)
+    if not candidates:
+        return False
+    combined = " ".join(candidates).casefold()
+    return any(marker in combined for marker in SECONDARY_RATE_LIMIT_MARKERS)
 
 
 class GitHubRequestError(RuntimeError):
@@ -540,27 +642,78 @@ class GitHubRequestError(RuntimeError):
 
     def __init__(self, endpoint: str, response: requests.Response) -> None:
         self.status_code = response.status_code
+        remaining = _non_negative_int_header(response.headers, "x-ratelimit-remaining")
+        has_rate_limit_retry_after = (
+            response.status_code in {403, 429}
+            and _header(response.headers, "retry-after") is not None
+        )
         self.rate_limited = (
             response.status_code == 429
-            or response.headers.get("x-ratelimit-remaining") == "0"
-            or response.headers.get("retry-after") is not None
+            or remaining == 0
+            or has_rate_limit_retry_after
+            or _is_secondary_rate_limit_403(response)
         )
-        request_id = response.headers.get("x-github-request-id", "unknown")
+        request_id = _header(response.headers, "x-github-request-id") or "unknown"
         super().__init__(
             f"GitHub {endpoint} request failed with HTTP {response.status_code} "
             f"(request {request_id})"
         )
 
 
+class GitHubRateLimitBackoffError(RuntimeError):
+    """Raised locally while an owner's installation quota is in reset backoff."""
+
+    def __init__(
+        self,
+        owner: str,
+        retry_after_seconds: float,
+        reset_epoch: int | None = None,
+    ) -> None:
+        self.owner = owner
+        self.retry_after_seconds = retry_after_seconds
+        self.reset_epoch = reset_epoch
+        if reset_epoch is not None:
+            try:
+                reset_text = datetime.fromtimestamp(reset_epoch, UTC).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+            except (OverflowError, OSError, ValueError):
+                # A malformed reset header must not replace this backoff error
+                # with one the poller's rate-limit handling does not catch.
+                reset_text = f"epoch {reset_epoch}"
+            detail = f"reset at {reset_text}, {retry_after_seconds:.1f}s remaining"
+        else:
+            detail = f"{retry_after_seconds:.1f}s remaining"
+        super().__init__(f"GitHub API backoff active for owner {owner} ({detail})")
+
+
 class GitHubPayloadError(RuntimeError):
     """A malformed GitHub response that callers may handle by endpoint role."""
 
 
+@dataclass
+class _OwnerQuotaState:
+    remaining: int | None = None
+    reset_epoch: int | None = None
+    blocked_until_monotonic: float = 0.0
+
+
 class GitHubAPI:
-    def __init__(self, config: Config, state: ExporterState) -> None:
+    def __init__(
+        self,
+        config: Config,
+        state: ExporterState,
+        *,
+        clock: Callable[[], float] | None = None,
+        monotonic: Callable[[], float] | None = None,
+    ) -> None:
         self.api_url = config.api_url
         self.state = state
         self.credentials = config.credentials
+        self._clock = clock
+        self._monotonic = monotonic
+        self._quota_lock = threading.Lock()
+        self._owner_quota: dict[str, _OwnerQuotaState] = {}
         self.session = requests.Session()
         # Authorization is deliberately NOT a session header: it is resolved
         # per request from the repository's owner, because one App can hold a
@@ -573,13 +726,130 @@ class GitHubAPI:
             }
         )
 
+    def _now_epoch(self) -> float:
+        return time.time() if self._clock is None else self._clock()
+
+    def _now_monotonic(self) -> float:
+        return time.monotonic() if self._monotonic is None else self._monotonic()
+
     def close(self) -> None:
         self.session.close()
+
+    def has_optional_quota(
+        self,
+        owner: str,
+        minimum_remaining: int = OPTIONAL_METADATA_MIN_REMAINING,
+    ) -> bool:
+        """Whether `owner` has enough observed core quota for optional calls."""
+        owner_key = owner.casefold()
+        with self._quota_lock:
+            quota = self._owner_quota.get(owner_key)
+            if quota is None:
+                return True
+            blocked_until = quota.blocked_until_monotonic
+            remaining = quota.remaining
+            reset_epoch = quota.reset_epoch
+        if blocked_until > 0.0 and self._now_monotonic() < blocked_until:
+            return False
+        if remaining is None:
+            return True
+        if reset_epoch is not None and self._now_epoch() >= reset_epoch:
+            return True
+        return remaining >= minimum_remaining
+
+    def _update_owner_quota(
+        self,
+        owner: str,
+        response: requests.Response,
+        *,
+        rate_limited_error: bool,
+    ) -> None:
+        headers = response.headers
+        remaining = _non_negative_int_header(headers, "x-ratelimit-remaining")
+        reset_epoch = _non_negative_int_header(headers, "x-ratelimit-reset")
+        raw_retry_after = _header(headers, "retry-after")
+        exhausted = remaining == 0
+
+        if (
+            not rate_limited_error
+            and not exhausted
+            and remaining is None
+            and reset_epoch is None
+        ):
+            return
+
+        now_epoch = self._now_epoch()
+        retry_after_delay = parse_retry_after(raw_retry_after, now=now_epoch)
+
+        owner_key = owner.casefold()
+        with self._quota_lock:
+            quota = self._owner_quota.setdefault(owner_key, _OwnerQuotaState())
+            effective_reset = (
+                reset_epoch
+                if reset_epoch is not None
+                else (quota.reset_epoch if exhausted else None)
+            )
+            reset_delay = (
+                max(0.0, float(effective_reset) - now_epoch)
+                if effective_reset is not None
+                else None
+            )
+
+            delay = 0.0
+            if exhausted:
+                delay = max(retry_after_delay or 0.0, reset_delay or 0.0)
+                if delay <= 0.0:
+                    delay = MIN_RATE_LIMIT_BACKOFF_SECONDS
+            elif rate_limited_error:
+                if remaining is not None and remaining > 0:
+                    # Secondary rate limit while primary quota remains: honour
+                    # Retry-After (or bounded minimum backoff), not the hourly
+                    # core quota reset timestamp.
+                    delay = (
+                        retry_after_delay
+                        if retry_after_delay is not None and retry_after_delay > 0.0
+                        else MIN_RATE_LIMIT_BACKOFF_SECONDS
+                    )
+                else:
+                    delay = max(retry_after_delay or 0.0, reset_delay or 0.0)
+                    if delay <= 0.0:
+                        delay = MIN_RATE_LIMIT_BACKOFF_SECONDS
+
+            delay = min(delay, MAX_RATE_LIMIT_BACKOFF_SECONDS)
+            if remaining is not None:
+                # The reset describes the window this count was observed in.
+                # Replace it together with the count (even when the header is
+                # missing) so an elapsed reset from an older window cannot
+                # make has_optional_quota ignore a fresh low count.
+                quota.remaining = remaining
+                quota.reset_epoch = reset_epoch
+            elif reset_epoch is not None:
+                quota.reset_epoch = reset_epoch
+            if delay > 0.0:
+                now_monotonic = self._now_monotonic()
+                quota.blocked_until_monotonic = max(
+                    quota.blocked_until_monotonic,
+                    now_monotonic + delay,
+                )
+            elif not rate_limited_error and (remaining is None or remaining > 0):
+                quota.blocked_until_monotonic = 0.0
 
     def get(
         self, path: str, *, endpoint: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         owner = owner_of(path)
+        owner_key = owner.casefold()
+        with self._quota_lock:
+            quota = self._owner_quota.get(owner_key)
+            if quota is not None and quota.blocked_until_monotonic > 0.0:
+                now_monotonic = self._now_monotonic()
+                if now_monotonic < quota.blocked_until_monotonic:
+                    raise GitHubRateLimitBackoffError(
+                        owner,
+                        quota.blocked_until_monotonic - now_monotonic,
+                        quota.reset_epoch,
+                    )
+                quota.blocked_until_monotonic = 0.0
         response = self.session.get(
             f"{self.api_url}{path}",
             params=params,
@@ -591,7 +861,12 @@ class GitHubAPI:
             try:
                 response.raise_for_status()
             except requests.HTTPError as exc:
-                raise GitHubRequestError(endpoint, response) from exc
+                error = GitHubRequestError(endpoint, response)
+                self._update_owner_quota(
+                    owner, response, rate_limited_error=error.rate_limited
+                )
+                raise error from exc
+            self._update_owner_quota(owner, response, rate_limited_error=False)
             payload = response.json()
             if not isinstance(payload, dict):
                 raise GitHubPayloadError(
@@ -910,7 +1185,7 @@ class Database:
             concurrency_group_rows = self.connection.execute(
                 """
                 SELECT DISTINCT repository, workflow, concurrency_group FROM jobs
-                WHERE concurrency_group != ?
+                WHERE concurrency_group NOT IN (?, 'none', 'unknown')
                 """,
                 (OVERFLOW_CONCURRENCY_GROUP_LABEL,),
             ).fetchall()
@@ -1043,7 +1318,9 @@ class Database:
                 (repository, run_id),
             )
 
-    def failing_pull_request_run_ids(self, repository: str) -> list[int]:
+    def failing_pull_request_run_ids(
+        self, repository: str, *, now: float | None = None
+    ) -> list[int]:
         """The failed pull_request runs no later success has cleared.
 
         These are the runs behind
@@ -1053,6 +1330,7 @@ class Database:
         placeholders = ",".join("?" for _ in PULL_REQUEST_FAILURE_CONCLUSIONS)
         run_ids: list[int] = []
         settled: set[str] = set()
+        now_epoch = time.time() if now is None else now
         for row in self.rows(
             f"""
             SELECT id, workflow, conclusion
@@ -1067,7 +1345,7 @@ class Database:
             (
                 repository,
                 *PULL_REQUEST_FAILURE_CONCLUSIONS,
-                time.time() - CONSECUTIVE_FAILURE_WINDOW_SECONDS,
+                now_epoch - CONSECUTIVE_FAILURE_WINDOW_SECONDS,
             ),
         ):
             if row["workflow"] in settled:
@@ -1243,7 +1521,13 @@ class Database:
                         completed_at = excluded.completed_at,
                         runner_group = excluded.runner_group,
                         execution = excluded.execution,
-                        concurrency_group = excluded.concurrency_group,
+                        concurrency_group = CASE
+                            WHEN excluded.concurrency_group NOT IN ('none', 'unknown')
+                                THEN excluded.concurrency_group
+                            WHEN jobs.concurrency_group NOT IN ('none', 'unknown')
+                                THEN jobs.concurrency_group
+                            ELSE excluded.concurrency_group
+                        END,
                         runs_on = excluded.runs_on,
                         runner_name = CASE
                             WHEN excluded.runner_name != '' THEN excluded.runner_name
@@ -1344,6 +1628,8 @@ class Database:
         Apply the same per-(repository, workflow) cardinality cap already
         used above for dynamic job names.
         """
+        if name in {"none", "unknown"}:
+            return name
         with self.lock:
             labels = self.concurrency_group_labels.setdefault(
                 (repository, workflow), set()
@@ -1834,12 +2120,26 @@ class Poller:
         database: Database,
         api: GitHubAPI,
         state: ExporterState,
+        *,
+        clock: Callable[[], float] | None = None,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         self.config = config
         self.database = database
         self.api = api
         self.state = state
+        self._clock = clock
+        self._monotonic = monotonic
         self.concurrency_groups_retry_after: dict[str, float] = {}
+        self.concurrency_groups_refresh_after: dict[str, dict[int, float]] = {}
+        self._concurrency_group_owner_cursor: dict[str, int] = {}
+        self._repo_concurrency_group_budget: dict[str, int] = {}
+        self._owner_concurrency_group_rollover: dict[str, int] = {}
+        self._current_repo_group_remaining = CONCURRENCY_GROUPS_PER_CYCLE_LIMIT
+        # Run IDs granted this repository's concurrency-group slots for the
+        # current run traversal; None lets any due run spend a remaining slot.
+        self._concurrency_group_grants: set[int] | None = None
+        self._in_refresh_all = False
         self.pull_request_recheck_after: dict[str, float] = {}
         self.pull_request_rechecked_at: dict[str, dict[int, float]] = {}
         for repository in config.repositories:
@@ -1849,12 +2149,90 @@ class Poller:
             )
             self.state.backfill_in_progress.labels(repository).set(0)
 
+    def _now_epoch(self) -> float:
+        return time.time() if self._clock is None else self._clock()
+
+    def _now_monotonic(self) -> float:
+        return time.monotonic() if self._monotonic is None else self._monotonic()
+
+    def _optional_metadata_allowed(self, repository: str) -> bool:
+        checker = getattr(self.api, "has_optional_quota", None)
+        if checker is None:
+            return True
+        return checker(owner_of_repository(repository)) is not False
+
+    def _allocate_cycle_concurrency_group_budgets(self) -> None:
+        self._repo_concurrency_group_budget.clear()
+        self._owner_concurrency_group_rollover.clear()
+        repos_by_owner: dict[str, list[str]] = {}
+        for repository in self.config.repositories:
+            owner_key = owner_of_repository(repository).casefold()
+            repos_by_owner.setdefault(owner_key, []).append(repository)
+
+        limit = max(0, CONCURRENCY_GROUPS_PER_CYCLE_LIMIT)
+        for owner_key, owner_repos in repos_by_owner.items():
+            count = len(owner_repos)
+            base, remainder = divmod(limit, count)
+            cursor = self._concurrency_group_owner_cursor.get(owner_key, 0) % count
+            self._concurrency_group_owner_cursor[owner_key] = (cursor + 1) % count
+            extra_indices = {(cursor + offset) % count for offset in range(remainder)}
+            for index, repository in enumerate(owner_repos):
+                self._repo_concurrency_group_budget[repository] = base + (
+                    1 if index in extra_indices else 0
+                )
+
+    def _grant_concurrency_group_lookups(
+        self, repository: str, runs: Sequence[dict[str, Any]]
+    ) -> set[int]:
+        """Choose which active runs spend this repository's lookup slots.
+
+        Traversal order is stable newest-first, so spending slots as runs are
+        visited would let the same newest runs take every slot each time their
+        refresh timers expire and leave older active runs `unknown`. Grant
+        never-probed runs first, then the least recently probed.
+        """
+        budget = self._current_repo_group_remaining
+        if budget <= 0:
+            return set()
+        listed_active = {
+            int(run["id"]) for run in runs if run.get("status") in ACTIVE_STATUSES
+        }
+        listed_inactive = {int(run["id"]) for run in runs} - listed_active
+        candidates = (
+            listed_active | self.database.active_run_ids(repository)
+        ) - listed_inactive
+        now = self._now_monotonic()
+        refresh_after = self.concurrency_groups_refresh_after.get(repository, {})
+        # Ties keep listing order; persisted runs missing from the listing
+        # follow it, oldest-ID first.
+        position = {int(run["id"]): index for index, run in enumerate(runs)}
+        due = sorted(
+            (run_id for run_id in candidates if now >= refresh_after.get(run_id, 0.0)),
+            key=lambda run_id: (
+                refresh_after.get(run_id, 0.0),
+                position.get(run_id, len(position)),
+                run_id,
+            ),
+        )
+        return set(due[:budget])
+
     def refresh_repository(self, repository: str) -> None:
+        owner_key = owner_of_repository(repository).casefold()
+        if self._in_refresh_all:
+            self._current_repo_group_remaining = (
+                self._repo_concurrency_group_budget.get(repository, 0)
+                + self._owner_concurrency_group_rollover.get(owner_key, 0)
+            )
+        else:
+            self._current_repo_group_remaining = max(
+                0, CONCURRENCY_GROUPS_PER_CYCLE_LIMIT
+            )
         initial = not self.database.backfill_complete(repository)
         if initial:
             self.state.backfill_in_progress.labels(repository).set(1)
         try:
-            now = datetime.now(UTC)
+            now_epoch = self._now_epoch()
+            now = datetime.fromtimestamp(now_epoch, UTC)
             overlap = timedelta(minutes=self.config.overlap_minutes)
             if initial:
                 cutoff = now - timedelta(hours=self.config.backfill_hours)
@@ -1867,6 +2245,9 @@ class Poller:
                 )
                 cutoff = min(now - overlap, recovery_cutoff)
             runs = self.api.list_runs(repository, cutoff, now)
+            self._concurrency_group_grants = self._grant_concurrency_group_lookups(
+                repository, runs
+            )
             discovered_ids: set[int] = set()
             for run in runs:
                 discovered_ids.add(int(run["id"]))
@@ -1890,6 +2271,9 @@ class Poller:
                     self.database.mark_run_missing(repository, run_id)
                     continue
                 self._store_run(repository, run)
+            # Every granted run has had its turn; slots a granted run left
+            # unspent (it completed, or its jobs fetch failed) stay available.
+            self._concurrency_group_grants = None
 
             # A rerun keeps its run's created_at, so one started after the
             # overlap is never listed again and its run is no longer active.
@@ -1903,14 +2287,15 @@ class Poller:
             # newest would never reach the rerun of an older failure once
             # more runs than the cap were failing, and would let one noisy
             # workflow starve another's.
-            recheck_at = time.monotonic()
-            if recheck_at >= self.pull_request_recheck_after.get(repository, 0):
-                self.pull_request_recheck_after[repository] = (
-                    recheck_at + PULL_REQUEST_RECHECK_SECONDS
-                )
+            recheck_at = self._now_monotonic()
+            if recheck_at >= self.pull_request_recheck_after.get(
+                repository, 0
+            ) and self._optional_metadata_allowed(repository):
                 candidates = [
                     run_id
-                    for run_id in self.database.failing_pull_request_run_ids(repository)
+                    for run_id in self.database.failing_pull_request_run_ids(
+                        repository, now=now_epoch
+                    )
                     if run_id not in discovered_ids and run_id not in persisted_ids
                 ]
                 previous = self.pull_request_rechecked_at.get(repository, {})
@@ -1919,19 +2304,54 @@ class Poller:
                     candidates,
                     key=lambda run_id: previous.get(run_id, float("-inf")),
                 )[:PULL_REQUEST_RECHECK_LIMIT]
-                self.pull_request_rechecked_at[repository] = {
-                    run_id: recheck_at if run_id in due else previous[run_id]
-                    for run_id in candidates
-                    if run_id in due or run_id in previous
-                }
-                for run_id in due:
-                    try:
-                        run = self.api.get_run(repository, run_id)
-                    except GitHubRequestError as exc:
-                        if exc.status_code != 404:
+                attempted: set[int] = set()
+                halted_for_quota = False
+                try:
+                    for run_id in due:
+                        if not self._optional_metadata_allowed(repository):
+                            halted_for_quota = True
+                            break
+                        try:
+                            run = self.api.get_run(repository, run_id)
+                        except GitHubRateLimitBackoffError:
+                            halted_for_quota = True
                             raise
-                        continue
-                    self._store_run(repository, run)
+                        except GitHubRequestError as exc:
+                            if exc.rate_limited:
+                                halted_for_quota = True
+                                raise
+                            attempted.add(run_id)
+                            if exc.status_code != 404:
+                                self._record_pull_request_recheck_failure(
+                                    repository, run_id, exc
+                                )
+                            continue
+                        except (GitHubPayloadError, requests.RequestException) as exc:
+                            attempted.add(run_id)
+                            self._record_pull_request_recheck_failure(
+                                repository, run_id, exc
+                            )
+                            continue
+                        attempted.add(run_id)
+                        try:
+                            self._store_run(repository, run)
+                        except GitHubRateLimitBackoffError:
+                            halted_for_quota = True
+                            raise
+                        except GitHubRequestError as exc:
+                            if exc.rate_limited:
+                                halted_for_quota = True
+                            raise
+                finally:
+                    self.pull_request_rechecked_at[repository] = {
+                        run_id: recheck_at if run_id in attempted else previous[run_id]
+                        for run_id in candidates
+                        if run_id in attempted or run_id in previous
+                    }
+                    if not halted_for_quota:
+                        self.pull_request_recheck_after[repository] = (
+                            recheck_at + PULL_REQUEST_RECHECK_SECONDS
+                        )
 
             for run_id, attempts in self.database.run_attempt_gaps(repository):
                 for attempt in attempts:
@@ -1940,10 +2360,24 @@ class Poller:
                         self.api.get_run_attempt(repository, run_id, attempt),
                     )
 
+            tracked_groups = self.concurrency_groups_refresh_after.get(repository)
+            if tracked_groups:
+                active_ids = self.database.active_run_ids(repository)
+                self.concurrency_groups_refresh_after[repository] = {
+                    run_id: refresh_after
+                    for run_id, refresh_after in tracked_groups.items()
+                    if run_id in active_ids
+                }
+
             success_at = self.database.record_refresh_success(
-                repository, initial=initial
+                repository, initial=initial, timestamp=self._now_epoch()
             )
         finally:
+            self._concurrency_group_grants = None
+            if self._in_refresh_all:
+                self._owner_concurrency_group_rollover[owner_key] = (
+                    self._current_repo_group_remaining
+                )
             if initial:
                 self.state.backfill_in_progress.labels(repository).set(0)
         self.state.last_success.labels(repository).set(success_at)
@@ -1978,12 +2412,24 @@ class Poller:
             groups = None
             if run.get("status") in ACTIVE_STATUSES:
                 groups = []
-                now = time.monotonic()
-                if now >= self.concurrency_groups_retry_after.get(repository, 0):
+                now = self._now_monotonic()
+                run_id = int(run["id"])
+                run_refresh_after = self.concurrency_groups_refresh_after.get(
+                    repository, {}
+                ).get(run_id, 0.0)
+                grants = self._concurrency_group_grants
+                if (
+                    (grants is None or run_id in grants)
+                    and now >= self.concurrency_groups_retry_after.get(repository, 0)
+                    and now >= run_refresh_after
+                    and self._current_repo_group_remaining > 0
+                    and self._optional_metadata_allowed(repository)
+                ):
+                    self._current_repo_group_remaining -= 1
                     try:
-                        groups = self.api.list_concurrency_groups(
-                            repository, int(run["id"])
-                        )
+                        groups = self.api.list_concurrency_groups(repository, run_id)
+                    except GitHubRateLimitBackoffError:
+                        raise
                     except GitHubRequestError as exc:
                         # A shared primary or secondary rate limit applies to
                         # the core endpoints too. Abort the repository refresh
@@ -1992,15 +2438,19 @@ class Poller:
                         if exc.rate_limited:
                             raise
                         self._record_optional_metadata_failure(
-                            repository, int(run["id"]), now, exc
+                            repository, run_id, now, exc
                         )
                     except (GitHubPayloadError, requests.RequestException) as exc:
                         # Concurrency groups enrich labels but do not determine job
                         # status. Do not discard a successfully fetched core jobs
                         # snapshot when this optional endpoint is unavailable.
                         self._record_optional_metadata_failure(
-                            repository, int(run["id"]), now, exc
+                            repository, run_id, now, exc
                         )
+                    else:
+                        self.concurrency_groups_refresh_after.setdefault(
+                            repository, {}
+                        )[run_id] = now + CONCURRENCY_GROUPS_REFRESH_SECONDS
             self.database.upsert_jobs(repository, run, jobs, groups)
 
     def _record_jobs_failure(
@@ -2009,6 +2459,18 @@ class Poller:
         self.state.poll_errors.labels(repository, "jobs").inc()
         LOGGER.warning(
             "jobs refresh failed for %s run %s (%s); retrying next cycle",
+            repository,
+            run_id,
+            error,
+        )
+
+    def _record_pull_request_recheck_failure(
+        self, repository: str, run_id: int, error: Exception
+    ) -> None:
+        self.state.poll_errors.labels(repository, "pull_request_recheck").inc()
+        LOGGER.warning(
+            "optional pull-request rerun check failed for %s run %s (%s); "
+            "retaining stored run state",
             repository,
             run_id,
             error,
@@ -2030,19 +2492,42 @@ class Poller:
         )
 
     def refresh_all(self) -> None:
-        for repository in self.config.repositories:
-            try:
-                self.refresh_repository(repository)
-            except Exception:
-                self.state.poll_errors.labels(repository, "refresh").inc()
-                LOGGER.exception("failed to refresh %s", repository)
+        self._allocate_cycle_concurrency_group_budgets()
+        self._in_refresh_all = True
+        try:
+            for repository in self.config.repositories:
+                try:
+                    self.refresh_repository(repository)
+                except GitHubRateLimitBackoffError as exc:
+                    self.state.poll_errors.labels(repository, "rate_limit").inc()
+                    LOGGER.warning(
+                        "skipping %s while GitHub quota backoff is active: %s",
+                        repository,
+                        exc,
+                    )
+                except GitHubRequestError as exc:
+                    if exc.rate_limited:
+                        self.state.poll_errors.labels(repository, "rate_limit").inc()
+                        LOGGER.warning(
+                            "rate-limited while refreshing %s: %s",
+                            repository,
+                            exc,
+                        )
+                    else:
+                        self.state.poll_errors.labels(repository, "refresh").inc()
+                        LOGGER.exception("failed to refresh %s", repository)
+                except Exception:
+                    self.state.poll_errors.labels(repository, "refresh").inc()
+                    LOGGER.exception("failed to refresh %s", repository)
+        finally:
+            self._in_refresh_all = False
 
     def run_forever(self, after_refresh: Callable[[], None]) -> None:
         while True:
-            started = time.monotonic()
+            started = self._now_monotonic()
             self.refresh_all()
             after_refresh()
-            elapsed = time.monotonic() - started
+            elapsed = self._now_monotonic() - started
             time.sleep(max(1, self.config.poll_interval_seconds - elapsed))
 
 

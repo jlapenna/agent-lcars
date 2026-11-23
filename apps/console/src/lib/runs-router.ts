@@ -12,6 +12,7 @@ import {
   type DeliveryBinding,
   deliveryWaiting,
   externalizeRunMessage,
+  type GithubAnchor,
   isLive,
   isRefusal,
   isWorkAnchor,
@@ -122,6 +123,12 @@ export interface RunsContext {
     anchor: IssueReference,
     repository?: string,
   ) => Promise<GithubAnchorLifecycle | undefined>;
+  /** Post-settlement PR follow-up (automatic remediation after blocking review,
+   * or cross-model re-review after a remediation push held the PR lock). */
+  reconcilePullRequestRemediation?: (
+    anchor: GithubAnchor,
+    options?: { afterRun?: Run },
+  ) => Promise<unknown>;
   /** Injected clock: every timestamp this router stamps (`requireRunToken`'s
    *  lease-expiry check, `claim`'s `claimedAt`, `checkoutToken`'s
    *  `expiresAt`) must be deterministic under test, not tied to wall-clock
@@ -1155,19 +1162,21 @@ export const runsRouter = os.router({
           'A delivery correction must publish its freshly marked PR or explicitly park',
       });
     let delivery: DeliveryBinding | undefined;
+    const reference = result.ref?.match(/\/pull\/(\d+)$/u);
+    const samePullRequestAnchor =
+      reference !== undefined &&
+      reference !== null &&
+      !isWorkAnchor(run.task) &&
+      run.task.issue === Number(reference[1]);
     if (
       result.ok &&
-      result.ref?.match(/\/pull\/\d+$/u) &&
+      reference !== undefined &&
+      reference !== null &&
+      !samePullRequestAnchor &&
       result.summary !== 'park' &&
       run.params?.mode !== 'review'
     ) {
-      const reference = result.ref?.match(/\/pull\/(\d+)$/u);
-      if (
-        task === undefined ||
-        target === undefined ||
-        reference === undefined ||
-        reference === null
-      )
+      if (task === undefined || target === undefined)
         throw new ORPCError('CONFLICT', {
           message: 'Ready delivery evidence missing',
         });
@@ -1272,6 +1281,29 @@ export const runsRouter = os.router({
         if (usesCodexCredentials(run)) {
           await releaseCodexCredentialLease(context, run);
         }
+      }
+      if (
+        !isRefusal(settled) &&
+        !isWorkAnchor(run.task) &&
+        context.reconcilePullRequestRemediation !== undefined
+      ) {
+        const taskAnchor = run.task;
+        await context.store
+          .readGithubAnchorProjection(taskAnchor)
+          .then((projection) =>
+            projection?.kind === 'issue'
+              ? undefined
+              : context.reconcilePullRequestRemediation?.(taskAnchor, {
+                  afterRun: settled.run ?? run,
+                }),
+          )
+          .catch((error: unknown) => {
+            logger.warn(
+              'agent-lcars: post-completion PR remediation check failed for %s:',
+              run.runId,
+              error,
+            );
+          });
       }
     }
     return {

@@ -1,5 +1,5 @@
 // Accept observable native delegation and source-bound artifacts, not a model's
-// unsupported assertion that it performed four independent reviews.
+// unsupported assertion that it performed independent review passes.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -21,18 +21,18 @@ export function evaluateReview({
   require(receipt?.complete === true, 'procedure-incomplete');
   require(receipt?.head === manifest.reviewedHead, 'receipt-head-mismatch');
   const reviewers = receipt?.reviewers ?? [];
-  const roles = ['guidance-a', 'guidance-b', 'bugs-a', 'bugs-b'];
-  require(reviewers.length === 4 &&
+  const roles = ['guardrails', 'bugs'];
+  require(reviewers.length === 2 &&
     roles.every(
       (role) =>
         reviewers.filter(
           (reviewer) => reviewer.role === role && reviewer.complete === true,
         ).length === 1,
-    ), 'four-complete-review-passes-required');
+    ), 'two-complete-review-passes-required');
   const canonical = (id) => native?.canonicalIds?.[id] ?? id;
   const ids = reviewers.map((reviewer) => canonical(reviewer.nativeSessionId));
   require(ids.every((id) => typeof id === 'string' && id.length) &&
-    new Set(ids).size === 4, 'reviewer-identities-not-distinct');
+    new Set(ids).size === 2, 'reviewer-identities-not-distinct');
   const observed = new Set(native?.completedChildren ?? []);
   require(ids.every((id) =>
     observed.has(id),
@@ -86,6 +86,18 @@ export function evaluateReview({
   require(Array.isArray(
     payload?.comments,
   ), 'inline-comment-inventory-required');
+  const isPassingVerdict =
+    payload?.event === 'APPROVE' ||
+    (typeof payload?.body === 'string' &&
+      payload.body
+        .split('\n')
+        .some(
+          (line) => line.replace(/\r$/, '') === '<!-- lcars-review:pass -->',
+        ));
+  require(!isPassingVerdict ||
+    (Array.isArray(payload?.comments) &&
+      payload.comments.length ===
+        0), 'passing-review-must-not-open-inline-threads');
   return {
     passed: failures.length === 0,
     failures,

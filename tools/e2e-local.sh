@@ -247,9 +247,16 @@ if [ -n "$CALLER_HOME" ]; then
       ;;
     *) corepack_cache="$CALLER_HOME/.cache/node/corepack" ;;
   esac
+  # SWC materializes its native addon into a user cache and refuses a cache
+  # root with a parent another user can write. The isolated HOME lives under
+  # TMPDIR, which on a workstation can sit inside a group-writable tree, so
+  # SWC then fails to load ("Failed to load native binding") while Nx
+  # transpiles playwright.config.ts. Use the caller's conventional SWC cache;
+  # SWC still falls back to its defaults when that root is not safe.
   SAFE_ENV+=(
     "COREPACK_HOME=$corepack_cache"
     "FIREBASE_EMULATORS_PATH=$CALLER_HOME/.cache/firebase/emulators"
+    "SWC_NATIVE_BINDING_CACHE=$CALLER_HOME/.cache/swc-native-$(id -u)"
   )
 fi
 

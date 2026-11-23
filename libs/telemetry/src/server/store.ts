@@ -225,6 +225,53 @@ export interface ListSessionDocsOptions {
   exhaustive?: boolean;
 }
 
+function readSessionSnapshot(snapshot: QueryDocumentSnapshot): SessionDoc {
+  const data = snapshot.data();
+  const expireAt = data['expireAt'];
+  return parseSessionDoc({
+    ...data,
+    ...(expireAt instanceof Timestamp && {
+      expireAt: expireAt.toDate().toISOString(),
+    }),
+  });
+}
+
+/** Firestore's maximum number of values in one `in` filter. */
+const IN_FILTER_MAX = 30;
+
+/**
+ * The session docs of the given runs (`IssueAgentSessionDoc.runId`), read by
+ * key. A page joins telemetry to the few dozen runs it renders; listing the
+ * activity window instead reads every session in it (hundreds a day). The
+ * automatic single-field `runId` index serves the `in` filter, so this needs
+ * no composite index. A run can hold several sessions (one per provider
+ * session, including subagents); every one is returned.
+ */
+export async function listSessionDocsByRunIds(
+  firestore: Firestore,
+  runIds: Iterable<string>,
+): Promise<SessionDoc[]> {
+  const unique = [...new Set(runIds)];
+  const chunks: string[][] = [];
+  for (let start = 0; start < unique.length; start += IN_FILTER_MAX) {
+    chunks.push(unique.slice(start, start + IN_FILTER_MAX));
+  }
+  const collection = firestore.collection(SESSIONS_COLLECTION);
+  const pages = await Promise.all(
+    chunks.map(async (chunk) => {
+      const docs: SessionDoc[] = [];
+      const snapshots = collection
+        .where('runId', 'in', chunk)
+        .stream() as unknown as AsyncIterable<QueryDocumentSnapshot>;
+      for await (const snapshot of snapshots) {
+        docs.push(readSessionSnapshot(snapshot));
+      }
+      return docs;
+    }),
+  );
+  return pages.flat();
+}
+
 /**
  * Lists session docs in the `agent-telemetry` database, newest activity
  * first. Read-only by design (the console's SA cannot write - see
@@ -271,14 +318,7 @@ export async function listSessionDocs(
   const snapshots =
     query.stream() as unknown as AsyncIterable<QueryDocumentSnapshot>;
   for await (const snapshot of snapshots) {
-    const data = snapshot.data();
-    const expireAt = data['expireAt'];
-    const doc = parseSessionDoc({
-      ...data,
-      ...(expireAt instanceof Timestamp && {
-        expireAt: expireAt.toDate().toISOString(),
-      }),
-    });
+    const doc = readSessionSnapshot(snapshot);
     if (options.exhaustive) {
       docs.push(doc);
       continue;

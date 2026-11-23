@@ -41,20 +41,21 @@ interface ModelRates {
 }
 
 /**
- * Published Claude API per-million-token USD rates, keyed by the model-id
- * *prefix* that names a family+version regardless of its dated snapshot
- * suffix — e.g. `'claude-opus-4-1'` matches both the bare alias and the
- * pinned `'claude-opus-4-1-20250805'`. See {@link resolveModelRates} for the
- * matching rule; no key here is a prefix of another, so which one matches a
- * given model id is never ambiguous.
+ * Published first-party Claude, OpenAI (Codex), and Google Gemini (Antigravity)
+ * API per-million-token USD rates, keyed by the model-id *prefix* that names a
+ * family+version regardless of its dated snapshot or reasoning-effort suffix —
+ * e.g. `'claude-opus-4-1'` matches `'claude-opus-4-1-20250805'` and
+ * `'gemini-4-neon'` matches `'gemini-4-neon-high'`. See {@link resolveModelRates}
+ * for the longest-prefix matching rule.
  *
- * Retired-except-Bedrock/Google-Cloud model generations (Claude Opus 4,
- * Sonnet 4, Haiku 3.5 and earlier) are intentionally omitted — this repo's
- * sessions only ever run the first-party Claude API, so a session predating
- * this table would already have no confirmed model-id string to key off of.
+ * Retired-except-Bedrock/Google-Cloud Claude generations (Claude Opus 4,
+ * Sonnet 4, Haiku 3.5 and earlier) and local gateway aliases (`homelab/default`)
+ * are intentionally omitted so sessions without a published first-party model
+ * rate stay unmeasured (`undefined`) rather than reporting fabricated $0 spend.
  *
  * @see https://platform.claude.com/docs/en/about-claude/pricing#model-pricing
- * @see https://platform.claude.com/docs/en/about-claude/models/overview
+ * @see https://openai.com/api/pricing/
+ * @see https://ai.google.dev/gemini-api/docs/pricing
  */
 const MODEL_RATES: Record<string, ModelRates> = {
   'claude-fable-5': {
@@ -105,10 +106,7 @@ const MODEL_RATES: Record<string, ModelRates> = {
     cacheReadPerMillion: 1.5,
     outputPerMillion: 75,
   },
-  // Introductory pricing, in effect through 2026-08-31 (see the pricing
-  // doc's "claude-sonnet-5-introductory-pricing" note) — reverts to the
-  // standard $3/$15 (matching claude-sonnet-4-5/4-6) on 2026-09-01. Update
-  // this entry once that date passes.
+  // Anthropic made the $2/$10 rate permanent for Claude Sonnet 5.
   'claude-sonnet-5': {
     inputPerMillion: 2,
     cacheWritePerMillion: 2.5,
@@ -133,6 +131,98 @@ const MODEL_RATES: Record<string, ModelRates> = {
     cacheReadPerMillion: 0.1,
     outputPerMillion: 5,
   },
+  // OpenAI GPT-6 / GPT-5.6 standard-tier API pricing (Codex CLI).
+  // `codexAdapter` normalizes `inputTokens` to non-cached input and
+  // `cacheReadTokens` to `cached_input_tokens`.
+  'gpt-6.2-astra': {
+    inputPerMillion: 8,
+    cacheWritePerMillion: 10,
+    cacheReadPerMillion: 0.4,
+    outputPerMillion: 40,
+  },
+  'gpt-6-astra': {
+    inputPerMillion: 10,
+    cacheWritePerMillion: 12.5,
+    cacheReadPerMillion: 1,
+    outputPerMillion: 50,
+  },
+  'gpt-6.2-sol': {
+    inputPerMillion: 2,
+    cacheWritePerMillion: 2.5,
+    cacheReadPerMillion: 0.1,
+    outputPerMillion: 10,
+  },
+  'gpt-6.1-sol': {
+    inputPerMillion: 2,
+    cacheWritePerMillion: 2.5,
+    cacheReadPerMillion: 0.1,
+    outputPerMillion: 10,
+  },
+  'gpt-6-sol': {
+    inputPerMillion: 2,
+    cacheWritePerMillion: 2.5,
+    cacheReadPerMillion: 0.1,
+    outputPerMillion: 10,
+  },
+  'gpt-6.1-terra': {
+    inputPerMillion: 1,
+    cacheWritePerMillion: 1.25,
+    cacheReadPerMillion: 0.05,
+    outputPerMillion: 5,
+  },
+  'gpt-6-luna': {
+    inputPerMillion: 0.1,
+    cacheWritePerMillion: 0.125,
+    cacheReadPerMillion: 0.01,
+    outputPerMillion: 0.5,
+  },
+  'gpt-5.6-sol': {
+    inputPerMillion: 4,
+    cacheWritePerMillion: 4,
+    cacheReadPerMillion: 0.4,
+    outputPerMillion: 20,
+  },
+  'gpt-5.6-terra': {
+    inputPerMillion: 2,
+    cacheWritePerMillion: 2,
+    cacheReadPerMillion: 0.2,
+    outputPerMillion: 12,
+  },
+  'gpt-5.6-luna': {
+    inputPerMillion: 0.2,
+    cacheWritePerMillion: 0.2,
+    cacheReadPerMillion: 0.02,
+    outputPerMillion: 1.2,
+  },
+  // Google Gemini 4 standard-tier API pricing (Antigravity CLI).
+  // Longest-prefix match resolves effort-suffixed ids (`gemini-4-neon-high`,
+  // `gemini-4-argon-medium`, `gemini-4-carbon-medium`). Argon and Carbon carry
+  // Google's introductory $2/$0.10/$10 rate through 2026-11-30 (scheduled to
+  // move to $4/$0.20/$20 on 2026-12-01).
+  'gemini-4-neon': {
+    inputPerMillion: 3,
+    cacheWritePerMillion: 3,
+    cacheReadPerMillion: 0.15,
+    outputPerMillion: 15,
+  },
+  'gemini-4-argon': {
+    inputPerMillion: 2,
+    cacheWritePerMillion: 2,
+    cacheReadPerMillion: 0.1,
+    outputPerMillion: 10,
+  },
+  'gemini-4-carbon': {
+    inputPerMillion: 2,
+    cacheWritePerMillion: 2,
+    cacheReadPerMillion: 0.1,
+    outputPerMillion: 10,
+  },
+  'gemini-4-hydrogen': {
+    inputPerMillion: 1.5,
+    cacheWritePerMillion: 1.5,
+    cacheReadPerMillion: 0.075,
+    outputPerMillion: 7.5,
+  },
 };
 
 /** Longest-prefix match of `model` against {@link MODEL_RATES}'s keys, so a
@@ -150,13 +240,13 @@ function resolveModelRates(model: string): ModelRates | undefined {
 }
 
 /**
- * Estimated USD cost of a session's token usage, from published Claude API
- * market rates (see {@link MODEL_RATES}) — the cost ledger's fallback for a
- * session whose transcript never reported a real `costUSD` line (see
- * reducer.ts's `applyLine`), which is the norm for an OAuth/subscription-
- * billed run rather than an API-key-metered one. Cache creation is priced
- * at the 5-minute write rate, the same simplification {@link totalTokens}
- * already makes, since `TokenUsage` doesn't track cache TTL.
+ * Estimated USD cost of a session's token usage, from published first-party
+ * model market rates (see {@link MODEL_RATES}) — the cost ledger's fallback for
+ * a session whose transcript never reported a real `costUSD` line (see
+ * reducer.ts's `applyLine`), which is the norm for OAuth/subscription-billed
+ * Claude, Codex, and Antigravity runs rather than API-key-metered ones. Cache
+ * creation is priced at the short-TTL write rate, the same simplification
+ * {@link totalTokens} already makes, since `TokenUsage` doesn't track cache TTL.
  *
  * Returns `undefined` when `model` is absent or names a model this table
  * has no rate for, so a session with genuinely unknown pricing stays

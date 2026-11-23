@@ -227,6 +227,10 @@ test('tool caches stay durable while HOME remains isolated', () => {
     callerHome,
     '.cache/firebase/emulators',
   );
+  const expectedSwcCache = path.join(
+    callerHome,
+    `.cache/swc-native-${process.getuid()}`,
+  );
   const probe = `
     if (process.env.HOME === ${JSON.stringify(callerHome)}) process.exit(9);
     if (process.env.COREPACK_HOME !== ${JSON.stringify(expectedCorepackHome)}) {
@@ -234,6 +238,9 @@ test('tool caches stay durable while HOME remains isolated', () => {
     }
     if (process.env.FIREBASE_EMULATORS_PATH !== ${JSON.stringify(expectedFirebaseHome)}) {
       process.exit(11);
+    }
+    if (process.env.SWC_NATIVE_BINDING_CACHE !== ${JSON.stringify(expectedSwcCache)}) {
+      process.exit(12);
     }
     process.stdout.write('tool caches verified\\n');
   `;

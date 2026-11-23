@@ -381,7 +381,6 @@ the work that has stopped, and the work in flight.
   | ---- | -------------------- | ---------------- | ------------------------------------------------------ |
   | 0    | `needs-human`        | Human needed     | An agent parked with a question (`status:needs-human`) |
   | 0    | `review-requested`   | Review requested | A PR is awaiting the maintainer's review               |
-  | 0    | `merge-blocked`      | Merge blocked    | A PR is ready in principle but cannot merge            |
   | 1    | `ready-for-agent`    | Ready for agent  | Labeled `status:ready-for-agent` but not dispatched    |
   | 1    | `run-failed`         | Run failed       | The agent run failed                                   |
   | 1    | `silent-error`       | Silent error     | The run ended "successfully" without evidence          |
@@ -904,15 +903,21 @@ CLI sessions and dispatched runs.
   (`app/artifact-viewer.tsx`, #2631). The browser fetches the preview
   directly from the LAN-only share host, so previews work only on the
   operator's network; other file types stay link-only.
-- **FE-SE-4 [Shipped]** Transcripts render (`TranscriptTimelineView`, from GCS)
-  for dispatched `issue-agent` sessions whose agent is in
-  `RENDERABLE_TRANSCRIPT_AGENTS`: Claude Code, Codex, OpenCode (archived
-  OpenCode exports, #2253), and Antigravity (#3226). An archive that is none of
-  these shows "Session archive
-  stored ({agent} format) — not yet renderable". CLI Claude Code/Codex
-  sessions use the same timeline only when their doc already carries an
-  unexpired CLI archive pointer within the 5 MiB bound; otherwise detail shows
-  not-enabled or unavailable. The explicit `lcars session archive --consent`
+- **FE-SE-4 [Shipped]** Transcripts render (`TranscriptTimelineView` and
+  `PaginatedTranscriptView`, from GCS) for dispatched `issue-agent` sessions
+  whose agent is in `RENDERABLE_TRANSCRIPT_AGENTS`: Claude Code, Codex,
+  OpenCode (archived OpenCode exports, #2253), and Antigravity (#3226). SSR
+  renders the first page (a `512 KiB` initial JSONL read window, which grows
+  to finish a record longer than the window, or `500` OpenCode events,
+  collapsing single-page transcripts above 400 events), and subsequent pages
+  load incrementally via `/api/sessions/[id]/transcript` with snapshot-bound
+  cursors and cross-page subagent/turn continuity (#3404). An archive that is
+  none of these shows "Session archive stored ({agent} format) — not yet
+  renderable". CLI Claude Code, Codex, and Antigravity sessions use the same
+  paginated timeline only when their doc already carries an unexpired CLI
+  archive pointer (streamed at capture within the 512 MiB file and 32 MiB
+  single-line safety ceilings); otherwise detail shows not-enabled or
+  unavailable. The explicit `lcars session archive --consent`
   writer creates one current-session snapshot, with a seven-day reader expiry,
   deployed lifecycle prerequisite and revocation. The installed writer and real
   upload, Console rendering, revocation and object deletion are qualified
@@ -980,6 +985,7 @@ CLI sessions and dispatched runs.
 | `/api/work/v1/costs/budget`                                                 | `costs.reader` Work grant                                                                                | Optional fixed-selection cost budget readout for operator integrations                                                                                            |
 | `/api/inbox-notifications`                                                  | admin session                                                                                            | Inbox notification snapshot for open-tab polling (FE-IN-10)                                                                                                       |
 | `/api/inbox-push`                                                           | admin session cookie and same-origin `Origin`                                                            | `POST` only: the service worker's re-check after a push, returning the current decisions for that browser; subscriptions are managed by server actions (FE-IN-10) |
+| `/api/sessions/[id]/transcript`                                             | admin session                                                                                            | `GET` only: the next transcript page for a snapshot-bound cursor (`Cache-Control: private, no-store`); `410` when CLI consent expired or was revoked (FE-SE-4)    |
 | `/api/quick-task-evidence/v1/[id]`                                          | capability ID                                                                                            | Screenshot evidence bytes; revocable                                                                                                                              |
 | `/api/logs/error`                                                           | public                                                                                                   | Browser error reporting                                                                                                                                           |
 | `/manifest.webmanifest`                                                     | public                                                                                                   | Web app manifest that makes the console installable (§4)                                                                                                          |
