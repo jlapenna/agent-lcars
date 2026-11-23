@@ -6,9 +6,13 @@ import {
   elideTranscriptTimeline,
   isElisionDivider,
   isRenderableTranscriptAgent,
+  mergeTranscriptTimelinePages,
   parseTranscriptTimeline,
+  parseTranscriptTimelineChunk,
+  type TranscriptPageParseState,
   type TranscriptTimelineEvent,
 } from './transcript-timeline';
+import type { SessionAgent } from './types';
 
 function readFixture(name: string): string {
   return fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
@@ -337,6 +341,430 @@ describe('parseTranscriptTimeline', () => {
       hadUnparseableLines: false,
     });
   });
+});
+
+describe('parseTranscriptTimelineChunk & mergeTranscriptTimelinePages', () => {
+  function paginateBuffer(
+    raw: string,
+    pageBytes: number,
+    agent: SessionAgent = 'claude-code',
+  ) {
+    const full = Buffer.from(raw, 'utf8');
+    let offset = 0;
+    let state: TranscriptPageParseState = {};
+    let merged: (
+      | TranscriptTimelineEvent
+      | ReturnType<typeof elideTranscriptTimeline>[number]
+    )[] = [];
+    let hadUnparseableLines = false;
+    let pages = 0;
+
+    while (offset < full.length) {
+      pages += 1;
+      expect(pages).toBeLessThan(10_000);
+      // Extend past pageBytes only when no newline exists in the window yet
+      // (matching fetchSessionTranscriptByteRange's single-line extension).
+      let end = Math.min(full.length, offset + pageBytes);
+      while (end < full.length && !full.subarray(offset, end).includes(0x0a)) {
+        end = Math.min(full.length, end + pageBytes);
+      }
+      const eof = end >= full.length;
+      const chunk = full.subarray(offset, end);
+      const parsed = parseTranscriptTimelineChunk(chunk, {
+        startOffset: offset,
+        eof,
+        agent,
+        initialState: state,
+      });
+      expect(parsed.nextOffset).toBeGreaterThan(offset);
+      offset = parsed.nextOffset;
+      state = parsed.nextState;
+      if (parsed.hadUnparseableLines) hadUnparseableLines = true;
+      merged = mergeTranscriptTimelinePages(merged, parsed.events);
+    }
+
+    return { events: merged, hadUnparseableLines, pages };
+  }
+
+  it('never parses partial multi-byte UTF-8 sequences at a non-EOF chunk boundary', () => {
+    const line1 = JSON.stringify({
+      type: 'user',
+      isSidechain: false,
+      message: { role: 'user', content: [{ type: 'text', text: 'first 🚀' }] },
+    });
+    const line2 = JSON.stringify({
+      type: 'assistant',
+      isSidechain: false,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: '🚀🔥€é multi-byte' }],
+      },
+    });
+    const full = Buffer.from(`${line1}\n${line2}\n`, 'utf8');
+    const emojiStart = full.indexOf(Buffer.from('🚀🔥€é', 'utf8'));
+    // Cut right inside the 4-byte UTF-8 sequence of 🔥 in line 2.
+    const cutOffset = emojiStart + 6;
+    const page1 = parseTranscriptTimelineChunk(full.subarray(0, cutOffset), {
+      startOffset: 0,
+      eof: false,
+    });
+    expect(page1.hadUnparseableLines).toBe(false);
+    expect(page1.nextOffset).toBe(Buffer.byteLength(`${line1}\n`, 'utf8'));
+    expect(page1.events).toEqual([
+      { kind: 'text', role: 'user', text: 'first 🚀', timestamp: undefined },
+    ]);
+
+    const page2 = parseTranscriptTimelineChunk(
+      full.subarray(page1.nextOffset),
+      {
+        startOffset: page1.nextOffset,
+        eof: true,
+        initialState: page1.nextState,
+      },
+    );
+    expect(page2.hadUnparseableLines).toBe(false);
+    expect(page2.events).toEqual([
+      {
+        kind: 'text',
+        role: 'assistant',
+        text: '🚀🔥€é multi-byte',
+        timestamp: undefined,
+      },
+    ]);
+  });
+
+  it('snaps back before an open sidechain or unpaired tool_use when an earlier safe cut exists', () => {
+    const raw = readFixture('session-with-subagent.jsonl');
+    const lines = raw.trim().split('\n');
+    // Line 0 is queue-operation (0 events); line 1 is user text (safe, 1 event);
+    // line 2 is Task tool_use (unsafe); line 3 is isSidechain:true (unsafe).
+    const prefixWithOpenSidechain = `${lines.slice(0, 4).join('\n')}\n`;
+    const chunk = Buffer.from(prefixWithOpenSidechain, 'utf8');
+
+    const page1 = parseTranscriptTimelineChunk(chunk, {
+      startOffset: 0,
+      eof: false,
+    });
+    expect(page1.nextOffset).toBe(
+      Buffer.byteLength(`${lines.slice(0, 2).join('\n')}\n`, 'utf8'),
+    );
+    expect(page1.events.map((e) => e.kind)).toEqual(['text']);
+    expect(page1.nextState).toEqual({});
+
+    const fullBuffer = Buffer.from(raw, 'utf8');
+    const page2 = parseTranscriptTimelineChunk(
+      fullBuffer.subarray(page1.nextOffset),
+      {
+        startOffset: page1.nextOffset,
+        eof: true,
+        initialState: page1.nextState,
+      },
+    );
+    const merged = mergeTranscriptTimelinePages(page1.events, page2.events);
+    expect(merged).toEqual(parseTranscriptTimeline(raw).events);
+  });
+
+  it('uses carry-state fallback and merges seamlessly when a giant sidechain spans multiple pages', () => {
+    const lines = [
+      JSON.stringify({
+        type: 'assistant',
+        isSidechain: true,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', name: 'Grep', input: { q: 'one' } }],
+        },
+      }),
+      JSON.stringify({
+        type: 'user',
+        isSidechain: true,
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', content: 'match 1' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        isSidechain: true,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'still in subagent' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        isSidechain: false,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'back on main chain' }],
+        },
+      }),
+    ];
+    const raw = `${lines.join('\n')}\n`;
+    // Force page 1 to contain only the first two sidechain lines (no earlier safe cut!).
+    const page1Bytes = Buffer.from(`${lines[0]}\n${lines[1]}\n`, 'utf8');
+    const page1 = parseTranscriptTimelineChunk(page1Bytes, {
+      startOffset: 0,
+      eof: false,
+    });
+    expect(page1.nextOffset).toBe(page1Bytes.length);
+    expect(page1.nextState).toEqual({
+      inSidechain: true,
+      sidechainContributedEvents: true,
+    });
+    expect(page1.events).toHaveLength(1);
+    expect(page1.events[0]).toMatchObject({ kind: 'sidechain-group' });
+
+    const full = Buffer.from(raw, 'utf8');
+    const page2 = parseTranscriptTimelineChunk(
+      full.subarray(page1.nextOffset),
+      {
+        startOffset: page1.nextOffset,
+        eof: true,
+        initialState: page1.nextState,
+      },
+    );
+    expect(page2.events[0]).toMatchObject({
+      kind: 'sidechain-group',
+      continuesPrevious: true,
+    });
+
+    const merged = mergeTranscriptTimelinePages(page1.events, page2.events);
+    expect(merged).toEqual(parseTranscriptTimeline(raw).events);
+  });
+
+  it('keeps separate Claude subagent groups separate when a metadata-only separator closes group A and group B opens with progress-only records', () => {
+    const groupAVisible = JSON.stringify({
+      type: 'assistant',
+      isSidechain: true,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', name: 'Grep', input: { q: 'group-a' } }],
+      },
+    });
+    const nonSidechainMetadataSeparator = JSON.stringify({
+      type: 'queue-operation',
+      isSidechain: false,
+      sessionId: 's1',
+    });
+    const groupBProgressOnly = JSON.stringify({
+      type: 'progress',
+      isSidechain: true,
+      sessionId: 's1',
+    });
+    const groupBVisible = JSON.stringify({
+      type: 'assistant',
+      isSidechain: true,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', name: 'Read', input: { p: 'group-b' } }],
+      },
+    });
+    const trailingMain = JSON.stringify({
+      type: 'assistant',
+      isSidechain: false,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+      },
+    });
+
+    const allLines = [
+      groupAVisible,
+      nonSidechainMetadataSeparator,
+      groupBProgressOnly,
+      groupBVisible,
+      trailingMain,
+    ];
+    const raw = `${allLines.join('\n')}\n`;
+
+    const chunk1Bytes = Buffer.from(`${groupAVisible}\n`, 'utf8');
+    const chunk1 = parseTranscriptTimelineChunk(chunk1Bytes, {
+      startOffset: 0,
+      eof: false,
+    });
+    expect(chunk1.nextState).toEqual({
+      inSidechain: true,
+      sidechainContributedEvents: true,
+    });
+
+    const chunk2Bytes = Buffer.from(
+      `${nonSidechainMetadataSeparator}\n${groupBProgressOnly}\n`,
+      'utf8',
+    );
+    const chunk2 = parseTranscriptTimelineChunk(chunk2Bytes, {
+      startOffset: chunk1.nextOffset,
+      eof: false,
+      initialState: chunk1.nextState,
+    });
+    expect(chunk2.events).toEqual([]);
+    expect(chunk2.nextState).toEqual({ inSidechain: true });
+
+    const full = Buffer.from(raw, 'utf8');
+    const chunk3 = parseTranscriptTimelineChunk(
+      full.subarray(chunk2.nextOffset),
+      {
+        startOffset: chunk2.nextOffset,
+        eof: true,
+        initialState: chunk2.nextState,
+      },
+    );
+    expect(chunk3.events[0]).toMatchObject({ kind: 'sidechain-group' });
+    expect(
+      (
+        chunk3.events[0] as Extract<
+          TranscriptTimelineEvent,
+          { kind: 'sidechain-group' }
+        >
+      ).continuesPrevious,
+    ).toBeUndefined();
+
+    const afterChunk2 = mergeTranscriptTimelinePages(
+      chunk1.events,
+      chunk2.events,
+    );
+    const finalMerged = mergeTranscriptTimelinePages(
+      afterChunk2,
+      chunk3.events,
+    );
+    expect(finalMerged).toEqual(parseTranscriptTimeline(raw).events);
+    expect(
+      finalMerged.filter((event) => event.kind === 'sidechain-group'),
+    ).toHaveLength(2);
+  });
+
+  it('deduplicates Codex event_msg and response_item turns across page boundaries even with intervening metadata', () => {
+    const lines = [
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-10-01T00:00:00Z',
+        payload: { type: 'user_message', message: 'Large prompt across pages' },
+      }),
+      JSON.stringify({
+        type: 'turn_context',
+        payload: { cwd: '/repo' },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        timestamp: '2026-10-01T00:00:00Z',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'Large prompt across pages' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-10-01T00:00:01Z',
+        payload: { type: 'agent_message', message: 'Done.' },
+      }),
+    ];
+    const raw = `${lines.join('\n')}\n`;
+    const firstChunk = Buffer.from(`${lines[0]}\n${lines[1]}\n`, 'utf8');
+    const page1 = parseTranscriptTimelineChunk(firstChunk, {
+      startOffset: 0,
+      eof: false,
+      agent: 'codex',
+    });
+    expect(page1.events).toHaveLength(1);
+    expect(page1.nextState.pendingCodexTurnHash).toBeTruthy();
+
+    const full = Buffer.from(raw, 'utf8');
+    const page2 = parseTranscriptTimelineChunk(
+      full.subarray(page1.nextOffset),
+      {
+        startOffset: page1.nextOffset,
+        eof: true,
+        agent: 'codex',
+        initialState: page1.nextState,
+      },
+    );
+    const merged = mergeTranscriptTimelinePages(page1.events, page2.events);
+    expect(merged).toEqual(parseTranscriptTimeline(raw, 'codex').events);
+  });
+
+  it('keeps parallel Codex calls pending until every result arrives', () => {
+    const call = (id: string, ts: string) =>
+      JSON.stringify({
+        type: 'response_item',
+        timestamp: ts,
+        payload: {
+          type: 'function_call',
+          name: 'shell',
+          call_id: id,
+          arguments: '{}',
+        },
+      });
+    const output = (id: string, ts: string) =>
+      JSON.stringify({
+        type: 'response_item',
+        timestamp: ts,
+        payload: {
+          type: 'function_call_output',
+          call_id: id,
+          output: `out ${id}`,
+        },
+      });
+    const lines = [
+      JSON.stringify({
+        type: 'response_item',
+        timestamp: '2026-10-01T00:00:00Z',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Running two calls.' }],
+        },
+      }),
+      call('a', '2026-10-01T00:00:01Z'),
+      call('b', '2026-10-01T00:00:02Z'),
+      output('a', '2026-10-01T00:00:03Z'),
+      output('b', '2026-10-01T00:00:04Z'),
+    ];
+    const raw = `${lines.join('\n')}\n`;
+    const full = Buffer.from(raw, 'utf8');
+    const firstChunk = Buffer.from(`${lines.slice(0, 4).join('\n')}\n`, 'utf8');
+    const page1 = parseTranscriptTimelineChunk(firstChunk, {
+      startOffset: 0,
+      eof: false,
+      agent: 'codex',
+    });
+    // Call B is still outstanding, so the page snaps back to the text turn.
+    expect(page1.events).toEqual([
+      expect.objectContaining({ kind: 'text', text: 'Running two calls.' }),
+    ]);
+    expect(page1.nextOffset).toBe(Buffer.byteLength(`${lines[0]}\n`));
+
+    const page2 = parseTranscriptTimelineChunk(
+      full.subarray(page1.nextOffset),
+      {
+        startOffset: page1.nextOffset,
+        eof: true,
+        agent: 'codex',
+        initialState: page1.nextState,
+      },
+    );
+    expect(mergeTranscriptTimelinePages(page1.events, page2.events)).toEqual(
+      parseTranscriptTimeline(raw, 'codex').events,
+    );
+  });
+
+  it.each([
+    ['normal-session.jsonl', 'claude-code'],
+    ['session-with-subagent.jsonl', 'claude-code'],
+    ['session-with-result.jsonl', 'claude-code'],
+    ['session-unknown-line-type.jsonl', 'claude-code'],
+    ['codex-session.jsonl', 'codex'],
+  ] as const)(
+    'reproduces whole-transcript output identically across arbitrary byte page sizes for %s',
+    (fixtureName, agent) => {
+      const raw = readFixture(fixtureName);
+      const expected = parseTranscriptTimeline(raw, agent);
+      for (const pageBytes of [180, 350, 700]) {
+        const paged = paginateBuffer(raw, pageBytes, agent);
+        expect(paged.events).toEqual(expected.events);
+        expect(paged.hadUnparseableLines).toBe(expected.hadUnparseableLines);
+      }
+    },
+  );
 });
 
 describe('elideTranscriptTimeline', () => {

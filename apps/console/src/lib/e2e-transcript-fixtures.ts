@@ -13,12 +13,53 @@ export const E2E_ANTIGRAVITY_SESSION_IDS = {
   full: 'e2e-antigravity-full',
 } as const;
 
+export const E2E_PAGINATED_SESSION_ID = 'e2e-claude-paginated';
+
 export function getE2eTranscript(uri: string): string | undefined {
   if (!uri.startsWith('gs://e2e-transcripts/')) return undefined;
   const id = uri
     .split('/')
     .at(-1)
     ?.replace(/\.(?:export\.json|jsonl)$/u, '');
+  if (id === E2E_PAGINATED_SESSION_ID) {
+    // >600 KiB JSONL fixture so SSR page 1 (512 KiB) leaves page 2 for the
+    // incremental /api/sessions/[id]/transcript loader.
+    const filler = 'paginated-turn-filler '.repeat(600);
+    return [
+      JSON.stringify({
+        type: 'user',
+        isSidechain: false,
+        sessionId: id,
+        timestamp: '2026-11-05T18:00:00.000Z',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'First page prompt.' }],
+        },
+      }),
+      ...Array.from({ length: 48 }, (_, i) =>
+        JSON.stringify({
+          type: 'assistant',
+          isSidechain: false,
+          sessionId: id,
+          timestamp: '2026-11-05T18:01:00.000Z',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: `Page chunk ${i} ${filler}` }],
+          },
+        }),
+      ),
+      JSON.stringify({
+        type: 'assistant',
+        isSidechain: false,
+        sessionId: id,
+        timestamp: '2026-11-05T18:02:00.000Z',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Second page terminal turn.' }],
+        },
+      }),
+    ].join('\n');
+  }
   if (id === E2E_ANTIGRAVITY_SESSION_IDS.full) {
     return [
       JSON.stringify({

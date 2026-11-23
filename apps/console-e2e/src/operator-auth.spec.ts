@@ -136,6 +136,7 @@ test.describe('Work operator access', () => {
       '/api/dashboard/stream',
       '/api/runner-status',
       '/api/runner-status/stream',
+      '/api/sessions/unknown/transcript',
     ]) {
       expect((await page.request.get(path)).status()).toBe(401);
     }

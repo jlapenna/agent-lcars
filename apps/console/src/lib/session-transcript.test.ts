@@ -1,58 +1,85 @@
-import { fetchSessionTranscript } from '@agent-lcars/telemetry/server';
+import {
+  fetchSessionTranscript,
+  fetchSessionTranscriptByteRange,
+  MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
+  OPENCODE_EXPORT_MAX_BYTES,
+  sliceTranscriptByteRangeFromBuffer,
+} from '@agent-lcars/telemetry/server';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import { getSessionTranscript } from './session-transcript';
+import {
+  encodeTranscriptCursor,
+  getSessionTranscript,
+  parseTranscriptCursor,
+} from './session-transcript';
 
-vi.mock('@agent-lcars/telemetry/server', () => ({
-  fetchSessionTranscript: vi.fn(),
-}));
+vi.mock('@agent-lcars/telemetry/server', async () => {
+  const actual = await vi.importActual<
+    typeof import('@agent-lcars/telemetry/server')
+  >('@agent-lcars/telemetry/server');
+  return {
+    ...actual,
+    fetchSessionTranscript: vi.fn(),
+    fetchSessionTranscriptByteRange: vi.fn(),
+  };
+});
 
 describe('getSessionTranscript', () => {
   afterEach(() => vi.resetAllMocks());
 
-  it('parses a fetched transcript into timeline events', async () => {
-    (fetchSessionTranscript as Mock).mockResolvedValue(
-      JSON.stringify({
-        type: 'user',
-        isSidechain: false,
-        sessionId: 's1',
-        timestamp: '2026-07-01T00:00:00.000Z',
-        message: { role: 'user', content: [{ type: 'text', text: 'hi' }] },
-      }),
-    );
+  it('parses a fetched JSONL transcript page into timeline events', async () => {
+    (fetchSessionTranscriptByteRange as Mock).mockResolvedValue({
+      chunk: Buffer.from(
+        JSON.stringify({
+          type: 'user',
+          isSidechain: false,
+          sessionId: 's1',
+          timestamp: '2026-07-01T00:00:00.000Z',
+          message: { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        }) + '\n',
+        'utf8',
+      ),
+      eof: true,
+    });
 
     const result = await getSessionTranscript('gs://bucket/runs/1/a.jsonl');
 
-    expect(result.events).toEqual([
-      {
-        kind: 'text',
-        role: 'user',
-        text: 'hi',
-        timestamp: '2026-07-01T00:00:00.000Z',
-      },
-    ]);
-    expect(result.warning).toBeUndefined();
+    expect(result).toEqual({
+      events: [
+        {
+          kind: 'text',
+          role: 'user',
+          text: 'hi',
+          timestamp: '2026-07-01T00:00:00.000Z',
+        },
+      ],
+    });
   });
 
-  it('degrades to a warning and no events when the GCS fetch fails', async () => {
-    (fetchSessionTranscript as Mock).mockRejectedValue(
+  it('degrades to a warning and storageError flag when the GCS byte-range fetch fails', async () => {
+    (fetchSessionTranscriptByteRange as Mock).mockRejectedValue(
       new Error('storage: not found'),
     );
 
     const result = await getSessionTranscript('gs://bucket/runs/1/a.jsonl');
 
     expect(result.events).toEqual([]);
+    expect(result.storageError).toBe(true);
     expect(result.warning).toContain('storage');
   });
 
   it('parses a fetched Codex transcript with the selected agent parser', async () => {
-    (fetchSessionTranscript as Mock).mockResolvedValue(
-      JSON.stringify({
-        type: 'event_msg',
-        timestamp: '2026-07-01T00:00:00.000Z',
-        payload: { type: 'user_message', message: 'hello from codex' },
-      }),
-    );
+    (fetchSessionTranscriptByteRange as Mock).mockResolvedValue({
+      chunk: Buffer.from(
+        JSON.stringify({
+          type: 'event_msg',
+          timestamp: '2026-07-01T00:00:00.000Z',
+          payload: { type: 'user_message', message: 'hello from codex' },
+        }) + '\n',
+        'utf8',
+      ),
+      eof: true,
+    });
 
     const result = await getSessionTranscript(
       'gs://bucket/runs/1/codex.jsonl',
@@ -65,12 +92,16 @@ describe('getSessionTranscript', () => {
   });
 
   it('surfaces a warning (but still returns the parsed events) when some lines are unparseable', async () => {
-    (fetchSessionTranscript as Mock).mockResolvedValue(
-      [
-        'not json {{{',
-        JSON.stringify({ type: 'queue-operation', sessionId: 's1' }),
-      ].join('\n'),
-    );
+    (fetchSessionTranscriptByteRange as Mock).mockResolvedValue({
+      chunk: Buffer.from(
+        [
+          'not json {{{',
+          JSON.stringify({ type: 'queue-operation', sessionId: 's1' }),
+        ].join('\n'),
+        'utf8',
+      ),
+      eof: true,
+    });
 
     const result = await getSessionTranscript('gs://bucket/runs/1/a.jsonl');
 
@@ -78,28 +109,80 @@ describe('getSessionTranscript', () => {
     expect(result.warning).toContain('could not be parsed');
   });
 
-  it('preserves the CLI archive byte limit through the combined fetch path', async () => {
-    (fetchSessionTranscript as Mock).mockResolvedValue('');
-    await getSessionTranscript(
-      'gs://cli-archives/cli/host/codex/a.jsonl',
-      'codex',
-      {
-        maxBytes: 5 * 1024 * 1024,
+  it('paginates multi-page JSONL transcripts with carry-state cursors instead of truncating at 5 MiB', async () => {
+    const line1 =
+      JSON.stringify({
+        type: 'user',
+        isSidechain: false,
+        message: { role: 'user', content: [{ type: 'text', text: 'page 1' }] },
+      }) + '\n';
+    const line2 =
+      JSON.stringify({
+        type: 'assistant',
+        isSidechain: false,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'page 2' }],
+        },
+      }) + '\n';
+    const backing = Buffer.from(line1 + line2, 'utf8');
+    (fetchSessionTranscriptByteRange as Mock).mockImplementation(
+      async (_uri: string, { startOffset }: { startOffset: number }) => {
+        if (startOffset === 0) {
+          return {
+            chunk: backing.subarray(0, Buffer.byteLength(line1, 'utf8')),
+            eof: false,
+          };
+        }
+        return {
+          chunk: backing.subarray(startOffset),
+          eof: true,
+        };
       },
     );
-    expect(fetchSessionTranscript).toHaveBeenCalledWith(
-      'gs://cli-archives/cli/host/codex/a.jsonl',
-      5 * 1024 * 1024,
+
+    const first = await getSessionTranscript(
+      'gs://cli-archives/cli/host/claude-code/a.jsonl',
+      'claude-code',
+      { pageBytes: 64 },
     );
+    expect(first.hasMore).toBe(true);
+    expect(first.nextCursor).toBeTruthy();
+    expect(first.events).toEqual([
+      { kind: 'text', role: 'user', text: 'page 1', timestamp: undefined },
+    ]);
+
+    const cursor = parseTranscriptCursor(first.nextCursor!, 'claude-code');
+    expect(cursor).toBeTruthy();
+
+    const second = await getSessionTranscript(
+      'gs://cli-archives/cli/host/claude-code/a.jsonl',
+      'claude-code',
+      { cursor, pageBytes: 64 },
+    );
+    expect(second.hasMore).toBeUndefined();
+    expect(second.nextCursor).toBeUndefined();
+    expect(second.events).toEqual([
+      {
+        kind: 'text',
+        role: 'assistant',
+        text: 'page 2',
+        timestamp: undefined,
+      },
+    ]);
   });
 
-  it('distinguishes empty and malformed OpenCode archives', async () => {
+  it('distinguishes empty and malformed OpenCode archives and bounds export download', async () => {
     (fetchSessionTranscript as Mock).mockResolvedValue(
       JSON.stringify({ info: { id: 'ses_empty' }, messages: [] }),
     );
     expect(
       await getSessionTranscript('gs://bucket/empty.export.json', 'opencode'),
     ).toEqual({ events: [] });
+    expect(fetchSessionTranscript).toHaveBeenCalledWith(
+      'gs://bucket/empty.export.json',
+      OPENCODE_EXPORT_MAX_BYTES,
+    );
     (fetchSessionTranscript as Mock).mockResolvedValue('{}');
     expect(
       await getSessionTranscript('gs://bucket/bad.export.json', 'opencode'),
@@ -109,7 +192,43 @@ describe('getSessionTranscript', () => {
     });
   });
 
-  it('elides a very long transcript', async () => {
+  it('paginates large OpenCode exports across event pages', async () => {
+    (fetchSessionTranscript as Mock).mockResolvedValue(
+      JSON.stringify({
+        info: { id: 'ses_paged' },
+        messages: Array.from({ length: 5 }, (_, i) => ({
+          info: { role: 'assistant' },
+          parts: [{ type: 'text', text: `turn ${i}` }],
+        })),
+      }),
+    );
+
+    const page1 = await getSessionTranscript(
+      'gs://bucket/paged.export.json',
+      'opencode',
+      { pageEvents: 3 },
+    );
+    expect(page1.events).toHaveLength(3);
+    expect(page1.hasMore).toBe(true);
+    const cursor = parseTranscriptCursor(page1.nextCursor!, 'opencode');
+    expect(cursor).toMatchObject({
+      v: 1,
+      agent: 'opencode',
+      mode: 'events',
+      offset: 3,
+      snapshot: expect.any(String),
+    });
+
+    const page2 = await getSessionTranscript(
+      'gs://bucket/paged.export.json',
+      'opencode',
+      { cursor, pageEvents: 3 },
+    );
+    expect(page2.events).toHaveLength(2);
+    expect(page2.nextCursor).toBeUndefined();
+  });
+
+  it('elides a very long transcript that fits on page 1', async () => {
     const lines = Array.from({ length: 500 }, (_, i) =>
       JSON.stringify({
         type: 'assistant',
@@ -122,11 +241,116 @@ describe('getSessionTranscript', () => {
         },
       }),
     );
-    (fetchSessionTranscript as Mock).mockResolvedValue(lines.join('\n'));
+    (fetchSessionTranscriptByteRange as Mock).mockResolvedValue({
+      chunk: Buffer.from(lines.join('\n'), 'utf8'),
+      eof: true,
+    });
 
     const result = await getSessionTranscript('gs://bucket/runs/1/a.jsonl');
 
     expect(result.events.some((e) => e.kind === 'elision')).toBe(true);
     expect(result.events).toHaveLength(251);
+  });
+
+  it('renders a >32 MiB Claude tool-result record in a runner archive instead of skipping it', async () => {
+    const prefix = Buffer.from(
+      '{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","content":"',
+      'utf8',
+    );
+    const body = Buffer.alloc(33 * 1024 * 1024, 0x7a);
+    const suffix = Buffer.from(
+      '"}]}}\n{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"tail"}]}}\n',
+      'utf8',
+    );
+    const backing = Buffer.concat([prefix, body, suffix]);
+
+    (fetchSessionTranscriptByteRange as Mock).mockImplementation(
+      (
+        _uri: string,
+        opts: Parameters<typeof sliceTranscriptByteRangeFromBuffer>[1],
+      ) => sliceTranscriptByteRangeFromBuffer(backing, opts),
+    );
+
+    const page1 = await getSessionTranscript(
+      'gs://bucket/runs/1/huge-runner-record.jsonl',
+      'claude-code',
+      { maxSingleLineBytes: MAX_RUNNER_TRANSCRIPT_LINE_BYTES },
+    );
+    expect(page1.storageError).toBeUndefined();
+    expect(page1.warning).toBeUndefined();
+    expect(page1.hasMore).toBe(true);
+    expect(page1.events).toHaveLength(1);
+    expect(page1.events[0]).toMatchObject({ kind: 'tool_result' });
+    expect((page1.events[0] as { content: string }).content.length).toBe(
+      33 * 1024 * 1024,
+    );
+  });
+
+  it('appends 150,000 events from a single Codex record without overflowing V8 call stack', async () => {
+    const blocks = Array.from({ length: 150_000 }, (_, i) => ({
+      type: 'output_text',
+      text: `${i % 2 === 0 ? 'a' : 'b'}${i}`,
+    }));
+    const rawLine = `${JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'message', role: 'assistant', content: blocks },
+    })}\n${JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'agent_message', message: 'page 2' },
+    })}\n`;
+    const backing = Buffer.from(rawLine, 'utf8');
+    const firstNewline = backing.indexOf(0x0a);
+
+    (fetchSessionTranscriptByteRange as Mock).mockResolvedValue({
+      chunk: backing.subarray(0, firstNewline + 1),
+      eof: false,
+    });
+
+    const page1 = await getSessionTranscript(
+      'gs://bucket/runs/1/many-blocks.jsonl',
+      'codex',
+    );
+    expect(page1.storageError).toBeUndefined();
+    expect(page1.warning).toBeUndefined();
+    expect(page1.hasMore).toBe(true);
+    expect(page1.events).toHaveLength(150_000);
+  });
+
+  it('validates cursor integrity against agent, mode, offset, and length', () => {
+    const valid = encodeTranscriptCursor({
+      v: 1,
+      agent: 'codex',
+      mode: 'bytes',
+      offset: 1024,
+      state: { pendingCodexTurnHash: 'u:5:abc:def' },
+    });
+    expect(parseTranscriptCursor(valid, 'codex')).toMatchObject({
+      offset: 1024,
+      state: { pendingCodexTurnHash: 'u:5:abc:def' },
+    });
+    expect(parseTranscriptCursor(valid, 'claude-code')).toBeUndefined();
+    expect(parseTranscriptCursor('', 'codex')).toBeUndefined();
+    expect(parseTranscriptCursor('a'.repeat(513), 'codex')).toBeUndefined();
+    expect(
+      parseTranscriptCursor(
+        Buffer.from(
+          JSON.stringify({ v: 1, agent: 'codex', mode: 'bytes', offset: 0 }),
+        ).toString('base64url'),
+        'codex',
+      ),
+    ).toBeUndefined();
+    expect(
+      parseTranscriptCursor(
+        Buffer.from(
+          JSON.stringify({
+            v: 1,
+            agent: 'codex',
+            mode: 'events',
+            offset: 10,
+          }),
+        ).toString('base64url'),
+        'codex',
+      ),
+    ).toBeUndefined();
   });
 });
