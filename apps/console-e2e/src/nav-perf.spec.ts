@@ -63,6 +63,8 @@ test('@navperf rail navigation latency', async ({ page }) => {
   }
 
   const samples: number[] = [];
+  const perRoute: Record<string, number[]> = {};
+  const rscBytes: number[] = [];
   let chromeRemounts = 0;
   for (let round = 0; round < ROUNDS; round++) {
     for (const label of LOOP) {
@@ -76,11 +78,25 @@ test('@navperf rail navigation latency', async ({ page }) => {
         .getByRole('link', { name: label, exact: false })
         .first();
       await link.waitFor();
+      let bytes = 0;
+      const onResponse = async (r: import('@playwright/test').Response) => {
+        if (r.request().headers()['rsc'] === '1') {
+          try {
+            bytes += (await r.body()).length;
+          } catch {
+            /* navigation may discard the body */
+          }
+        }
+      };
+      page.on('response', onResponse);
       const start = await page.evaluate(() => performance.now());
       await link.click();
       await waitReady(page, label);
       const end = await page.evaluate(() => performance.now());
       samples.push(end - start);
+      (perRoute[label] ??= []).push(end - start);
+      page.off('response', onResponse);
+      rscBytes.push(bytes);
       const kept = await page.evaluate(() => {
         const w = window as unknown as { __railHome?: Element | null };
         return Boolean(w.__railHome && w.__railHome.isConnected);
@@ -99,6 +115,15 @@ test('@navperf rail navigation latency', async ({ page }) => {
       mean: Math.round(mean),
       n: samples.length,
       chromeRemounts,
+      rscKb: Math.round(
+        rscBytes.reduce((a, b) => a + b, 0) / rscBytes.length / 1024,
+      ),
+      perRoute: Object.fromEntries(
+        Object.entries(perRoute).map(([k, v]) => [
+          k,
+          Math.round([...v].sort((a, b) => a - b)[Math.floor(v.length / 2)]),
+        ]),
+      ),
     })}`,
   );
 });
