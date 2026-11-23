@@ -123,7 +123,34 @@
 
    Require an open, ready PR at `reviewed_head` before arming. Afterward,
    confirm either a non-null SQUASH `autoMergeRequest` at that same head or
-   an actual merge of that head. Execute the closing-scope guard and arming
+   an actual merge of that head.
+
+   **Arm once, then leave it.** An armed PR that has not merged is waiting,
+   not stuck, and `gh pr checks` does not show everything it waits for: the
+   required `LCARS review (merge candidate)` check appears only once the
+   `Publish LCARS merge candidate` workflow has copied the review's verdict
+   onto the test merge commit, which can trail a green PR by minutes. Do not
+   run `gh pr merge` on it again. `gh pr merge --auto` merges at once when
+   GitHub reports the PR as `CLEAN`, `HAS_HOOKS` or `UNSTABLE`, and an
+   administrator's merge bypasses a required check that is still missing. PR
+   #3469 merged that way on 2026-11-23: every listed check was green, the
+   merge command was run a second time to nudge it, and the rule suite
+   recorded `bypass` with `required_status_checks` failing on the missing
+   merge-candidate check. To see what an armed PR is waiting for, read the
+   requirement and the head's checks instead:
+
+   ```bash
+   gh api repos/jlapenna/agent-lcars/rules/branches/main \
+     --jq '.[] | select(.type == "required_status_checks")
+           | .parameters.required_status_checks[].context'
+   gh api "repos/jlapenna/agent-lcars/commits/$reviewed_head/check-runs" --paginate \
+     --jq '.check_runs[] | [.name, .status, .conclusion] | @tsv'
+   gh api "repos/jlapenna/agent-lcars/commits/$reviewed_head/status" \
+     --jq '.statuses[] | [.context, .state] | @tsv'
+   ```
+
+   A required context that is not successful in those lists is the wait.
+   Find why its publisher has not run; never merge around it. Execute the closing-scope guard and arming
    only as the `&&`-chained sequence above: a rejected, incomplete or
    changed-scope read must stop the chain. Arming does not declare checks
    passed; an already-eligible PR can merge immediately. If arming fails,
@@ -150,8 +177,11 @@
    reads OPEN/ready with all required checks green. Record that refusal as a
    state change, not transport loss: it repeats
    identically, so re-issuing it is a blind retry. Re-read the head, closing
-   scope, reviews and required checks, then use the guarded CLI sequence
-   above; it can merge the already-eligible head normally. Do not manufacture
+   scope, reviews and required checks. Only when every context the ruleset
+   requires is successful on that head (the reads under "Arm once, then
+   leave it" above; `UNSTABLE` or "all of `gh pr checks` green" is not that)
+   use the guarded CLI sequence above, which then merges the eligible head
+   normally. Do not manufacture
    a new revision merely to make the queue-only API accept the request.
    Never add `--admin`, relax or fabricate checks/statuses, change policy,
    or introduce a wrapper or credential merely to arm.
@@ -192,7 +222,8 @@
    for the hand-over record and the admin-bypass hazard.
 
    The ruleset enforces required `E2E`, `Verify`,
-   `LCARS review`, `Runner image pnpm-store seed`, and `repository-owned Terraform`,
+   `LCARS review (merge candidate)` from the Agent LCARS App, `Runner image
+pnpm-store seed`, and `repository-owned Terraform`,
    `required_review_thread_resolution`, linear history, and no deletion or
    force-push. The up-to-date-branch policy is **non-strict** (harmonized
    with the sprinkles repo, 2026-08-11): an armed PR merges on green even
