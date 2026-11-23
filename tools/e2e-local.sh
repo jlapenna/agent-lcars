@@ -236,10 +236,11 @@ case "${CI:-}" in
 esac
 
 # Corepack, Firebase and SWC normally cache tooling below HOME. Point only
-# those caches at their conventional durable locations so an isolated HOME
-# does not force network downloads on every run (or break offline runs). Do not
-# preserve ambient cache overrides: they could widen the filesystem paths
-# admitted through this boundary.
+# those caches at their conventional durable locations: Corepack and Firebase
+# so an isolated HOME does not force network downloads on every run (or break
+# offline runs), and SWC for the reason given below. Do not preserve ambient
+# cache overrides: they could widen the filesystem paths admitted through this
+# boundary.
 if [ -n "$CALLER_HOME" ]; then
   case "$PLATFORM" in
     CYGWIN* | MINGW* | MSYS*)
