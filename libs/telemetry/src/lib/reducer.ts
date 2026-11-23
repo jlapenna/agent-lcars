@@ -90,6 +90,24 @@ export function claudeSubagentSessionId(
   return isSafeIdentifier(combined) ? combined : undefined;
 }
 
+/**
+ * The session that spawned `session`, or `undefined` for a root session.
+ * Reads the persisted `parentSessionId`, and falls back to the parent encoded
+ * in a standalone Claude Code subagent id for docs written before that field
+ * existed (#3496).
+ */
+export function parentSessionIdOf(session: {
+  sessionId: string;
+  parentSessionId?: string;
+}): string | undefined {
+  if (session.parentSessionId) return session.parentSessionId;
+  if (!isClaudeSubagentSessionId(session.sessionId)) return undefined;
+  return session.sessionId.slice(
+    0,
+    session.sessionId.indexOf(CLAUDE_SUBAGENT_SEPARATOR),
+  );
+}
+
 /** True when `sessionId` names a standalone Claude Code subagent session. */
 export function isClaudeSubagentSessionId(sessionId: string): boolean {
   const idx = sessionId.indexOf(CLAUDE_SUBAGENT_SEPARATOR);
@@ -546,7 +564,13 @@ function reduceLines(
     return [];
   }
 
-  return Array.from(states.values()).map(finalizeState);
+  const summaries = Array.from(states.values()).map(finalizeState);
+  return subagent
+    ? summaries.map((summary) => ({
+        ...summary,
+        parentSessionId: subagent.parentSessionId,
+      }))
+    : summaries;
 }
 
 /**

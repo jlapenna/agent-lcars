@@ -168,6 +168,12 @@ export interface SessionSummary {
   cwd?: string;
   worktree?: string;
   branch?: string;
+  /** The session that spawned this one, when it is a subagent: a Codex
+   * thread spawned by another thread (`session_meta.source.subagent.
+   * thread_spawn.parent_thread_id`) or a standalone Claude Code subagent
+   * transcript (`<parent>/subagents/agent-<id>.jsonl`). Absent on a root
+   * session. A run's root session is the one without it (#3496). */
+  parentSessionId?: string;
   /** The herdr-core terminal this session runs in, observed by the host hook
    * and never read from the transcript. Only meaningful together with
    * `host`: it names a terminal of that host's herdr-core. */
@@ -288,6 +294,8 @@ interface BaseSessionDoc {
    * dips and recovers is not credited twice. */
   tokenMinutesBase?: number;
   lastToolCall?: ToolCallDigest;
+  /** See {@link SessionSummary.parentSessionId}. */
+  parentSessionId?: string;
   /** Persisted client-reported model selection; see SessionSummary.model. */
   model?: string;
   /** Physical backend observed behind a routed model request. */

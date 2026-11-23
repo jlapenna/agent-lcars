@@ -47,6 +47,16 @@ describe('buildSessionDoc', () => {
     expect(doc.resolvedModel).toBe('qwen3.8-flash-next');
   });
 
+  it('persists the parent session of a subagent and omits it on a root session', () => {
+    expect(
+      buildSessionDoc(baseSummary({ parentSessionId: 'root-1' }), 'ended')
+        .parentSessionId,
+    ).toBe('root-1');
+    expect('parentSessionId' in buildSessionDoc(baseSummary(), 'ended')).toBe(
+      false,
+    );
+  });
+
   it('clears a stale backend when OpenCode has no current observation', () => {
     const write = buildSessionWrite(
       baseSummary({ agent: 'opencode', status: 'running' }),

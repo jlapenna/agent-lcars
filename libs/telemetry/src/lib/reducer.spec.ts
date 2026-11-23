@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   claudeSubagentSessionId,
   isClaudeSubagentSessionId,
+  parentSessionIdOf,
   parseClaudeSubagentPath,
   reduceTranscript,
   reduceTranscriptLines,
@@ -579,6 +580,16 @@ describe('failed Claude publication evidence', () => {
   });
 });
 
+describe('parentSessionIdOf', () => {
+  it('reads the stored parent, then a Claude subagent id, else none', () => {
+    expect(
+      parentSessionIdOf({ sessionId: 'child', parentSessionId: 'root' }),
+    ).toBe('root');
+    expect(parentSessionIdOf({ sessionId: 'root--subagent--a1' })).toBe('root');
+    expect(parentSessionIdOf({ sessionId: 'root' })).toBeUndefined();
+  });
+});
+
 describe('standalone Claude subagent transcripts', () => {
   const parentId = '99929eb3-a69d-45aa-a3fa-2c2d34b0f151';
   const agentId = 'a070d6e9a0f980508';
@@ -653,6 +664,7 @@ describe('standalone Claude subagent transcripts', () => {
     expect(summaries).toHaveLength(1);
     expect(summaries[0]).toMatchObject({
       sessionId: expectedId,
+      parentSessionId: parentId,
       agent: 'claude-code',
       model: 'claude-opus-5-5',
       turns: 1,

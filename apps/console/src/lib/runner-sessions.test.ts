@@ -5,7 +5,7 @@ import type {
 import { listSessionDocsByRunIds } from '@agent-lcars/telemetry/server';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import { getRunnerSessionsByRunId } from './runner-sessions';
+import { getRunnerSessionsByRunId, runSession } from './runner-sessions';
 
 vi.mock('@agent-lcars/telemetry/server', () => ({
   getAgentTelemetryReaderFirestore: vi.fn(),
@@ -91,28 +91,25 @@ describe('getRunnerSessionsByRunId', () => {
     ]);
   });
 
-  it('keeps the most recently active of several sessions for one run', async () => {
+  it('joins a run to its root session, not a newer subagent', async () => {
     (listSessionDocsByRunIds as Mock).mockResolvedValue([
       makeIssueAgentDoc({
-        sessionId: 'newest',
+        sessionId: 'pascal',
         runId: '7',
+        parentSessionId: 'root',
+        lastActivityAt: '2026-11-22T16:59:59.000Z',
+      }),
+      makeIssueAgentDoc({
+        sessionId: 'root',
+        runId: '7',
+        turns: 1,
         lastActivityAt: '2026-11-22T16:59:17.056Z',
-      }),
-      makeIssueAgentDoc({
-        sessionId: 'oldest',
-        runId: '7',
-        lastActivityAt: '2026-11-22T16:55:33.816Z',
-      }),
-      makeIssueAgentDoc({
-        sessionId: 'middle',
-        runId: '7',
-        lastActivityAt: '2026-11-22T16:57:39.054Z',
       }),
     ]);
 
     const { sessionsByRunId } = await getRunnerSessionsByRunId(runs('7'));
 
-    expect(sessionsByRunId.get('7')?.sessionId).toBe('newest');
+    expect(sessionsByRunId.get('7')?.sessionId).toBe('root');
   });
 
   it('drops cli-source docs and issue-agent docs with no runId', async () => {
@@ -137,5 +134,79 @@ describe('getRunnerSessionsByRunId', () => {
 
     expect(sessionsByRunId.size).toBe(0);
     expect(warnings).toHaveLength(1);
+  });
+});
+
+describe('runSession', () => {
+  const tokens = (n: number) => ({
+    inputTokens: n,
+    outputTokens: n,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+  });
+
+  it('adds every descendant subagent to the root session tokens', () => {
+    const session = runSession([
+      makeIssueAgentDoc({ sessionId: 'root', tokens: tokens(100) }),
+      makeIssueAgentDoc({
+        sessionId: 'child',
+        parentSessionId: 'root',
+        tokens: tokens(10),
+      }),
+      makeIssueAgentDoc({
+        sessionId: 'grandchild',
+        parentSessionId: 'child',
+        tokens: tokens(1),
+      }),
+    ]);
+
+    expect(session?.sessionId).toBe('root');
+    expect(session?.tokens).toEqual(tokens(111));
+    expect(session?.turns).toBe(5);
+  });
+
+  it('treats a pre-#3496 Claude subagent id as a child of its parent', () => {
+    const session = runSession([
+      makeIssueAgentDoc({
+        sessionId: 'root--subagent--a1',
+        tokens: tokens(7),
+        lastActivityAt: '2026-11-22T17:00:00.000Z',
+      }),
+      makeIssueAgentDoc({ sessionId: 'root', tokens: tokens(3) }),
+    ]);
+
+    expect(session?.sessionId).toBe('root');
+    expect(session?.tokens).toEqual(tokens(10));
+  });
+
+  it('keeps the most recently active root after a provider fallback, with only its own subagents', () => {
+    const session = runSession([
+      makeIssueAgentDoc({
+        sessionId: 'first',
+        tokens: tokens(50),
+        lastActivityAt: '2026-11-22T16:00:00.000Z',
+      }),
+      makeIssueAgentDoc({
+        sessionId: 'first-child',
+        parentSessionId: 'first',
+        tokens: tokens(5),
+      }),
+      makeIssueAgentDoc({
+        sessionId: 'fallback',
+        tokens: tokens(20),
+        lastActivityAt: '2026-11-22T17:00:00.000Z',
+      }),
+    ]);
+
+    expect(session?.sessionId).toBe('fallback');
+    expect(session?.tokens).toEqual(tokens(20));
+  });
+
+  it('joins nothing when only subagent sessions were recorded', () => {
+    expect(
+      runSession([
+        makeIssueAgentDoc({ sessionId: 'child', parentSessionId: 'root' }),
+      ]),
+    ).toBeUndefined();
   });
 });

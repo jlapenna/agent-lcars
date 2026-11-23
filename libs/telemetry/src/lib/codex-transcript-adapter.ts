@@ -129,6 +129,18 @@ function isInjectedContext(message: string): boolean {
 }
 
 /** Reduces Codex CLI rollout JSONL without retaining message bodies. */
+
+/** The thread that spawned this one, from a subagent rollout's
+ * `session_meta.source` (`{ subagent: { thread_spawn: { parent_thread_id } } }`).
+ * A root `codex exec` session's source is the string `"exec"`. */
+function spawningThread(payload: Record<string, unknown>): string | undefined {
+  const source = asRecord(payload['source']);
+  const subagent = source && asRecord(source['subagent']);
+  const spawn = subagent && asRecord(subagent['thread_spawn']);
+  const parent = spawn && asString(spawn['parent_thread_id']);
+  return parent && isSafeIdentifier(parent) ? parent : undefined;
+}
+
 export const codexAdapter: TranscriptAdapter = {
   agent: 'codex',
   detect(firstLines: string[]): boolean {
@@ -137,6 +149,7 @@ export const codexAdapter: TranscriptAdapter = {
   reduce(lines: Iterable<string>): SessionSummary[] {
     let sessionId: string | undefined;
     let cwd: string | undefined;
+    let parentSessionId: string | undefined;
     let model: string | undefined;
     let permissionMode: string | undefined;
     let startedAt: string | undefined;
@@ -196,6 +209,7 @@ export const codexAdapter: TranscriptAdapter = {
           asString(payload['session_id']) ??
           sessionId;
         cwd = asString(payload['cwd']) ?? cwd;
+        parentSessionId = spawningThread(payload) ?? parentSessionId;
       } else if (lineType === 'turn_context') {
         cwd = asString(payload['cwd']) ?? cwd;
         model = asString(payload['model']) ?? model;
@@ -410,6 +424,8 @@ export const codexAdapter: TranscriptAdapter = {
         sessionId,
         source: 'cli',
         agent: 'codex',
+        ...(parentSessionId &&
+          parentSessionId !== sessionId && { parentSessionId }),
         ...(cwd && { cwd }),
         ...(model && { model }),
         ...(permissionMode && { permissionMode }),

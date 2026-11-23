@@ -94,6 +94,19 @@ describe('parseSessionEventV1', () => {
     },
   );
 
+  it('keeps a safe parent session and drops an unsafe or self-referencing one', () => {
+    const parentOf = (parentSessionId: string) => {
+      const result = parseSessionEventV1({
+        ...event,
+        summary: { ...summary, parentSessionId },
+      });
+      return result.ok ? result.event.summary?.parentSessionId : 'rejected';
+    };
+    expect(parentOf('root-1')).toBe('root-1');
+    expect(parentOf('../root')).toBeUndefined();
+    expect(parentOf('sess-1')).toBeUndefined();
+  });
+
   it('accepts a well-formed event and copies only known fields', () => {
     const result = parseSessionEventV1({
       ...event,
