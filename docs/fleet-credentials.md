@@ -416,7 +416,7 @@ Copy the **`key` field** (`sk-…`) of the response — _not_ `token`, which is
 the sha256 hash LiteLLM stores; shipping the hash is the exact mistake
 behind the 2026-08 Prometheus-scrape incident (homelab
 `docs/incidents.md`). Store it in the age store
-(`secrets-add "OPENCODE_LLM_API_KEY=sk-…"`) and update
+(`printf '%s' "$value" | secrets set OPENCODE_LLM_API_KEY`) and update
 `agent_lcars_opencode_llm_api_key` in Homelab's `ansible/secrets.yml` so
 `ansible/deploy_queue_kubernetes.yml` refreshes `opencode-llm-api-key` in
 `lcars-runner-credentials` (repositories no longer carry `OPENCODE_LLM_API_KEY`
