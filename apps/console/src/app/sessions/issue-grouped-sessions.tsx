@@ -68,13 +68,41 @@ function GroupHeading({ group }: { group: IssueSessionGroup }) {
  * the SessionTable it renders per group - stays server-rendered; see that
  * file's doc comment for why.
  */
+/** A group's table, holding back its older sessions past `rowLimit`. */
+function GroupSessions({
+  group,
+  find,
+  rowLimit,
+}: {
+  group: IssueSessionGroup;
+  find?: string;
+  rowLimit?: number;
+}) {
+  const rows =
+    rowLimit === undefined ? group.sessions : group.sessions.slice(0, rowLimit);
+  const older = group.sessions.length - rows.length;
+  return (
+    <>
+      <SessionTable rows={rows} fixedColumns find={find} />
+      {older > 0 && (
+        <Text size="xs" c="dimmed" data-testid="issue-group-older">
+          {older} older session{older === 1 ? '' : 's'} not shown
+        </Text>
+      )}
+    </>
+  );
+}
+
 export function IssueGroupedSessions({
   groups,
   find,
+  rowLimit,
 }: {
   groups: IssueSessionGroup[];
   /** The active FIND, passed to each group's table. */
   find?: string;
+  /** The newest sessions each group shows; its heading still counts all. */
+  rowLimit?: number;
 }) {
   if (groups.length === 0) {
     return (
@@ -121,12 +149,12 @@ export function IssueGroupedSessions({
               <NoIssueSessionGroup
                 sessionCount={<SessionCountLabel group={group} />}
               >
-                <SessionTable rows={group.sessions} fixedColumns find={find} />
+                <GroupSessions group={group} find={find} rowLimit={rowLimit} />
               </NoIssueSessionGroup>
             ) : (
               <>
                 <GroupHeading group={group} />
-                <SessionTable rows={group.sessions} fixedColumns find={find} />
+                <GroupSessions group={group} find={find} rowLimit={rowLimit} />
               </>
             )}
           </Stack>

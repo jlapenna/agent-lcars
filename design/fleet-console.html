@@ -875,10 +875,11 @@ function sessionsPanel() {
     <td><span class="state ${s[5]}">${s[6]}</span>${s[7] ? `<span class="links"><a href="#" class="ref">${s[7]}</a></span>` : ''}</td><td class="num">${s[8]}</td><td class="num">${s[9]}</td><td class="num dim">${s[10]}</td></tr>`;
   const groups = SESSION_GROUPS.map((g) => `<div class="group-head"><h3>${g.ref}</h3><span class="tag">${g.repo}</span><span>${g.title}</span><span class="dim">${g.rows.length} session${g.rows.length === 1 ? '' : 's'}</span></div>
     <table class="sess">${SESS_COLS}<tbody>${g.rows.map(row).join('')}</tbody></table>`).join('');
-  return `<section class="panel" data-od-id="panel-sessions"><div><div class="panel-head"><h2>Sessions · 14d</h2><span class="count">31</span><span class="meta">grouped by issue · retained 365 days · CLI 30</span>
+  return `<section class="panel" data-od-id="panel-sessions"><div><div class="panel-head"><h2>Sessions · 14d</h2><span class="count">5913</span><span class="meta">grouped by issue · retained 365 days · CLI 30</span>
     <div class="seg" role="group" aria-label="View"><button type="button" aria-pressed="false">Flat</button><button type="button" aria-pressed="true">By issue</button></div></div>
     <table class="sess">${SESS_COLS}<thead><tr><th>Session</th><th>Issue</th><th>Agent</th><th>Outcome</th><th class="num">Duration</th><th class="num">Tokens</th><th class="num">Started</th></tr></thead></table>
-    <div class="group-head"><h3 class="dim">› No issue</h3><span class="dim">12 sessions</span></div>${groups}</div></section>`;
+    <div class="group-head"><h3 class="dim">› No issue</h3><span class="dim">12 sessions</span></div>${groups}
+    <div class="group-head" data-od-id="sessions-show-all"><a href="#">Show all 5913 sessions (5713 more)</a></div></div></section>`;
 }
 function costsPanel() {
   const max = Math.max(...COSTS.map((c) => c[2]));
