@@ -16,7 +16,10 @@ import {
   type TaskId,
   taskKey,
 } from '@agent-lcars/orchestrator';
-import type { SessionDoc } from '@agent-lcars/telemetry';
+import {
+  isClaudeSubagentSessionId,
+  type SessionDoc,
+} from '@agent-lcars/telemetry';
 import {
   isSourceManagedWork,
   recipeWorkSpecSchema,
@@ -114,6 +117,9 @@ function replyReceipt(run: Run, request: ReplyRequest): ReplyOutcome {
  *  added to prevent. */
 export function resumeUriFor(doc: SessionDoc): string | undefined {
   if (doc.source !== 'issue-agent' || doc.transcriptGcsUri === undefined) {
+    return undefined;
+  }
+  if (doc.agent === 'claude-code' && isClaudeSubagentSessionId(doc.sessionId)) {
     return undefined;
   }
   if (doc.agent === 'opencode') {

@@ -189,7 +189,7 @@ describe('finalizeSidecar', () => {
     const { uploadTranscript, uploads } = createFakeUploader();
     const parentId = '99929eb3-a69d-45aa-a3fa-2c2d34b0f151';
     const agentId = 'a070d6e9a0f980508';
-    const childSessionId = `${parentId}-agent-${agentId}`;
+    const childSessionId = `${parentId}--subagent--${agentId}`;
     const parentContent = ISSUE_AGENT_TRANSCRIPT(
       parentId,
       '2026-11-15T10:00:00.000Z',
@@ -254,7 +254,7 @@ describe('finalizeSidecar', () => {
 
     expect(uploads.map((u) => u.object)).toEqual([
       `runs/77/claude-code/${parentId}.jsonl`,
-      `runs/77/claude-code/${childSessionId}.jsonl`,
+      `runs/77/claude-code/subagents/${childSessionId}.jsonl`,
     ]);
     expect(upserts.map((doc) => doc.sessionId)).toEqual([
       parentId,
@@ -276,7 +276,7 @@ describe('finalizeSidecar', () => {
         cacheCreationTokens: 500,
         cacheReadTokens: 2000,
       },
-      transcriptGcsUri: `gs://agent-lcars-session-transcripts/runs/77/claude-code/${childSessionId}.jsonl`,
+      transcriptGcsUri: `gs://agent-lcars-session-transcripts/runs/77/claude-code/subagents/${childSessionId}.jsonl`,
     });
   });
 

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   claudeSubagentSessionId,
+  isClaudeSubagentSessionId,
   parseClaudeSubagentPath,
   reduceTranscript,
   reduceTranscriptLines,
@@ -583,16 +584,32 @@ describe('standalone Claude subagent transcripts', () => {
   const agentId = 'a070d6e9a0f980508';
   const filePath = `/home/runner/.claude/projects/-workspace/${parentId}/subagents/agent-${agentId}.jsonl`;
 
-  it('derives a collision-free child sessionId and reduces subagent turns, model, title, and token usage', () => {
+  it('derives a collision-free child sessionId and reduces subagent turns, model, title, and token usage across real auxiliary lines', () => {
+    const expectedId = `${parentId}--subagent--${agentId}`;
     expect(parseClaudeSubagentPath(filePath)).toEqual({
       parentSessionId: parentId,
       agentId,
-      sessionId: `${parentId}-agent-${agentId}`,
+      sessionId: expectedId,
     });
+    expect(isClaudeSubagentSessionId(expectedId)).toBe(true);
+    expect(isClaudeSubagentSessionId(parentId)).toBe(false);
     expect(claudeSubagentSessionId(parentId, parentId)).toBeUndefined();
     expect(claudeSubagentSessionId('../bad', agentId)).toBeUndefined();
 
     const lines = [
+      // Real Claude Code 2.1.x auxiliary lines omit `isSidechain` (and
+      // `fork-context-ref` uses `parentSessionId` without `sessionId`).
+      JSON.stringify({
+        type: 'fork-context-ref',
+        parentSessionId: parentId,
+        agentId,
+      }),
+      JSON.stringify({
+        type: 'api-request',
+        sessionId: parentId,
+        agentId,
+        timestamp: '2026-11-15T09:59:59.000Z',
+      }),
       JSON.stringify({
         type: 'user',
         sessionId: parentId,
@@ -631,7 +648,7 @@ describe('standalone Claude subagent transcripts', () => {
     const summaries = reduceTranscriptLines(lines, { filePath });
     expect(summaries).toHaveLength(1);
     expect(summaries[0]).toMatchObject({
-      sessionId: `${parentId}-agent-${agentId}`,
+      sessionId: expectedId,
       agent: 'claude-code',
       model: 'claude-opus-5-5',
       turns: 1,
@@ -659,6 +676,10 @@ describe('standalone Claude subagent transcripts', () => {
     [
       'non-sidechain record',
       { sessionId: parentId, agentId, isSidechain: false },
+    ],
+    [
+      'auxiliary-only file with no sidechain turn',
+      { sessionId: parentId, agentId },
     ],
   ])('fails closed on %s inside a subagent file', (_case, overrides) => {
     const line = JSON.stringify({

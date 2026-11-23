@@ -629,7 +629,8 @@ export const workRouter = os.router({
           session.source !== 'issue-agent' ||
           session.intentId === undefined ||
           !runIds.has(session.intentId) ||
-          session.agent !== 'claude-code'
+          session.agent !== 'claude-code' ||
+          session.sessionId.includes('--subagent--')
         ) {
           throw errors.BAD_REQUEST({
             message:

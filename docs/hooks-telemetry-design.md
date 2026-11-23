@@ -357,8 +357,8 @@ them:
 - **Skip what is not a session.** OpenCode payloads and mid-turn Claude
   `PostToolUse` payloads with `agent_id` remain parent-owned. Claude Code
   `SubagentStop` collects a verified `<parentSessionId>/subagents/agent-<agentId>.jsonl`
-  child transcript under `<parentSessionId>-agent-<agentId>` when every record
-  is sidechain-marked and matches the parent and child IDs. A Codex child is
+  child transcript under `<parentSessionId>--subagent--<agentId>` when every record
+  is bound to the parent and child IDs and carries no non-sidechain turns. A Codex child is
   collected only when its first rollout metadata matches `agent_id` and the
   hook's parent `session_id`/fork relationship,
   `agent_transcript_path` or an exact-ID rollout lookup supplies the child

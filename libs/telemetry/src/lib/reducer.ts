@@ -56,6 +56,7 @@ interface SessionState {
   backgroundPublications: ClaudeBackgroundPublications;
 }
 
+const CLAUDE_SUBAGENT_SEPARATOR = '--subagent--';
 const CLAUDE_SUBAGENT_PATH_RE =
   /(?:^|[\\/])([^\\/]+)[\\/]subagents[\\/]agent-([^\\/]+)\.jsonl$/;
 
@@ -79,12 +80,23 @@ export function claudeSubagentSessionId(
   if (
     !isSafeIdentifier(parentSessionId) ||
     !isSafeIdentifier(agentId) ||
-    parentSessionId === agentId
+    parentSessionId === agentId ||
+    parentSessionId.includes(CLAUDE_SUBAGENT_SEPARATOR) ||
+    agentId.includes(CLAUDE_SUBAGENT_SEPARATOR)
   ) {
     return undefined;
   }
-  const combined = `${parentSessionId}-agent-${agentId}`;
+  const combined = `${parentSessionId}${CLAUDE_SUBAGENT_SEPARATOR}${agentId}`;
   return isSafeIdentifier(combined) ? combined : undefined;
+}
+
+/** True when `sessionId` names a standalone Claude Code subagent session. */
+export function isClaudeSubagentSessionId(sessionId: string): boolean {
+  const idx = sessionId.indexOf(CLAUDE_SUBAGENT_SEPARATOR);
+  if (idx <= 0 || !isSafeIdentifier(sessionId)) return false;
+  const parent = sessionId.slice(0, idx);
+  const child = sessionId.slice(idx + CLAUDE_SUBAGENT_SEPARATOR.length);
+  return claudeSubagentSessionId(parent, child) === sessionId;
 }
 
 /**
@@ -461,6 +473,7 @@ function reduceLines(
   const states = new Map<string, SessionState>();
   const seenUuids = new Set<string>();
   const subagent = parseClaudeSubagentPath(options.filePath);
+  let sawSidechainRecord = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -482,15 +495,24 @@ function reduceLines(
 
     const rawSessionId = asString(raw['sessionId']);
     if (subagent) {
-      // Fail closed when a standalone subagent transcript carries non-sidechain
-      // or mismatched parent/agent records, mirroring Codex's child-rollout guard.
+      // Real Claude Code 2.1.x subagent files include auxiliary lines
+      // (`api-request*`, `data-flow-*`, `fork-context-ref`) that carry
+      // `agentId` and `sessionId` (or `parentSessionId`) without `isSidechain`.
+      // Reject any mismatched parent/agent identity or explicit `isSidechain: false`,
+      // skip auxiliary lines without `isSidechain`, and require >=1 sidechain record.
+      const boundParentId = rawSessionId ?? asString(raw['parentSessionId']);
+      const sidechainFlag = raw['isSidechain'];
       if (
-        rawSessionId !== subagent.parentSessionId ||
+        boundParentId !== subagent.parentSessionId ||
         asString(raw['agentId']) !== subagent.agentId ||
-        asBoolean(raw['isSidechain']) !== true
+        sidechainFlag === false
       ) {
         return [];
       }
+      if (sidechainFlag !== true) {
+        continue;
+      }
+      sawSidechainRecord = true;
     }
 
     const sessionId = subagent ? subagent.sessionId : rawSessionId;
@@ -509,6 +531,10 @@ function reduceLines(
     const state = states.get(sessionId) ?? createState(sessionId, options.host);
     applyLine(state, raw, subagent !== undefined);
     states.set(sessionId, state);
+  }
+
+  if (subagent && !sawSidechainRecord) {
+    return [];
   }
 
   return Array.from(states.values()).map(finalizeState);
