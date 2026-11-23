@@ -119,6 +119,16 @@ h1 { margin: 0; font: 700 46px/.95 var(--f-display); letter-spacing: .04em; text
 .nav a:hover { background: var(--accent-muted-hover); }
 .nav a[aria-current="page"] { background: var(--accent); color: var(--ink-on-accent); }
 .nav a:active { transform: translateY(1px); }
+/* A navigation still loading: the clicked pill flashes between full and
+   resting signal once the wait outlasts 120 ms, and holds full signal under
+   reduced motion. A destination chosen from the ⋯ menu spins its trigger. */
+.nav a[data-pending] { animation: nav-pending 720ms steps(1, end) 120ms infinite; }
+@keyframes nav-pending { 0% { background: var(--accent); color: var(--ink-on-accent); } 50% { background: var(--accent-muted); color: var(--ink-on-muted); } }
+#menu-btn[data-pending] .icon { visibility: hidden; }
+#menu-btn[data-pending] { position: relative; }
+#menu-btn[data-pending]::after { content: ""; position: absolute; inset: 0; margin: auto; width: 18px; height: 18px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: menu-wait 700ms linear infinite; }
+@keyframes menu-wait { to { transform: rotate(1turn); } }
+@media (prefers-reduced-motion: reduce) { .nav a[data-pending] { animation: none; background: var(--accent); color: var(--ink-on-accent); } #menu-btn[data-pending]::after { animation: none; } }
 
 /* readout strip: the rail's figures on one line where the rail is hidden */
 .strip { display: none; font: 400 11px/1.4 var(--f-mono); color: var(--ink-dim); }
@@ -1042,6 +1052,10 @@ function render(key) {
   try { localStorage.setItem('lcars.dest', d.key); } catch (e) {}
 }
 
+// One simulated navigation at a time: a newer click, any route change and a
+// click on the current destination all settle the pending cue.
+let navTimer, navCue;
+function clearNavPending() { clearTimeout(navTimer); navTimer = undefined; if (navCue) { navCue.removeAttribute('data-pending'); navCue = undefined; } }
 function closeMenu() { $('#menu').removeAttribute('data-open'); $('#menu-btn').setAttribute('aria-expanded', 'false'); }
 
 document.addEventListener('click', (e) => {
@@ -1055,13 +1069,15 @@ document.addEventListener('click', (e) => {
   // Sample links lead nowhere; they must not reset the route.
   if (e.target.closest('a[href="#"]')) { e.preventDefault(); return; }
   const nav = e.target.closest('.nav a, .menu a[data-key]');
-  if (nav) { e.preventDefault(); closeMenu(); location.hash = nav.dataset.key; return; }
+  // Navigation keeps the current page until the next is ready; the control
+  // that started it carries the wait (simulated here as 900 ms).
+  if (nav) { e.preventDefault(); closeMenu(); clearNavPending(); if (nav.dataset.key === document.body.dataset.destination) return; navCue = nav.closest('.menu') ? $('#menu-btn') : nav; navCue.setAttribute('data-pending', ''); const key = nav.dataset.key; navTimer = setTimeout(() => { clearNavPending(); location.hash = key; }, 900); return; }
   if (!e.target.closest('#menu')) closeMenu();
   const seg = e.target.closest('.seg button');
   if (seg && !seg.disabled) seg.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === seg)));
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
-window.addEventListener('hashchange', () => { render(location.hash.slice(1)); window.scrollTo(0, 0); });
+window.addEventListener('hashchange', () => { clearNavPending(); render(location.hash.slice(1)); window.scrollTo(0, 0); });
 
 let start = 'jobs';
 try { document.documentElement.dataset.mantineColorScheme = localStorage.getItem('lcars.scheme') || 'dark'; } catch (e) {}
