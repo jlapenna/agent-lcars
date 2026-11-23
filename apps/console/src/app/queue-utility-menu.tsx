@@ -3,7 +3,8 @@
 import { ActionIcon, Anchor, Menu } from '@mantine/core';
 import { IconDotsVertical } from '@tabler/icons-react';
 import Link from 'next/link';
-import type { ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
+import { type MouseEvent, type ReactNode, useTransition } from 'react';
 
 import type { ActionItem } from '../lib/action-items';
 import { consoleDestinations, type NavKey } from './console-navigation';
@@ -29,6 +30,18 @@ export function QueueUtilityMenu({
 }) {
   const itemActions = useItemOverflowMenu(item);
   const allowedKeys = useConsoleNavigationKeys();
+  const router = useRouter();
+  // The menu closes, and unmounts its links, as soon as one is tapped, while
+  // the current page stays on screen until the next one is ready. Running
+  // the navigation in a transition lets the trigger show the wait instead.
+  const [navigating, startNavigation] = useTransition();
+  const navigate = (href: string) => (event: MouseEvent<HTMLElement>) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    event.preventDefault();
+    startNavigation(() => router.push(href));
+  };
 
   return (
     <Menu position="bottom-end" withinPortal>
@@ -37,7 +50,7 @@ export function QueueUtilityMenu({
           variant="subtle"
           size={44}
           disabled={itemActions.isPending}
-          loading={itemActions.isPending}
+          loading={itemActions.isPending || navigating}
           aria-label="More console options"
           className="queue-utility-trigger"
         >
@@ -55,19 +68,28 @@ export function QueueUtilityMenu({
         {includeNavigation && (
           <>
             <Menu.Label>Navigate</Menu.Label>
-            {consoleDestinations(allowedKeys).map((destination) => (
-              <Menu.Item
-                key={destination.key}
-                component={Link}
-                href={navigationHrefs?.[destination.key] ?? destination.href}
-              >
-                {destination.label}
-              </Menu.Item>
-            ))}
+            {consoleDestinations(allowedKeys).map((destination) => {
+              const href =
+                navigationHrefs?.[destination.key] ?? destination.href;
+              return (
+                <Menu.Item
+                  key={destination.key}
+                  component={Link}
+                  href={href}
+                  onClick={navigate(href)}
+                >
+                  {destination.label}
+                </Menu.Item>
+              );
+            })}
             <Menu.Divider />
           </>
         )}
-        <Menu.Item component={Link} href="/settings">
+        <Menu.Item
+          component={Link}
+          href="/settings"
+          onClick={navigate('/settings')}
+        >
           Settings
         </Menu.Item>
         <div className="queue-utility-menu__control">{signOutControl}</div>

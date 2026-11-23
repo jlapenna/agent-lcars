@@ -1,7 +1,6 @@
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import { Code, Stack, Text } from '@mantine/core';
 import { notFound } from 'next/navigation';
-import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -13,6 +12,7 @@ import type { SessionTranscriptResult } from '../../../lib/session-transcript';
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
 import { repoScopedConsoleHrefs } from '../../console-hrefs';
 import { DetailWorkspace } from '../../detail-workspace';
+import { NavSuspense } from '../../nav-suspense';
 import { OpsPanel } from '../../ops-primitives';
 import { NavPageLoading } from '../../page-loading';
 import { withConsolePageShell } from '../../with-console-page-shell';
@@ -252,7 +252,7 @@ async function SessionDetailPageContent({ params }: PageProps) {
 // than blocking the whole route on the GitHub/Firestore reads.
 export default function SessionDetailPage({ params }: PageProps) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="sessions"
@@ -263,6 +263,6 @@ export default function SessionDetailPage({ params }: PageProps) {
       }
     >
       <SessionDetailPageContent params={params} />
-    </Suspense>
+    </NavSuspense>
   );
 }

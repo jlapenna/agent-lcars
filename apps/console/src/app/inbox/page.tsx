@@ -1,5 +1,4 @@
 import { Anchor } from '@mantine/core';
-import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -30,6 +29,7 @@ import { formatRelativeTime } from '../format';
 import { inboxCardKey, inboxCardMetadata } from '../inbox-card';
 import { InboxNotificationsWatch } from '../inbox-notifications';
 import { LiveDashboard } from '../live-dashboard';
+import { NavSuspense } from '../nav-suspense';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueConsoleUtilities } from '../queue-console-utilities';
 import { RepositorySelector } from '../repository-selector';
@@ -170,14 +170,14 @@ function InboxViewContent({
   return (
     <>
       <LiveDashboard />
-      <Suspense fallback={<PageLoading rows={6} header={false} />}>
+      <NavSuspense fallback={<PageLoading rows={6} header={false} />}>
         <InboxBody
           repoFilter={repoFilter}
           selectedItemKey={selectedItemKey}
           mobileScopeLabel={subtitle}
           watchedRepos={watchedRepos}
         />
-      </Suspense>
+      </NavSuspense>
     </>
   );
 }
@@ -250,7 +250,7 @@ async function InboxPageShell({ searchParams }: PageProps) {
 
 export default function InboxPage({ searchParams }: PageProps) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="inbox"
@@ -261,6 +261,6 @@ export default function InboxPage({ searchParams }: PageProps) {
       }
     >
       <InboxPageShell searchParams={searchParams} />
-    </Suspense>
+    </NavSuspense>
   );
 }

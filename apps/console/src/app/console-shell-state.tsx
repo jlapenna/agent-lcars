@@ -64,7 +64,8 @@ type ReadoutsState =
 const LOADING: ReadoutsState = { status: 'loading' };
 let readoutsState: ReadoutsState = LOADING;
 let inFlight: Promise<void> | undefined;
-let timer: ReturnType<typeof setInterval> | undefined;
+let fetchedAt = Number.NEGATIVE_INFINITY;
+let timer: ReturnType<typeof setTimeout> | undefined;
 let subscribers = 0;
 const readoutListeners = new Set<() => void>();
 
@@ -77,10 +78,9 @@ export function refreshShellReadouts(): Promise<void> {
   inFlight ??= fetch(READOUTS_URL, { cache: 'no-store' })
     .then(async (response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      setReadouts({
-        status: 'ready',
-        readouts: (await response.json()) as ShellReadouts,
-      });
+      const readouts = (await response.json()) as ShellReadouts;
+      fetchedAt = Date.now();
+      setReadouts({ status: 'ready', readouts });
     })
     .catch(() => {
       // Keep the last good figures across a transient failure.
@@ -96,13 +96,27 @@ export function refreshShellReadouts(): Promise<void> {
 function subscribeReadouts(listener: () => void) {
   readoutListeners.add(listener);
   if (++subscribers === 1) {
-    void refreshShellReadouts();
-    timer = setInterval(() => void refreshShellReadouts(), READOUTS_REFRESH_MS);
+    // A client navigation unmounts the old page's frame before mounting the
+    // new one, so the count passes through zero on every route change. Keep
+    // the refresh cadence anchored to the last fetch rather than restarting
+    // it: figures older than one period refresh now, fresher ones when their
+    // period ends.
+    const age = Date.now() - fetchedAt;
+    const refreshEveryPeriod = () => {
+      void refreshShellReadouts();
+      timer = setInterval(
+        () => void refreshShellReadouts(),
+        READOUTS_REFRESH_MS,
+      );
+    };
+    if (age >= READOUTS_REFRESH_MS) refreshEveryPeriod();
+    else timer = setTimeout(refreshEveryPeriod, READOUTS_REFRESH_MS - age);
   }
   return () => {
     readoutListeners.delete(listener);
     if (--subscribers === 0) {
-      clearInterval(timer);
+      // Timeout and interval handles share one id space.
+      clearTimeout(timer);
       timer = undefined;
     }
   };
@@ -147,6 +161,7 @@ export function useShellIdentity(): ShellIdentity | undefined {
 export function resetShellStateForTests() {
   readoutsState = LOADING;
   inFlight = undefined;
+  fetchedAt = Number.NEGATIVE_INFINITY;
   liveState = undefined;
 }
 
