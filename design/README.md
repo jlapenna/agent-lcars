@@ -78,6 +78,11 @@ Decisions the prototype already carries:
   Refresh, the ⋯ console menu (preferences and identity, plus the
   destinations below 64em, where the pills fold away) and the
   live status, which reads "Snapshot · loaded …" on routes without a stream.
+- A client navigation keeps the current page on screen until the next one
+  is ready; it never swaps in a skeleton or a generic loading frame. The
+  control that started it carries the wait: the clicked pill flashes once the
+  wait outlasts 120 ms (held lit under reduced motion), and a destination
+  chosen from the ⋯ menu spins its trigger. Hard loads still stream page skeletons.
 - The data-warnings band says "All sources reporting" only when every read
   the page made completed.
 - Panels the first drawing lacked are drawn in its language: Agents' fleet
