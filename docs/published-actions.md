@@ -65,7 +65,7 @@ owns reviewer behavior. Enabling this check also needs a working LCARS
 review dispatch path for that repository. Stage the workflow first and verify
 that a deployed reviewer produced a review and the App published a successful check.
 Before switching enforcement or replacing its publisher, verify each affected
-open PR that GitHub can merge has a successful `LCARS review` check from App 4457090 on its current head. The publisher accepts
+open PR has a successful `LCARS review` check from App 4457090 on its current head. The publisher accepts
 the deployed reviewer’s existing attempt and verdict markers. Non-draft Renovate
 and Dependabot PRs whose commits are all GitHub-signed by the bot (excluding LCARS's
 qualification-gated `renovate/runner-cli-runtimes`,

@@ -51,6 +51,25 @@ async function waitReady(page: Page, label: string) {
   );
 }
 
+/**
+ * Holds every RSC request for `path` (prefetches included) until the test
+ * releases it, so a navigation stays pending for exactly as long as the test
+ * needs. Register it before the first page load: a prefetch that already
+ * completed would let the navigation skip the hold.
+ */
+async function holdRsc(page: Page, path: string) {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  await page.route(
+    (url) => url.pathname === path,
+    async (route) => {
+      if (route.request().headers()['rsc']) await released;
+      await route.continue();
+    },
+  );
+  return release;
+}
+
 test('@navperf rail navigation keeps the frame and skips skeletons', async ({
   page,
 }) => {
@@ -72,6 +91,9 @@ test('@navperf rail navigation keeps the frame and skips skeletons', async ({
   }
 
   await page.evaluate(() => {
+    // A page fallback shell or a section loader: either is a skeleton.
+    const SKELETON =
+      '[data-streaming-fallback], [role="status"][aria-label="Loading"]';
     const w = window as unknown as { __skeletons?: number };
     w.__skeletons = 0;
     new MutationObserver((records) => {
@@ -79,8 +101,7 @@ test('@navperf rail navigation keeps the frame and skips skeletons', async ({
         for (const node of record.addedNodes) {
           if (
             node instanceof Element &&
-            (node.matches('[role="status"][aria-label="Loading"]') ||
-              node.querySelector('[role="status"][aria-label="Loading"]'))
+            (node.matches(SKELETON) || node.querySelector(SKELETON))
           ) {
             w.__skeletons = (w.__skeletons ?? 0) + 1;
           }
@@ -201,21 +222,16 @@ test('@navperf hard loads never show streamed content twice', async ({
 
 /**
  * Without a skeleton, a slow client navigation keeps the old page on screen,
- * so the clicked pill carries the wait. Delaying the RSC response makes the
- * navigation slow enough to see the signal, then the destination clears it.
+ * so the clicked pill carries the wait. Holding the RSC response keeps the
+ * navigation pending until the signal is seen; the destination clears it.
  */
 test('@navperf the clicked pill signals a slow navigation', async ({
   page,
 }) => {
   await page.setExtraHTTPHeaders(E2E_ADMIN_HEADERS);
+  const release = await holdRsc(page, '/costs');
   await page.goto('/');
   await waitReady(page, 'Bridge');
-  await page.route('**/costs**', async (route) => {
-    if (route.request().headers()['rsc']) {
-      await new Promise((resolve) => setTimeout(resolve, 1_500));
-    }
-    await route.continue();
-  });
   const pill = page
     .getByRole('navigation', { name: 'Console sections' })
     .first()
@@ -229,6 +245,7 @@ test('@navperf the clicked pill signals a slow navigation', async ({
   // The suite emulates reduced motion, which holds the pill lit instead of
   // flashing it; either way it leaves its resting signal.
   await expect.poll(background).not.toBe(resting);
+  release();
   await waitReady(page, 'Costs');
   await expect(page.locator('.lcars-nav-pending')).toHaveCount(0);
 });
@@ -238,19 +255,15 @@ test('@navperf the phone menu trigger signals a slow navigation', async ({
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.setExtraHTTPHeaders(E2E_ADMIN_HEADERS);
+  const release = await holdRsc(page, '/costs');
   await page.goto('/');
-  await page.route('**/costs**', async (route) => {
-    if (route.request().headers()['rsc']) {
-      await new Promise((resolve) => setTimeout(resolve, 1_500));
-    }
-    await route.continue();
-  });
   const trigger = page
     .getByRole('button', { name: 'More console options' })
     .first();
   await trigger.click();
   await page.getByRole('menuitem', { name: 'Costs' }).click();
   await expect(trigger).toHaveAttribute('data-loading', 'true');
+  release();
   await expect(page).toHaveURL(/\/costs/);
   await expect(
     page.getByRole('button', { name: 'More console options' }).first(),

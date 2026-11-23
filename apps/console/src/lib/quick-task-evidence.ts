@@ -60,7 +60,6 @@ const QUEUE_REASON_VALUES = new Set([
   'review-requested',
   'ready-for-agent',
   'run-failed',
-  'merge-blocked',
   'silent-error',
 ]);
 

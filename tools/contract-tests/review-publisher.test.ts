@@ -170,7 +170,10 @@ const conclusions = (state: State) =>
     ),
   );
 
-describe('shared LCARS review publisher', () => {
+// Each test runs the real script, which starts `gh` and `jq` dozens of times.
+// Alone that takes about a second; beside the rest of the contract suite it
+// has passed the default five seconds.
+describe('shared LCARS review publisher', { timeout: 30_000 }, () => {
   it('publishes an approval on the test merge commit and on the head', () => {
     const state = publisher({ reviews: [review('APPROVED')] }).run();
 

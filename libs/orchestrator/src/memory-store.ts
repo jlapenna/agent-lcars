@@ -37,6 +37,7 @@ import {
   type ProviderCooldown,
   providerCooldownForRun,
   providerIsCoolingDown,
+  shouldWriteProviderCooldown,
 } from './provider-cooldown';
 import { retainsPhysicalClaim } from './provider-routing';
 import {
@@ -451,7 +452,13 @@ export class MemoryStore implements OrchestratorStore {
     for (const run of [decision.run, ...(decision.additionalRuns ?? [])]) {
       if (run === undefined) continue;
       const cooldown = providerCooldownForRun(run);
-      if (cooldown !== undefined)
+      if (
+        cooldown !== undefined &&
+        shouldWriteProviderCooldown(
+          this.#providerCooldowns.get(cooldown.pipeline),
+          cooldown,
+        )
+      )
         this.#providerCooldowns.set(cooldown.pipeline, cooldown);
     }
     for (const entry of decision.outbox) {
@@ -675,14 +682,15 @@ export class MemoryStore implements OrchestratorStore {
 
   async readWaitingDeliveryTasks(binding: {
     repo: string;
-    number: number;
+    number?: number;
   }): Promise<VersionedTask[]> {
     return [...this.#tasks.values()]
       .filter(
         (entry) =>
           entry.task.delivery?.state === 'waiting' &&
           entry.task.delivery.repo === binding.repo &&
-          entry.task.delivery.number === binding.number,
+          (binding.number === undefined ||
+            entry.task.delivery.number === binding.number),
       )
       .map((entry) => structuredClone(entry));
   }

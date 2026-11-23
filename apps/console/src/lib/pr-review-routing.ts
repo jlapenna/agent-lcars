@@ -275,3 +275,48 @@ export function selectCrossModelReviewer(input: {
     crossModelOverride,
   };
 }
+
+export interface PullRequestRemediationSelection {
+  pipeline: AgentPipeline;
+  fallbackPipelines: AgentPipeline[];
+}
+
+const DEFAULT_REMEDIATION_ORDER: readonly AgentPipeline[] = [
+  'claude',
+  'codex',
+  'agy',
+];
+
+/**
+ * Selects the primary coding pipeline and ordered quota-fallback pipelines
+ * for remediating review comments or merge conflicts on a pull request.
+ * Prefers the authoring pipeline first, then falls back across the remaining
+ * supported coding providers so a single provider's quota limit never stalls
+ * PR remediation or loops a human in.
+ */
+export function selectPullRequestRemediation(input: {
+  authorPipeline?: AgentPipeline;
+  preferredPipeline?: AgentPipeline;
+  supportedPipelines?: readonly AgentPipeline[];
+}): PullRequestRemediationSelection {
+  const repoSupported = input.supportedPipelines ?? DISPATCH_PIPELINES;
+  const supportedSet = new Set<AgentPipeline>(
+    repoSupported.length > 0 ? repoSupported : DISPATCH_PIPELINES,
+  );
+  const candidates: AgentPipeline[] = [];
+  for (const candidate of [
+    input.preferredPipeline,
+    input.authorPipeline,
+    ...DEFAULT_REMEDIATION_ORDER,
+  ]) {
+    if (
+      candidate !== undefined &&
+      supportedSet.has(candidate) &&
+      !candidates.includes(candidate)
+    ) {
+      candidates.push(candidate);
+    }
+  }
+  const [pipeline = 'claude', ...fallbackPipelines] = candidates;
+  return { pipeline, fallbackPipelines };
+}
