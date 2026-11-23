@@ -4,9 +4,46 @@ set -euo pipefail
 # GitHub may coalesce queued runs in the concurrency group.
 pulls=$(gh api --method GET --paginate "repos/$REPO/pulls" -f base="$BASE" -f state=open -F per_page=100 --jq '.[] | [.number, .head.sha] | @tsv')
 encoded_base=$(jq -nr --arg base "$BASE" '$base | @uri')
-required=$(gh api --paginate --slurp "repos/$REPO/rules/branches/$encoded_base" | jq -r '
+rules=$(gh api --paginate --slurp "repos/$REPO/rules/branches/$encoded_base")
+required=$(jq -r '
   any(.[][] | .parameters.required_status_checks[]?;
-      .context == "LCARS review (merge candidate)" and .integration_id == 4457090)')
+      .context == "LCARS review (merge candidate)" and .integration_id == 4457090)' <<< "$rules")
+# A ruleset evaluating the update of the default branch looks for a required
+# check on the pull request head. It does not find one published only on the
+# test merge commit, although GitHub's auto-merge counts it there (#3473). So
+# the same verdict is also published on the head as `LCARS review`, the
+# context a ruleset can require.
+required_head=$(jq -r '
+  any(.[][] | .parameters.required_status_checks[]?;
+      .context == "LCARS review" and .integration_id == 4457090)' <<< "$rules")
+
+# publish_check COMMIT NAME EXTERNAL_ID IS_REQUIRED
+# Writes the verdict in $state/$description/$conclusion/$details_url to one
+# App check run on COMMIT, updating the existing run so a blocking rereview
+# revokes an earlier success.
+publish_check() {
+  local commit=$1 name=$2 external_id=$3 is_required=$4
+  local encoded_name checks current id
+  encoded_name=$(jq -nr --arg name "$name" '$name | @uri')
+  checks=$(gh api --paginate --slurp "repos/$REPO/commits/$commit/check-runs?check_name=$encoded_name&filter=all&per_page=100")
+  current=$(jq -c --arg external_id "$external_id" \
+    '[.[].check_runs[] | select(.app.id == 4457090 and .external_id == $external_id)] | max_by(.id)' <<< "$checks")
+  local fields=(-f name="$name" -f details_url="$details_url"
+    -f "output[title]=$description" -f "output[summary]=$description"
+    -f conclusion="$conclusion")
+  if [[ "$current" == null ]]; then
+    # Missing required checks block merge. During staging, an optional
+    # failed check would also hold unrelated Renovate updates.
+    [[ "$is_required" == true || "$state" == success ]] || return 0
+    GH_TOKEN="$PUBLISHER_TOKEN" gh api --method POST "repos/$REPO/check-runs" -f head_sha="$commit" -f external_id="$external_id" \
+      -f status=completed "${fields[@]}" --silent
+  elif ! jq -e --arg title "$description" --arg url "$details_url" --arg conclusion "$conclusion" \
+    '.status == "completed" and .details_url == $url and .output.title == $title and .conclusion == $conclusion' <<< "$current" >/dev/null; then
+    id=$(jq -r .id <<< "$current")
+    GH_TOKEN="$PUBLISHER_TOKEN" gh api --method PATCH "repos/$REPO/check-runs/$id" -f status=completed "${fields[@]}" |
+      jq -e --arg conclusion "$conclusion" ' .status == "completed" and .conclusion == $conclusion' >/dev/null
+  fi
+}
 read_candidate() {
   # GraphQL variables must reach GitHub literally.
   # shellcheck disable=SC2016
@@ -95,23 +132,24 @@ done <<< "$pulls"
 for target in "${!candidate_heads[@]}"; do
   head=${candidate_heads[$target]}
   candidate=$target
-  # Update the existing check so a blocking rereview revokes success.
-  checks=$(gh api --paginate --slurp "repos/$REPO/commits/$candidate/check-runs?check_name=LCARS%20review%20%28merge%20candidate%29&filter=all&per_page=100")
-  current=$(jq -c '[.[].check_runs[] | select(.app.id == 4457090 and .external_id == "lcars-review-merge-candidate")] | max_by(.id)' <<< "$checks")
   # Refresh membership and all applicable reviews after the repository scan.
   # PRs sharing a test merge commit necessarily share its second parent.
   matching=$(gh api --paginate --slurp "repos/$REPO/commits/$head/pulls?per_page=100" |
     jq -r --arg head "$head" --arg base "$BASE" '.[][] | select(.state == "open" and .head.sha == $head and .base.ref == $base) | .number')
   [[ -n "$matching" ]] || continue
   selected_pr=
+  head_verdict_known=true
   while read -r pr; do
     read_candidate
     if [[ -n "$candidate" && "$candidate" != "$target" ]]; then
       continue
     elif [[ -z "$candidate" ]]; then
       # Mergeability may still be computing for a PR with identical parents.
+      # That says nothing about the review of the head, so the head check is
+      # left as it is until a later run can read the verdict.
       state=pending
       description="Awaiting GitHub merge candidate"
+      head_verdict_known=false
     else
       read_verdict
     fi
@@ -122,24 +160,12 @@ for target in "${!candidate_heads[@]}"; do
   pr=$selected_pr
   candidate=$target
   details_url="https://github.com/$REPO/pull/$pr"
-  fields=(-f name="LCARS review (merge candidate)" -f details_url="$details_url"
-    -f "output[title]=$description" -f "output[summary]=$description")
-  check_status=completed
   conclusion=failure
   if [[ "$state" == success ]]; then
     conclusion=success
   fi
-  fields+=(-f conclusion="$conclusion")
-  if [[ "$current" == null ]]; then
-    # Missing required checks block merge. During staging, an optional
-    # failed check would also hold unrelated Renovate updates.
-    [[ "$required" == true || "$state" == success ]] || continue
-    GH_TOKEN="$PUBLISHER_TOKEN" gh api --method POST "repos/$REPO/check-runs" -f head_sha="$candidate" -f external_id=lcars-review-merge-candidate \
-      -f status="$check_status" "${fields[@]}" --silent
-  elif ! jq -e --arg status "$check_status" --arg title "$description" --arg url "$details_url" --arg conclusion "$conclusion" \
-    '.status == $status and .details_url == $url and .output.title == $title and .conclusion == $conclusion' <<< "$current" >/dev/null; then
-    id=$(jq -r .id <<< "$current")
-    GH_TOKEN="$PUBLISHER_TOKEN" gh api --method PATCH "repos/$REPO/check-runs/$id" -f status="$check_status" "${fields[@]}" |
-      jq -e --arg conclusion "$conclusion" ' .status == "completed" and .conclusion == $conclusion' >/dev/null
+  publish_check "$candidate" "LCARS review (merge candidate)" lcars-review-merge-candidate "$required"
+  if [[ "$head_verdict_known" == true ]]; then
+    publish_check "$head" "LCARS review" lcars-review "$required_head"
   fi
 done
