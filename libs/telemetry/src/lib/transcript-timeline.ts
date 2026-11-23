@@ -470,11 +470,10 @@ function updatePendingToolResults(
     if (event.kind === 'tool_use') toolUses += 1;
     else if (event.kind === 'tool_result') toolResults += 1;
   }
-  if (toolUses > 0) {
-    return toolUses;
-  }
-  if (toolResults > 0) {
-    return Math.max(0, current - toolResults);
+  if (toolUses > 0 || toolResults > 0) {
+    // Parallel calls accumulate with those still outstanding, so a page never
+    // ends after result A while call B still awaits its result.
+    return Math.max(0, current + toolUses - toolResults);
   }
   // A plain user/assistant text turn or terminal result with no tool blocks
   // closes any interrupted tool call that never produced a tool_result.

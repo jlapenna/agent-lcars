@@ -682,6 +682,71 @@ describe('parseTranscriptTimelineChunk & mergeTranscriptTimelinePages', () => {
     expect(merged).toEqual(parseTranscriptTimeline(raw, 'codex').events);
   });
 
+  it('keeps parallel Codex calls pending until every result arrives', () => {
+    const call = (id: string, ts: string) =>
+      JSON.stringify({
+        type: 'response_item',
+        timestamp: ts,
+        payload: {
+          type: 'function_call',
+          name: 'shell',
+          call_id: id,
+          arguments: '{}',
+        },
+      });
+    const output = (id: string, ts: string) =>
+      JSON.stringify({
+        type: 'response_item',
+        timestamp: ts,
+        payload: {
+          type: 'function_call_output',
+          call_id: id,
+          output: `out ${id}`,
+        },
+      });
+    const lines = [
+      JSON.stringify({
+        type: 'response_item',
+        timestamp: '2026-10-01T00:00:00Z',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Running two calls.' }],
+        },
+      }),
+      call('a', '2026-10-01T00:00:01Z'),
+      call('b', '2026-10-01T00:00:02Z'),
+      output('a', '2026-10-01T00:00:03Z'),
+      output('b', '2026-10-01T00:00:04Z'),
+    ];
+    const raw = `${lines.join('\n')}\n`;
+    const full = Buffer.from(raw, 'utf8');
+    const firstChunk = Buffer.from(`${lines.slice(0, 4).join('\n')}\n`, 'utf8');
+    const page1 = parseTranscriptTimelineChunk(firstChunk, {
+      startOffset: 0,
+      eof: false,
+      agent: 'codex',
+    });
+    // Call B is still outstanding, so the page snaps back to the text turn.
+    expect(page1.events).toEqual([
+      expect.objectContaining({ kind: 'text', text: 'Running two calls.' }),
+    ]);
+    expect(page1.nextOffset).toBe(Buffer.byteLength(`${lines[0]}\n`));
+
+    const page2 = parseTranscriptTimelineChunk(
+      full.subarray(page1.nextOffset),
+      {
+        startOffset: page1.nextOffset,
+        eof: true,
+        agent: 'codex',
+        initialState: page1.nextState,
+      },
+    );
+    expect(mergeTranscriptTimelinePages(page1.events, page2.events)).toEqual(
+      parseTranscriptTimeline(raw, 'codex').events,
+    );
+  });
+
   it.each([
     ['normal-session.jsonl', 'claude-code'],
     ['session-with-subagent.jsonl', 'claude-code'],

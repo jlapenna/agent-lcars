@@ -27,6 +27,11 @@ const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const PREFIX = 'cli-consented-v1/';
 const UPLOAD_CHUNK_BYTES = 64 * 1024;
 const RESUMABLE_UPLOAD_THRESHOLD_BYTES = 5 * 1024 * 1024;
+// Without a chunk size the Storage SDK sends one PUT and keeps only its latest
+// input buffer, so a retryable failure that commits an older offset cannot be
+// replayed. Bounded chunks (a multiple of 256 KiB) let it resume at the
+// committed offset while buffering at most this many bytes.
+const RESUMABLE_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 
 /** Refuse uploads until the owning Terraform lifecycle has actually landed. */
 export function cliArchiveRetentionReady(metadata: unknown): boolean {
@@ -502,7 +507,9 @@ export function defaultCliArchiveDependencies(
             .bucket(bucket)
             .file(object)
             .createWriteStream({
-              resumable: byteLength > RESUMABLE_UPLOAD_THRESHOLD_BYTES,
+              ...(byteLength > RESUMABLE_UPLOAD_THRESHOLD_BYTES
+                ? { resumable: true, chunkSize: RESUMABLE_UPLOAD_CHUNK_BYTES }
+                : { resumable: false }),
               contentType: 'application/x-ndjson',
               preconditionOpts: { ifGenerationMatch: 0 },
             }),

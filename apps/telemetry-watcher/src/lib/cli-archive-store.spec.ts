@@ -195,7 +195,7 @@ it('refuses an older capture after a newer consent and fences a changed host', a
     ),
   ).toBe(false);
 });
-it('streams uploads via createWriteStream with resumable enabled above 5 MiB and destroys stream on missing retention', async () => {
+it('streams uploads via createWriteStream with bounded-chunk resumable uploads above 5 MiB and destroys stream on missing retention', async () => {
   const store = deps();
   await store.upload(
     'cli-consented-v1/codex/session-1/small.jsonl',
@@ -217,8 +217,9 @@ it('streams uploads via createWriteStream with resumable enabled above 5 MiB and
     Readable.from([Buffer.from('{"big":true}\n')]),
     6 * 1024 * 1024,
   );
-  expect(state.lastWriteOptions).toMatchObject({
+  expect(state.lastWriteOptions).toEqual({
     resumable: true,
+    chunkSize: 8 * 1024 * 1024,
     contentType: 'application/x-ndjson',
     preconditionOpts: { ifGenerationMatch: 0 },
   });

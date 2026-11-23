@@ -897,7 +897,8 @@ CLI sessions and dispatched runs.
   `PaginatedTranscriptView`, from GCS) for dispatched `issue-agent` sessions
   whose agent is in `RENDERABLE_TRANSCRIPT_AGENTS`: Claude Code, Codex,
   OpenCode (archived OpenCode exports, #2253), and Antigravity (#3226). SSR
-  renders the first page (`512 KiB` JSONL byte range or `500` OpenCode events,
+  renders the first page (a `512 KiB` initial JSONL read window, which grows
+  to finish a record longer than the window, or `500` OpenCode events,
   collapsing single-page transcripts above 400 events), and subsequent pages
   load incrementally via `/api/sessions/[id]/transcript` with snapshot-bound
   cursors and cross-page subagent/turn continuity (#3404). An archive that is
@@ -974,6 +975,7 @@ CLI sessions and dispatched runs.
 | `/api/work/v1/costs/budget`                                                 | `costs.reader` Work grant                                                                                | Optional fixed-selection cost budget readout for operator integrations                                                                                            |
 | `/api/inbox-notifications`                                                  | admin session                                                                                            | Inbox notification snapshot for open-tab polling (FE-IN-10)                                                                                                       |
 | `/api/inbox-push`                                                           | admin session cookie and same-origin `Origin`                                                            | `POST` only: the service worker's re-check after a push, returning the current decisions for that browser; subscriptions are managed by server actions (FE-IN-10) |
+| `/api/sessions/[id]/transcript`                                             | admin session                                                                                            | `GET` only: the next transcript page for a snapshot-bound cursor (`Cache-Control: private, no-store`); `410` when CLI consent expired or was revoked (FE-SE-4)    |
 | `/api/quick-task-evidence/v1/[id]`                                          | capability ID                                                                                            | Screenshot evidence bytes; revocable                                                                                                                              |
 | `/api/logs/error`                                                           | public                                                                                                   | Browser error reporting                                                                                                                                           |
 | `/manifest.webmanifest`                                                     | public                                                                                                   | Web app manifest that makes the console installable (§4)                                                                                                          |
