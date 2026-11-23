@@ -26,7 +26,7 @@ printf '%s\n' '# fixture code-review command' > "$dependency_fixture/plugins/cod
 printf '%s\n' 'fixture license' > "$dependency_fixture/plugins/code-review/LICENSE"
 git init --quiet "$dependency_fixture"
 git -C "$dependency_fixture" add -A
-git -C "$dependency_fixture" -c user.name=fixture -c user.email=fixture@example.invalid \
+git -C "$dependency_fixture" -c user.name=fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false \
   commit --quiet -m fixture
 fixture_revision="$(git -C "$dependency_fixture" rev-parse HEAD)"
 adapter_relpath=agents/shared/skills/agent-protocol/reference/anthropic-code-review/README.md
