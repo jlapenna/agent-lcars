@@ -673,10 +673,15 @@ class GitHubRateLimitBackoffError(RuntimeError):
         self.retry_after_seconds = retry_after_seconds
         self.reset_epoch = reset_epoch
         if reset_epoch is not None:
-            reset_iso = datetime.fromtimestamp(reset_epoch, UTC).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            )
-            detail = f"reset at {reset_iso}, {retry_after_seconds:.1f}s remaining"
+            try:
+                reset_text = datetime.fromtimestamp(reset_epoch, UTC).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+            except (OverflowError, OSError, ValueError):
+                # A malformed reset header must not replace this backoff error
+                # with one the poller's rate-limit handling does not catch.
+                reset_text = f"epoch {reset_epoch}"
+            detail = f"reset at {reset_text}, {retry_after_seconds:.1f}s remaining"
         else:
             detail = f"{retry_after_seconds:.1f}s remaining"
         super().__init__(f"GitHub API backoff active for owner {owner} ({detail})")

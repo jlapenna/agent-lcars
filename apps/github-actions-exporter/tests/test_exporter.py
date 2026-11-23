@@ -4003,6 +4003,36 @@ class PerOwnerQuotaTests(unittest.TestCase):
         api.get(path, endpoint="runs")
         self.assertFalse(api.has_optional_quota("jlapenna"))
 
+    def test_out_of_range_reset_header_still_raises_backoff_error(self):
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=("jlapenna/homelab",),
+        )
+        api = exporter.GitHubAPI(
+            config,
+            exporter.ExporterState(CollectorRegistry()),
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+        self.addCleanup(api.close)
+        path = "/repos/jlapenna/homelab/actions/runs"
+        api.session.get = Mock(
+            return_value=self.json_response(
+                {},
+                status_code=403,
+                headers={
+                    "x-ratelimit-remaining": "0",
+                    "x-ratelimit-reset": str(10**12),
+                },
+            )
+        )
+        with self.assertRaises(exporter.GitHubRequestError):
+            api.get(path, endpoint="runs")
+        with self.assertRaises(exporter.GitHubRateLimitBackoffError) as raised:
+            api.get(path, endpoint="runs")
+        self.assertIn(f"epoch {10**12}", str(raised.exception))
+        api.session.get.assert_called_once()
+
 
 class InstallationReinstallTests(unittest.TestCase):
     """A reinstall issues a new installation id; the process can outlive it."""
