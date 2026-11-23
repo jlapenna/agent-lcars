@@ -183,7 +183,8 @@ const payload = join(output, 'review.json');
 const prompt = `Review jlapenna/agent-lcars#${pull} at the immutable head ${head}.
 This is a live native-harness qualification of the LCARS review procedure.
 Read ${join(imageId ? baked : procedure, 'README.md')} and its packaged upstream.md. Apply their
-four independent review passes and fresh validation to the actual source change.
+Full 2-pass review (guardrails and bugs), deduplicate overlapping root-cause
+candidates before validation, and run fresh validation on the actual source change.
 The full diff is ${join(output, 'change.diff')}; scoped guidance is
 ${join(output, 'guidance.md')}; PR metadata is ${join(output, 'pr.json')}.
 Give every child the full diff, guidance, PR metadata and exact head. Children
@@ -205,10 +206,12 @@ ${sourceRef ? `This is an explicitly labelled historical snapshot of the real PR
 For this qualification ONLY, replace remote publication with a captured GitHub
 review payload in ${payload}: {commit_id, event, body, comments}. Use COMMENT
 with an explicit verdict because this run must not approve or block a real PR.
+A passing verdict (<!-- lcars-review:pass -->) must set comments to [] so no
+non-blocking inline threads are created.
 Its body must include this exact line: ${marker}
 Write ${receipt} with {head, complete, verdict, reviewers, candidates, validators,
 limitations}. reviewers is an array of {role, nativeSessionId, complete}; roles
-are guidance-a, guidance-b, bugs-a, bugs-b. candidates is an array of {id,
+are guardrails, bugs. candidates is an array of {id,
 description, path, line}; validators is an array of {candidateId, nativeSessionId,
 decision, evidence}, with decision exactly confirmed or rejected. Identify the
 actual fresh native sessions, not invented IDs.
