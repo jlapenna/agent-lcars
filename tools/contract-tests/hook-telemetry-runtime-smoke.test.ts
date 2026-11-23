@@ -605,7 +605,7 @@ const injectedMode=fs.existsSync(injectionFile)?fs.readFileSync(injectionFile,'u
 const launcher=fs.readFileSync(path.join(process.env.PATH.split(':')[0],'lcars'),'utf8');
 const runtimeLib=launcher.match(/exec node (.+)\\/lcars-session-title\\.cjs/)[1];
 if(!injectedMode){
-const child=childProc.spawn(process.execPath,['-e','process.title="sk-comm-secret1"; setInterval(() => {}, 1000)','private-arg-secret'],{
+const child=childProc.spawn(process.execPath,['-e','process.title="sk-comm-secret1"; setInterval(() => {}, 1000); setTimeout(() => process.exit(0), 120000)','private-arg-secret'],{
 detached:true,stdio:'ignore',env:{...process.env,PRIVATE_ENV:'private-env-secret'}
 });
 const start=fs.readFileSync('/proc/'+child.pid+'/stat','utf8').split(') ')[1].split(' ')[19];
@@ -626,7 +626,7 @@ if(injectedMode==='degraded-marker'){
 const launcher=fs.readFileSync(path.join(process.env.PATH.split(':')[0],'lcars'),'utf8');
 const runtimeLib=launcher.match(/exec node (.+)\\/lcars-session-title\\.cjs/)[1];
 fs.mkdirSync(path.join(runtimeLib,'.hook-smoke-deadline-degraded'));
-const child=require('node:child_process').spawn(process.execPath,['-e','setInterval(() => {}, 1000)'],{
+const child=require('node:child_process').spawn(process.execPath,['-e','setInterval(() => {}, 1000); setTimeout(() => process.exit(0), 120000)'],{
 detached:true,stdio:'ignore',env:process.env
 });
 const start=fs.readFileSync('/proc/'+child.pid+'/stat','utf8').split(') ')[1].split(' ')[19];

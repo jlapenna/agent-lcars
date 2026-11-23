@@ -71,8 +71,18 @@ class DrainTests(unittest.TestCase):
                 for key, value in os.environ.items()
                 if key not in ("HOOK_DRAIN_DEADLINE_SECONDS", "HOOK_SMOKE_DEGRADE_DEADLINE")
             }
+            real_readlink = os.readlink
+
+            # Emulated (QEMU user-mode) builds report the emulator for a peer's
+            # /proc/<pid>/exe, so the deterministic label uses a known lookup.
+            def known_exe(target, *args, **kwargs):
+                if str(target).endswith("/exe"):
+                    return "/usr/bin/python3"
+                return real_readlink(target, *args, **kwargs)
+
             with mock.patch.dict(os.environ, clean_env, clear=True), \
                     mock.patch.object(sys, "argv", [str(HELPER), scratch]), \
+                    mock.patch("os.readlink", side_effect=known_exe), \
                     mock.patch("time.monotonic", side_effect=[0, 31]), \
                     contextlib.redirect_stderr(diagnostics), \
                     self.assertRaises(SystemExit) as result:
@@ -159,10 +169,12 @@ class DrainTests(unittest.TestCase):
                 timeout=10,
             )
             self.assertEqual(result.returncode, 75)
-            self.assertEqual(
+            # The live label depends on the host's /proc/<pid>/exe view (an
+            # emulator under QEMU), so only the allowlisted shape is asserted here.
+            self.assertRegex(
                 result.stderr.strip(),
-                "hook smoke cleanup: process drainage refused; retaining private scratch; "
-                "exception=RuntimeError errno=none reason=deadline processes=python3",
+                r"^hook smoke cleanup: process drainage refused; retaining private scratch; "
+                r"exception=RuntimeError errno=none reason=deadline processes=(python3|unknown)$",
             )
             self.assertNotIn("sk-comm-secret1", result.stderr)
             self.assertNotIn("private-arg-secret", result.stderr)
