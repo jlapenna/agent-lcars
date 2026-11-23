@@ -235,8 +235,8 @@ case "${CI:-}" in
   1 | true) SAFE_ENV+=("CI=1") ;;
 esac
 
-# Corepack and Firebase normally store downloaded tooling below HOME. Point
-# only those caches at their conventional durable locations so an isolated HOME
+# Corepack, Firebase and SWC normally cache tooling below HOME. Point only
+# those caches at their conventional durable locations so an isolated HOME
 # does not force network downloads on every run (or break offline runs). Do not
 # preserve ambient cache overrides: they could widen the filesystem paths
 # admitted through this boundary.

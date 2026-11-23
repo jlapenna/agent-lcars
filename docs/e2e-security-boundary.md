@@ -45,11 +45,13 @@ authorization, never the direct `e2e-run` target.
 allowlist. That list contains the build-time Firebase/Auth dummy values,
 Playwright's browser location, the safe suite-selection control (`E2E_GREP`),
 the network-boundary control (`E2E_NETWORK_MODE`), and the caller's
-conventional Corepack and Firebase emulator cache paths. Keeping
-`COREPACK_HOME` and `FIREBASE_EMULATORS_PATH` at those two derived locations
-lets already installed package-manager and emulator distributions work offline
-without exposing the rest of the caller's home as process configuration;
-ambient cache overrides are not trusted.
+conventional Corepack, Firebase emulator and SWC native-addon cache paths.
+Keeping `COREPACK_HOME`, `FIREBASE_EMULATORS_PATH` and
+`SWC_NATIVE_BINDING_CACHE` at those three derived locations lets already
+installed package-manager and emulator distributions work offline, and lets SWC
+load its native addon when the temporary `HOME` sits in a tree SWC refuses as a
+cache root, without exposing the rest of the caller's home as process
+configuration; ambient cache overrides are not trusted.
 
 `E2E_NETWORK_MODE` accepts `host` (the unchanged default) or `loopback`. The
 `loopback` mode requires an existing Linux network namespace with only the
