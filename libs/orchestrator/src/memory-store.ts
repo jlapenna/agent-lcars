@@ -556,6 +556,14 @@ export class MemoryStore implements OrchestratorStore {
     return projection === undefined ? undefined : structuredClone(projection);
   }
 
+  async readGithubAnchorProjections(
+    anchors: readonly GithubAnchorProjection['anchor'][],
+  ): Promise<(GithubAnchorProjection | undefined)[]> {
+    return Promise.all(
+      anchors.map((anchor) => this.readGithubAnchorProjection(anchor)),
+    );
+  }
+
   async listOpenGithubAnchorProjections(
     limit = 200,
   ): Promise<GithubAnchorProjection[]> {

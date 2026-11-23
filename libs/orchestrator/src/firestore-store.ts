@@ -858,6 +858,33 @@ export class FirestoreStore implements OrchestratorStore {
       : githubAnchorProjectionSchema.parse(projection);
   }
 
+  async readGithubAnchorProjections(
+    anchors: readonly GithubAnchorProjection['anchor'][],
+  ): Promise<(GithubAnchorProjection | undefined)[]> {
+    const chunks: GithubAnchorProjection['anchor'][][] = [];
+    for (
+      let offset = 0;
+      offset < anchors.length;
+      offset += FirestoreStore.#getAllSize
+    )
+      chunks.push(anchors.slice(offset, offset + FirestoreStore.#getAllSize));
+    const got = await Promise.all(
+      chunks.map((chunk) =>
+        chunk.length === 0
+          ? []
+          : this.#firestore.getAll(
+              ...chunk.map((anchor) => this.#githubAnchorRef(anchor)),
+            ),
+      ),
+    );
+    return got.flat().map((snapshot) => {
+      const projection = snapshot.data()?.['projection'];
+      return projection === undefined
+        ? undefined
+        : githubAnchorProjectionSchema.parse(projection);
+    });
+  }
+
   async listOpenGithubAnchorProjections(
     limit = 200,
   ): Promise<GithubAnchorProjection[]> {

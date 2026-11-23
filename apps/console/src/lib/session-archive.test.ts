@@ -3,6 +3,7 @@ import type {
   IssueAgentSessionDoc,
 } from '@agent-lcars/telemetry';
 import { listSessionDocs } from '@agent-lcars/telemetry/server';
+import { cacheLife } from 'next/cache';
 import {
   afterEach,
   beforeEach,
@@ -29,7 +30,11 @@ import {
   toSessionRow,
 } from './session-archive';
 
-const spendStore = vi.hoisted(() => ({ readGithubAnchorProjection: vi.fn() }));
+const spendStore = vi.hoisted(() => ({ readGithubAnchorProjections: vi.fn() }));
+// The archive read sits behind Next's `'use cache'`, which only exists under
+// the Next compiler; here the directive is inert and the read runs directly.
+vi.mock('next/cache', () => ({ cacheLife: vi.fn() }));
+
 vi.mock('./orchestrator-runtime', () => ({
   createOrchestratorRuntime: () => ({ store: spendStore }),
 }));
@@ -339,6 +344,27 @@ describe('getSessionArchive', () => {
     );
   });
 
+  it('reads the default window and narrower ones through the short cache', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([]);
+    (cacheLife as Mock).mockClear();
+
+    await getSessionArchive({ days: 14 });
+    expect(cacheLife).toHaveBeenCalledWith({
+      stale: 30,
+      revalidate: 30,
+      expire: 60,
+    });
+
+    // Wider windows and a snapshot's own clock always read Firestore.
+    (cacheLife as Mock).mockClear();
+    await getSessionArchive({ days: 30 });
+    await getSessionArchive(
+      { days: 1 },
+      { observedAt: new Date().toISOString() },
+    );
+    expect(cacheLife).not.toHaveBeenCalled();
+  });
+
   it('derives rows and a ledger from the same doc set', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       cliDoc({ sessionId: 'c1' }),
@@ -487,7 +513,7 @@ describe('costs archive selection', () => {
         repo: { owner: 'other', name: 'repo' },
       }),
     ]);
-    spendStore.readGithubAnchorProjection.mockRejectedValue(
+    spendStore.readGithubAnchorProjections.mockRejectedValue(
       new Error('unavailable'),
     );
     const result = await getSessionArchive(
@@ -500,7 +526,7 @@ describe('costs archive selection', () => {
       unknownPRs: 1,
     });
     expect(result.ledger.byIssue[0]?.costUsd).toBe(3);
-    expect(spendStore.readGithubAnchorProjection).toHaveBeenCalledTimes(1);
+    expect(spendStore.readGithubAnchorProjections).toHaveBeenCalledTimes(1);
     expect(result.warnings).toHaveLength(1);
   });
   it('includes matching sessions beyond the former ceiling in rows and totals', async () => {

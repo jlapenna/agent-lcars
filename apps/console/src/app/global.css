@@ -3592,7 +3592,8 @@ td.costs-repo-spend__num {
     border-radius: 0;
   }
 
-  .session-mobile-row a {
+  .session-mobile-row a,
+  .sessions-show-all {
     display: inline-flex;
     min-width: 44px;
     min-height: 44px;
