@@ -1053,6 +1053,10 @@ function render(key) {
   try { localStorage.setItem('lcars.dest', d.key); } catch (e) {}
 }
 
+// One simulated navigation at a time: a newer click, any route change and a
+// click on the current destination all settle the pending cue.
+let navTimer, navCue;
+function clearNavPending() { clearTimeout(navTimer); navTimer = undefined; if (navCue) { navCue.removeAttribute('data-pending'); navCue = undefined; } }
 function closeMenu() { $('#menu').removeAttribute('data-open'); $('#menu-btn').setAttribute('aria-expanded', 'false'); }
 
 document.addEventListener('click', (e) => {
@@ -1068,13 +1072,13 @@ document.addEventListener('click', (e) => {
   const nav = e.target.closest('.nav a, .menu a[data-key]');
   // Navigation keeps the current page until the next is ready; the control
   // that started it carries the wait (simulated here as 900 ms).
-  if (nav) { e.preventDefault(); closeMenu(); const cue = nav.closest('.menu') ? $('#menu-btn') : nav; cue.setAttribute('data-pending', ''); setTimeout(() => { cue.removeAttribute('data-pending'); location.hash = nav.dataset.key; }, 900); return; }
+  if (nav) { e.preventDefault(); closeMenu(); clearNavPending(); if (nav.dataset.key === document.body.dataset.destination) return; navCue = nav.closest('.menu') ? $('#menu-btn') : nav; navCue.setAttribute('data-pending', ''); const key = nav.dataset.key; navTimer = setTimeout(() => { clearNavPending(); location.hash = key; }, 900); return; }
   if (!e.target.closest('#menu')) closeMenu();
   const seg = e.target.closest('.seg button');
   if (seg && !seg.disabled) seg.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === seg)));
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
-window.addEventListener('hashchange', () => { render(location.hash.slice(1)); window.scrollTo(0, 0); });
+window.addEventListener('hashchange', () => { clearNavPending(); render(location.hash.slice(1)); window.scrollTo(0, 0); });
 
 let start = 'jobs';
 try { document.documentElement.dataset.mantineColorScheme = localStorage.getItem('lcars.scheme') || 'dark'; } catch (e) {}
