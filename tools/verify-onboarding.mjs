@@ -396,6 +396,16 @@ export async function auditRepository({
     }
     async function checkCandidate() {
       const { suite, detail } = await protectedUpdate();
+      // A bypassed default-branch push never ran the required checks, so its
+      // retained required_status_checks evaluation is recorded as a failure by
+      // GitHub. That is not a protected-update regression; the bypass branch
+      // below is the author-intended outcome and must win before the fatal
+      // per-ruleset evaluation check, or every audit fails while the branch
+      // head remains a bot bypass push.
+      if (suite.result === 'bypass')
+        throw new UnverifiableError(
+          'The default-branch update used a bypass; verify the next unbypassed PR merge',
+        );
       const sourceRules = rules.filter((rule) =>
         rule.parameters?.required_status_checks?.some(isCandidateRule),
       );
@@ -443,10 +453,6 @@ export async function auditRepository({
             'The protected update did not pass its required status checks',
           );
       }
-      if (suite.result === 'bypass')
-        throw new UnverifiableError(
-          'The default-branch update used a bypass; verify the next unbypassed PR merge',
-        );
       if (missingEvaluation)
         throw new UnverifiableError(
           'The retained required-check evaluation could not be matched to the active ruleset at push time',
