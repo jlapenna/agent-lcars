@@ -142,19 +142,11 @@
    run a second time to nudge it, and the rule suite recorded `bypass` with
    `required_status_checks` failing on the merge-candidate check. The same
    happens on a first arming that comes after CI has finished and before
-   the review has passed, so arm while required checks are still pending,
-   or queue with the API call below, which can only queue and is refused
-   for a PR that could merge now (`pr_node_id` is the `id` the `gh pr view`
-   read above returns):
-
-   ```bash
-   gh api graphql -f id="$pr_node_id" -f head="$reviewed_head" -f query='
-     mutation($id: ID!, $head: GitObjectID!) {
-       enablePullRequestAutoMerge(input: {
-         pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $head
-       }) { pullRequest { autoMergeRequest { enabledAt mergeMethod } } }
-     }'
-   ```
+   the review has passed, so arm while required checks are still pending.
+   To arm later than that, queue with the shared protocol's arm recipe in
+   [`agent-protocol.md`](../../agent-protocol/reference/agent-protocol.md),
+   chained to the same guard: its `enablePullRequestAutoMerge` call can only
+   queue, and GitHub refuses it for a PR that could merge now.
 
    To see what an armed PR is waiting for, read the requirement, then the
    checks on the head and on the test merge commit:
