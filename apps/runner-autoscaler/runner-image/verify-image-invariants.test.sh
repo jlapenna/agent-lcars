@@ -26,8 +26,16 @@ cp "$here/externals-health.sh" "$here/toolchain-health.sh" "$here/verify-image-i
 printf '%s\n' 'process.exit(Number(process.env.IMAGE_TEST_REPO_TOOLS_FAILURE || 0));' > "$lib/repo-tools-bins.mjs"
 cp "$here/runtime/install-skills.sh" "$here/runtime/layer1-skills.conf" "$lib/runtime/"
 cp -R "$repo_root/agents/shared/skills" "$lib/agents/shared/skills"
-bash "$repo_root/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" \
-  "$lib/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+# The gate checks only that the review files exist and that the revision is
+# immutable. A fixture keeps this test runnable without the
+# third_party/anthropic-plugins submodule; prepare-dispatch.test.sh covers the
+# packager and the image build packages the real locked dependency.
+review_fixture="$lib/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+mkdir -p "$review_fixture"
+for review_file in README.md upstream.md LICENSE; do
+  printf 'fixture %s\n' "$review_file" > "$review_fixture/$review_file"
+done
+printf '%s\n' 0123456789abcdef0123456789abcdef01234567 > "$review_fixture/revision"
 
 write_exe() {
   printf '%s\n' '#!/bin/sh' "$2" > "$1"
