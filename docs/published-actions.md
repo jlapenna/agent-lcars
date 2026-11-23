@@ -55,8 +55,12 @@ either way. Do not require the merge-candidate context: GitHub's auto-merge
 counts a check on the test merge commit, but a ruleset evaluating the update
 of the default branch does not find it there, so every merge needs the
 administrator bypass and an actor without one cannot merge (#3473). The head
-check follows the pull request's test merge commit: a pull request GitHub
-cannot merge yet gets neither. The shared agent protocol
+check does not wait for a test merge commit, so a blocking rereview revokes it
+on a pull request GitHub cannot merge yet. Pull requests that share a head
+commit share its check, which passes only when each has its own passing
+review. After a retarget onto the default branch the head keeps its earlier
+verdict until the next reconciliation, which the notifier's `edited` event
+starts. The shared agent protocol
 owns reviewer behavior. Enabling this check also needs a working LCARS
 review dispatch path for that repository. Stage the workflow first and verify
 that a deployed reviewer produced a review and the App published a successful check.

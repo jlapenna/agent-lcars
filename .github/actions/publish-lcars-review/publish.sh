@@ -121,6 +121,9 @@ read_verdict() {
   esac
 }
 
+# Verdicts read during this run, by pull request number, so the head pass
+# below does not read the same reviews again.
+declare -A verdict_state verdict_description
 declare -A candidate_heads
 while read -r pr head; do
   [[ -n "$pr" ]] || continue
@@ -129,28 +132,66 @@ while read -r pr head; do
     candidate_heads[$candidate]=$head
   fi
 done <<< "$pulls"
+
+# open_pulls_at HEAD: open pull requests into the base branch at HEAD, read
+# after the repository scan so membership and reviews are current.
+open_pulls_at() {
+  gh api --paginate --slurp "repos/$REPO/commits/$1/pulls?per_page=100" |
+    jq -r --arg head "$1" --arg base "$BASE" '.[][] | select(.state == "open" and .head.sha == $head and .base.ref == $base) | .number'
+}
+
 for target in "${!candidate_heads[@]}"; do
   head=${candidate_heads[$target]}
-  candidate=$target
-  # Refresh membership and all applicable reviews after the repository scan.
   # PRs sharing a test merge commit necessarily share its second parent.
-  matching=$(gh api --paginate --slurp "repos/$REPO/commits/$head/pulls?per_page=100" |
-    jq -r --arg head "$head" --arg base "$BASE" '.[][] | select(.state == "open" and .head.sha == $head and .base.ref == $base) | .number')
+  matching=$(open_pulls_at "$head")
   [[ -n "$matching" ]] || continue
   selected_pr=
-  head_verdict_known=true
   while read -r pr; do
     read_candidate
     if [[ -n "$candidate" && "$candidate" != "$target" ]]; then
       continue
     elif [[ -z "$candidate" ]]; then
       # Mergeability may still be computing for a PR with identical parents.
-      # That says nothing about the review of the head, so the head check is
-      # left as it is until a later run can read the verdict.
       state=pending
       description="Awaiting GitHub merge candidate"
-      head_verdict_known=false
     else
+      read_verdict
+      verdict_state[$pr]=$state
+      verdict_description[$pr]=$description
+    fi
+    selected_pr=$pr
+    [[ "$state" == success ]] || break
+  done <<< "$matching"
+  [[ -n "$selected_pr" ]] || continue
+  pr=$selected_pr
+  details_url="https://github.com/$REPO/pull/$pr"
+  conclusion=failure
+  if [[ "$state" == success ]]; then
+    conclusion=success
+  fi
+  publish_check "$target" "LCARS review (merge candidate)" lcars-review-merge-candidate "$required"
+done
+
+# The head check does not depend on a test merge commit: a pull request GitHub
+# cannot merge yet can still be reviewed, and a blocking rereview must revoke
+# an earlier success on its head. A head is shared by every pull request at
+# that commit, so it passes only when each of them has its own passing review.
+declare -A published_heads
+while read -r _ head; do
+  [[ -n "$head" && -z ${published_heads[$head]:-} ]] || continue
+  published_heads[$head]=1
+  matching=$(open_pulls_at "$head")
+  [[ -n "$matching" ]] || continue
+  selected_pr=
+  while read -r pr; do
+    if [[ -n ${verdict_state[$pr]:-} ]]; then
+      state=${verdict_state[$pr]}
+      description=${verdict_description[$pr]}
+    else
+      read_candidate
+      # The pull request may have moved to another head or base since the scan.
+      jq -e --arg base "$BASE" --arg head "$head" \
+        '.state == "OPEN" and .baseRefName == $base and .headRefOid == $head' <<< "$comparison" >/dev/null || continue
       read_verdict
     fi
     selected_pr=$pr
@@ -158,14 +199,10 @@ for target in "${!candidate_heads[@]}"; do
   done <<< "$matching"
   [[ -n "$selected_pr" ]] || continue
   pr=$selected_pr
-  candidate=$target
   details_url="https://github.com/$REPO/pull/$pr"
   conclusion=failure
   if [[ "$state" == success ]]; then
     conclusion=success
   fi
-  publish_check "$candidate" "LCARS review (merge candidate)" lcars-review-merge-candidate "$required"
-  if [[ "$head_verdict_known" == true ]]; then
-    publish_check "$head" "LCARS review" lcars-review "$required_head"
-  fi
-done
+  publish_check "$head" "LCARS review" lcars-review "$required_head"
+done <<< "$pulls"

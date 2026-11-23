@@ -25,6 +25,7 @@ const REPO = 'acme/widgets';
 const BASE = 'b'.repeat(40);
 const HEAD = 'a'.repeat(40);
 const CANDIDATE = 'c'.repeat(40);
+const OTHER_CANDIDATE = 'd'.repeat(40);
 const HEAD_CHECK = 'LCARS review';
 const CANDIDATE_CHECK = 'LCARS review (merge candidate)';
 const APP = 4457090;
@@ -55,13 +56,13 @@ interface State {
   writes: Write[];
 }
 
-const review = (state: string, run = 1): Review => ({
+const review = (state: string, run = 1, pr = 7): Review => ({
   user: { login: 'agent-lcars[bot]' },
   state,
   commit_id: HEAD,
-  body: `Reviewed.\n<!-- attempt-claim:g1:${REPO}#7/r${run} -->`,
+  body: `Reviewed.\n<!-- attempt-claim:g1:${REPO}#${pr}/r${run} -->`,
   submitted_at: `2026-11-23T0${run}:00:00Z`,
-  html_url: `https://github.com/${REPO}/pull/7#pullrequestreview-${run}`,
+  html_url: `https://github.com/${REPO}/pull/${pr}#pullrequestreview-${run}`,
 });
 const requires = (context: string) => [
   {
@@ -78,10 +79,13 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
+// `second` adds another open pull request at the same head. GitHub gives it
+// its own test merge commit.
 function publisher(options: {
   reviews?: Review[];
   rules?: unknown[];
   candidate?: boolean;
+  second?: Review[];
 }) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'review-publisher-'));
   roots.push(root);
@@ -90,22 +94,32 @@ function publisher(options: {
   symlinkSync(FAKE_GH, path.join(bin, 'gh'));
   const statePath = path.join(root, 'state.json');
   const read = (): State => JSON.parse(readFileSync(statePath, 'utf8'));
-  const pull = {
-    number: 7,
-    head: HEAD,
-    baseOid: BASE,
-    candidate:
-      options.candidate === false
-        ? null
-        : { oid: CANDIDATE, parents: [BASE, HEAD] },
-    reviews: options.reviews ?? [],
-  };
+  const pulls = [
+    {
+      number: 7,
+      head: HEAD,
+      baseOid: BASE,
+      candidate:
+        options.candidate === false
+          ? null
+          : { oid: CANDIDATE, parents: [BASE, HEAD] },
+      reviews: options.reviews ?? [],
+    },
+  ];
+  if (options.second)
+    pulls.push({
+      number: 8,
+      head: HEAD,
+      baseOid: BASE,
+      candidate: { oid: OTHER_CANDIDATE, parents: [BASE, HEAD] },
+      reviews: options.second,
+    });
   writeFileSync(
     statePath,
     JSON.stringify({
       repo: REPO,
       rules: options.rules ?? [],
-      pulls: [pull],
+      pulls,
       checks: {},
       writes: [],
       nextId: 1,
@@ -205,13 +219,54 @@ describe('shared LCARS review publisher', () => {
     expect(subject.run().writes).toEqual([]);
   });
 
-  it('leaves the head alone while GitHub has no test merge commit', () => {
+  it('publishes the head verdict while GitHub has no test merge commit', () => {
     const state = publisher({
       reviews: [review('APPROVED')],
-      rules: requires(HEAD_CHECK),
       candidate: false,
     }).run();
 
-    expect(state.writes).toEqual([]);
+    expect(conclusions(state)).toEqual({ [`a:${HEAD_CHECK}`]: 'success' });
+  });
+
+  it('revokes the head check of a pull request GitHub cannot merge', () => {
+    const subject = publisher({
+      reviews: [review('APPROVED')],
+      candidate: false,
+    });
+    subject.run();
+    subject.setReviews([review('APPROVED'), review('CHANGES_REQUESTED', 2)]);
+
+    expect(conclusions(subject.run())).toEqual({
+      [`a:${HEAD_CHECK}`]: 'failure',
+    });
+  });
+
+  it('passes a shared head only when every pull request at it has passed', () => {
+    const state = publisher({
+      reviews: [review('APPROVED')],
+      second: [],
+      rules: requires(HEAD_CHECK),
+    }).run();
+
+    // Each pull request keeps its own merge-candidate verdict. The head is
+    // one commit for both, so the unreviewed one holds it at failure.
+    expect(conclusions(state)).toEqual({
+      [`c:${CANDIDATE_CHECK}`]: 'success',
+      [`a:${HEAD_CHECK}`]: 'failure',
+    });
+    expect(state.checks[HEAD]).toHaveLength(1);
+  });
+
+  it('passes a shared head once each pull request has its own approval', () => {
+    const state = publisher({
+      reviews: [review('APPROVED')],
+      second: [review('APPROVED', 1, 8)],
+    }).run();
+
+    expect(conclusions(state)).toEqual({
+      [`c:${CANDIDATE_CHECK}`]: 'success',
+      [`d:${CANDIDATE_CHECK}`]: 'success',
+      [`a:${HEAD_CHECK}`]: 'success',
+    });
   });
 });
