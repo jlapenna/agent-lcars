@@ -125,48 +125,40 @@
    confirm either a non-null SQUASH `autoMergeRequest` at that same head or
    an actual merge of that head.
 
-   **Arm once, then leave it.** An armed PR that has not merged is waiting,
-   not stuck, and `gh pr checks` does not show everything it waits for. The
-   required `LCARS review (merge candidate)` check is not on the PR's head
-   at all: the `Publish LCARS merge candidate` workflow copies the review's
-   verdict onto the PR's test merge commit, and it reads `failure` there
-   until a review has passed on the current head. That can trail a green PR
-   by minutes.
-
-   Do not run `gh pr merge` on an armed PR again. `gh pr merge --auto`
-   merges at once, instead of queueing, when GitHub reports the PR as
-   `CLEAN`, `HAS_HOOKS` or `UNSTABLE`; a PR whose checks are green and whose
-   merge-candidate check is still failing reads `UNSTABLE`; and an
-   administrator's merge bypasses that required check. PR #3469 merged that
-   way on 2026-11-23: every listed check was green, the merge command was
-   run a second time to nudge it, and the rule suite recorded `bypass` with
-   `required_status_checks` failing on the merge-candidate check. The same
-   happens on a first arming that comes after CI has finished and before
-   the review has passed, so arm while required checks are still pending.
-   To arm later than that, queue with the shared protocol's arm recipe in
-   [`agent-protocol.md`](../../agent-protocol/reference/agent-protocol.md),
-   chained to the same guard: its `enablePullRequestAutoMerge` call can only
-   queue, and GitHub refuses it for a PR that could merge now.
-
-   To see what an armed PR is waiting for, read the requirement, then the
-   checks on the head and on the test merge commit:
+   **Arm once, then leave it.** An armed PR that has not merged is waiting
+   on a required check, not stuck. Do not run `gh pr merge` on it again:
+   `gh pr merge --auto` merges at once, instead of queueing, when GitHub
+   reports the PR as `CLEAN`, `HAS_HOOKS` or `UNSTABLE`, and an
+   administrator's merge bypasses a required check that is still missing.
+   To see what an armed PR is waiting for, read the requirement and the
+   head's checks:
 
    ```bash
    gh api repos/jlapenna/agent-lcars/rules/branches/main \
      --jq '.[] | select(.type == "required_status_checks")
            | .parameters.required_status_checks[].context'
-   candidate="$(gh api "repos/jlapenna/agent-lcars/pulls/$pr_number" --jq .merge_commit_sha)"
-   for sha in "$reviewed_head" "$candidate"; do
-     gh api "repos/jlapenna/agent-lcars/commits/$sha/check-runs" --paginate \
-       --jq '.check_runs[] | [.name, .status, .conclusion] | @tsv'
-     gh api "repos/jlapenna/agent-lcars/commits/$sha/status" \
-       --jq '.statuses[] | [.context, .state] | @tsv'
-   done
+   gh api "repos/jlapenna/agent-lcars/commits/$reviewed_head/check-runs" --paginate \
+     --jq '.check_runs[] | [.name, .status, .conclusion] | @tsv'
+   gh api "repos/jlapenna/agent-lcars/commits/$reviewed_head/status" \
+     --jq '.statuses[] | [.context, .state] | @tsv'
    ```
 
-   A required context that is not successful on either commit is the wait.
-   Find why it has not passed or why its publisher has not run; never merge
-   around it.
+   A required context that is not successful there is the wait. Find why it
+   has not passed or why its publisher has not run; never merge around it.
+   To arm a PR whose checks have already finished, queue with the shared
+   protocol's arm recipe in
+   [`agent-protocol.md`](../../agent-protocol/reference/agent-protocol.md),
+   chained to the same guard: its `enablePullRequestAutoMerge` call can only
+   queue, and GitHub refuses it for a PR that could merge now.
+
+   A required check must be one the ruleset can see. From 2026-11-22 to
+   2026-11-23 `main` required `LCARS review (merge candidate)`, a check
+   published on a PR's test merge commit. GitHub's auto-merge counted it
+   there, but the ruleset evaluating the update of `main` did not, so every
+   maintainer merge was recorded as a `bypass`, merges by an actor that
+   cannot bypass were refused, and PR #3469 sat armed and green for 31
+   minutes until its merge command was run a second time (#3473). Read the
+   rule suite after a merge, as below: a `bypass` there is the signal.
 
    Execute the closing-scope guard and arming
    only as the `&&`-chained sequence above: a rejected, incomplete or
@@ -196,10 +188,10 @@
    state change, not transport loss: it repeats
    identically, so re-issuing it is a blind retry. Re-read the head, closing
    scope, reviews and required checks. Only when every context the ruleset
-   requires is successful, on the head or on the test merge commit as it
-   applies (the reads under "Arm once, then leave it" above; `UNSTABLE` or
-   "all of `gh pr checks` green" is not that), use the guarded CLI sequence
-   above, which then merges the eligible head normally. Do not manufacture
+   requires is successful on that head (the reads under "Arm once, then
+   leave it" above; `UNSTABLE` or "all of `gh pr checks` green" is not
+   that), use the guarded CLI sequence above, which then merges the
+   eligible head normally. Do not manufacture
    a new revision merely to make the queue-only API accept the request.
    Never add `--admin`, relax or fabricate checks/statuses, change policy,
    or introduce a wrapper or credential merely to arm.
@@ -240,8 +232,8 @@
    for the hand-over record and the admin-bypass hazard.
 
    The ruleset enforces required `E2E`, `Verify`,
-   `LCARS review (merge candidate)` from the Agent LCARS App, `Runner image
-pnpm-store seed`, and `repository-owned Terraform`,
+   `LCARS review` (a commit status GitHub Actions publishes on the PR head),
+   `Runner image pnpm-store seed`, and `repository-owned Terraform`,
    `required_review_thread_resolution`, linear history, and no deletion or
    force-push. The up-to-date-branch policy is **non-strict** (harmonized
    with the sprinkles repo, 2026-08-11): an armed PR merges on green even
