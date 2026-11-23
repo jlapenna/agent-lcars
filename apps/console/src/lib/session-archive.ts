@@ -432,7 +432,7 @@ export async function getSessionArchive(
       const store = createOrchestratorRuntime().store;
       const result = await loadSpendProjections(
         docs,
-        (anchor) => store.readGithubAnchorProjection(anchor),
+        (anchors) => store.readGithubAnchorProjections(anchors),
         5000,
         getWatchedRepos(),
       );

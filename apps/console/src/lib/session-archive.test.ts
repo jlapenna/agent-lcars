@@ -30,7 +30,7 @@ import {
   toSessionRow,
 } from './session-archive';
 
-const spendStore = vi.hoisted(() => ({ readGithubAnchorProjection: vi.fn() }));
+const spendStore = vi.hoisted(() => ({ readGithubAnchorProjections: vi.fn() }));
 // The archive read sits behind Next's `'use cache'`, which only exists under
 // the Next compiler; here the directive is inert and the read runs directly.
 vi.mock('next/cache', () => ({ cacheLife: vi.fn() }));
@@ -513,7 +513,7 @@ describe('costs archive selection', () => {
         repo: { owner: 'other', name: 'repo' },
       }),
     ]);
-    spendStore.readGithubAnchorProjection.mockRejectedValue(
+    spendStore.readGithubAnchorProjections.mockRejectedValue(
       new Error('unavailable'),
     );
     const result = await getSessionArchive(
@@ -526,7 +526,7 @@ describe('costs archive selection', () => {
       unknownPRs: 1,
     });
     expect(result.ledger.byIssue[0]?.costUsd).toBe(3);
-    expect(spendStore.readGithubAnchorProjection).toHaveBeenCalledTimes(1);
+    expect(spendStore.readGithubAnchorProjections).toHaveBeenCalledTimes(1);
     expect(result.warnings).toHaveLength(1);
   });
   it('includes matching sessions beyond the former ceiling in rows and totals', async () => {
