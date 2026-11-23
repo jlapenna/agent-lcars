@@ -118,6 +118,7 @@ try {
       cwd: workingDirectory,
       environment,
       signal: runSignal,
+      label: 'git',
     });
   if (brief.profile?.providerAuth === 'codex') {
     codexAuth = await codexJobAuth({

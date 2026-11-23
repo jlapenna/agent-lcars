@@ -87,15 +87,19 @@ single-active-occurrence pointer. Concurrent admission either replays the same
 receipt or records a skipped overlap. Changed parameters under an existing manual
 request ID conflict. Reservations contain deterministic Work identity; an
 interrupted mint is retried by the existing maintenance tick without duplicating
-Work. Work uses the internal `goose` pipeline; public coding intake cannot forge
-a job snapshot.
+Work. Goose jobs use the internal `goose` pipeline and native harness jobs run on
+their declared coding pipeline (`claude`, `codex`, `opencode`, `agy`) with a
+server-minted `jobOccurrence` binding; public coding intake cannot forge a job
+snapshot.
 
 The native Run is authoritative for pending, claimed, running and terminal state.
 QueueExecutor claims with its existing authenticated capability and lease
 protocol. The worker fetches its pinned job brief using the run token. Completion
 is token-fenced and accepted only while the native Run owns that occurrence.
-Cancellation uses existing Work cancellation and QueueExecutor retirement. A lost
-recipe run is terminal; there is no automatic rerun of potentially effectful work.
+Cancellation uses existing Work cancellation and QueueExecutor retirement. With
+`maxAttempts: 1`, a lost run is terminal; with `maxAttempts: 2`, LCARS performs
+at most one automatic retry on placed worker loss and never reruns
+`agent-timeout` or `agent-failed` outcomes.
 An occurrence keeps the job occupied until its worker has physically exited: the
 claimant executor's exit report (sent after it observes the Job terminate, after
 a recovery-deleted Job disappears, or immediately when no Job could be built)
@@ -299,8 +303,9 @@ grants and a matching repository.
 - `POST /api/work/v1/jobs/refresh` with a managed `repository`.
 - `POST /api/work/v1/jobs/{id}/enable` with the current `digest` and `enabled`:
   `false` records the operator veto, `true` clears it and enables that digest.
-  Enabling is needed only for a vetoed job or one whose profile does not admit
-  automatic activation.
+  Enabling is needed only for a vetoed job or a scheduled job whose profile does
+  not admit automatic activation; unvetoed manual-only jobs can be invoked
+  directly without enabling.
 - `POST /api/work/v1/jobs/{id}/invoke` with that `digest` and a stable `requestId`.
 - `GET /api/work/v1/jobs/occurrences/{id}` for the pinned occurrence and artifacts.
 

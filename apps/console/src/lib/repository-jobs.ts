@@ -8,7 +8,7 @@ import {
   RUN_LEASE_MS,
   RUN_PLACEMENT_WAIT_MAX_MS,
 } from '@agent-lcars/orchestrator';
-import { slotItemId } from '@agent-lcars/work';
+import { deriveItemState, slotItemId } from '@agent-lcars/work';
 
 import type { JobSecrets } from './job-secrets';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
@@ -483,7 +483,6 @@ export class RepositoryJobs {
     const storedTask = await this.deps.runtime.store.readTask({
       workId: occurrence.workId,
     });
-    if (storedTask && deliveryWaiting(storedTask.task)) return;
     const runs = [
       ...(await this.deps.runtime.store.listRuns({
         workId: occurrence.workId,
@@ -494,6 +493,13 @@ export class RepositoryJobs {
         (parseRunGeneration(right.runId) ?? 0),
     );
     if (runs.length === 0 || runs.some((candidate) => isLive(candidate.state)))
+      return;
+    if (
+      storedTask &&
+      storedTask.task.closedAt === undefined &&
+      deliveryWaiting(storedTask.task) &&
+      deriveItemState(storedTask.task, runs) === 'running'
+    )
       return;
     // Native terminal state alone is not evidence a worker has stopped:
     // every claimed attempt waits for its executor's exit report to retire it,
@@ -520,15 +526,22 @@ export class RepositoryJobs {
     let harnessArtifact: JobArtifact | undefined;
     if (isHarness) {
       const message = await readFullRunMessage(this.deps.runtime.store, run);
+      const taskOpen =
+        storedTask !== undefined && storedTask.task.closedAt === undefined;
+      const deliverySatisfied =
+        storedTask?.task.delivery === undefined ||
+        storedTask.task.delivery.state === 'complete';
       const harnessSuccess =
-        occurrence.definition.job.result.contract === 'report-v1'
+        taskOpen &&
+        (occurrence.definition.job.result.contract === 'report-v1'
           ? run.state === 'finished' &&
             run.result?.ok === true &&
             run.result.summary === 'report' &&
             Boolean(message?.trim())
-          : run.state === 'finished' &&
+          : deliverySatisfied &&
+            run.state === 'finished' &&
             run.result?.ok === true &&
-            run.result.summary !== 'park';
+            run.result.summary !== 'park');
       const reportText = message?.trim()
         ? message
         : run.result?.ref

@@ -70,7 +70,18 @@ test('subprocess names an unreachable provider without its message', async () =>
       },
     ),
     (error) =>
-      error.message === 'Goose exited 1: Network error; Could not connect',
+      error.message === 'Goose exited 1: Network error; Could not connect' &&
+      error.recipeFailure === undefined,
+  );
+  await assert.rejects(
+    subprocess(process.execPath, ['-e', 'process.exit(128)'], {
+      cwd: '/tmp',
+      signal: new AbortController().signal,
+      environment: {},
+      label: 'git',
+    }),
+    (error) =>
+      error.message === 'git exited 128' && error.recipeFailure === undefined,
   );
 });
 test('output overflow fails and cancellation terminates the child', async () => {

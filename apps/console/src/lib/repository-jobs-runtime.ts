@@ -15,17 +15,17 @@ import { jobProfileSchema } from './repository-job-definition';
 import { FirestoreJobStore } from './repository-job-store';
 import { RepositoryJobs } from './repository-jobs';
 import { workForbiddenReason } from './work-authorization';
-import { grantForPrincipal, workGrants } from './work-grants';
+import {
+  grantForPrincipal,
+  jobAutomationPrincipalForGrants,
+  workGrants,
+} from './work-grants';
 
 /** Automatic activation is attributed to the scheduler: the one Work grant
  * holding `work.cron` for the `goose` pipeline, which drives the maintenance
  * tick. Zero or several such grants disable automatic activation. */
 export function jobAutomationPrincipal(): string | undefined {
-  const scheduler = workGrants().filter(
-    (grant) =>
-      grant.scopes.includes('work.cron') && grant.pipelines.includes('goose'),
-  );
-  return scheduler.length === 1 ? scheduler[0]!.principal : undefined;
+  return jobAutomationPrincipalForGrants(workGrants());
 }
 
 let store: FirestoreJobStore | undefined;

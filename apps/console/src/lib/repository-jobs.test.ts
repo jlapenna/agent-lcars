@@ -13,6 +13,7 @@ import { parse as parseYaml, stringify } from 'yaml';
 
 import { GcsCodexAuthStore } from './codex-auth-store';
 import { releaseCodexCredentialLease } from './codex-credential-operations';
+import { deliveryCorrectionAuthorized } from './ready-delivery';
 import {
   gooseJobExecutionSchema,
   harnessJobExecutionSchema,
@@ -21,6 +22,7 @@ import {
   type JobProfile,
   jobProfileSchema,
   parseJobDefinition,
+  renderHarnessJobPrompt,
 } from './repository-job-definition';
 import { validateJobResult } from './repository-job-result';
 import {
@@ -1530,6 +1532,242 @@ describe('operational extensions: maxAttempts, manual-only, native harness and a
     await jobs.reconcile(store.jobs.get(id)!);
     expect((await store.readOccurrence(second.id))?.successful).toBe(false);
     expect(store.jobs.get(id)!.baseline?.occurrence).toBe(first.id);
+  });
+
+  it('reconciles canceled or failed-correction deliverable-v1 harness jobs as unsuccessful and fits near-limit prompts', async () => {
+    const allocation = { cpu: 2, memory: '6Gi', storage: '24Gi' };
+    const definition = parseJobDefinition(
+      'jlapenna/agent-lcars',
+      'a'.repeat(40),
+      'auto-fix',
+      stringify({
+        version: 1,
+        description: 'Deliverable job',
+        triggers: { manual: true },
+        execution: {
+          harness: 'claude',
+          prompt: './prompt.md',
+          profile: 'repository',
+          timeout: '30m',
+          maxAttempts: 1,
+          resources: {
+            requests: { ...allocation },
+            limits: { ...allocation },
+          },
+        },
+        inputs: {},
+        concurrency: { maxRuns: 1, overlap: 'skip' },
+        state: { previousSuccessfulResult: true },
+        result: {
+          contract: 'deliverable-v1',
+          requiredArtifacts: ['report.md'],
+        },
+      }),
+      'Fix drift. Prior: {{ baseline }}',
+    );
+    const store = new TestStore();
+    const native = new MemoryStore();
+    const at = new Date('2026-10-27T15:00:00.000Z');
+    const orchestrator = new Orchestrator(native, {
+      now: () => at.toISOString(),
+    });
+    const jobs = new RepositoryJobs({
+      store,
+      profiles: () => [],
+      granted: () => true,
+      automationPrincipal: () => 'svc:job-scheduler',
+      now: () => at,
+      runtime: {
+        store: native,
+        orchestrator,
+        drain: async () => ({ dispatched: [], reported: [], failed: [] }),
+      },
+    });
+    const id = jobKey('jlapenna/agent-lcars', 'auto-fix');
+    store.jobs.set(id, {
+      id,
+      repository: 'jlapenna/agent-lcars',
+      name: 'auto-fix',
+      definition,
+      enabled: false,
+      refreshedAt: at.toISOString(),
+    });
+
+    // 1. Operator cancels while delivery is waiting: active releases, successful=false.
+    const canceledOcc = await jobs.admit(
+      id,
+      'cancel-waiting',
+      'user:jlapenna',
+      'manual',
+      definition.digest,
+    );
+    const r1 = (await native.listRuns({ workId: canceledOcc.workId }))[0]!;
+    await orchestrator.report(r1.runId, {
+      ok: true,
+      summary: 'pr',
+      ref: 'https://github.com/jlapenna/agent-lcars/pull/999',
+      message: 'Opened PR',
+    });
+    await native.transactRun({
+      runId: r1.runId,
+      decide: ({ task, run }) => ({
+        task: {
+          ...task!.task,
+          delivery: {
+            state: 'waiting',
+            repo: 'jlapenna/agent-lcars',
+            number: 999,
+            head: 'b'.repeat(40),
+            runId: r1.runId,
+            nextCheckAt: at.toISOString(),
+          },
+        },
+        run: run!,
+        outbox: [],
+      }),
+    });
+    await jobs.reconcile(store.jobs.get(id)!);
+    expect(store.jobs.get(id)!.active).toBe(canceledOcc.id);
+
+    await orchestrator.close({ workId: canceledOcc.workId });
+    await jobs.reconcile(store.jobs.get(id)!);
+    expect(store.jobs.get(id)!.active).toBeUndefined();
+    expect((await store.readOccurrence(canceledOcc.id))?.successful).toBe(
+      false,
+    );
+    expect(store.jobs.get(id)!.baseline).toBeUndefined();
+
+    // 2. Failed delivery correction while delivery.state === 'waiting' releases active as unsuccessful.
+    const failedCorrOcc = await jobs.admit(
+      id,
+      'failed-correction',
+      'user:jlapenna',
+      'manual',
+      definition.digest,
+    );
+    const cr1 = (await native.listRuns({ workId: failedCorrOcc.workId }))[0]!;
+    await orchestrator.report(cr1.runId, {
+      ok: true,
+      summary: 'pr',
+      ref: 'https://github.com/jlapenna/agent-lcars/pull/1000',
+      message: 'Opened PR',
+    });
+    const cr2Outcome = await orchestrator.request({
+      taskId: { workId: failedCorrOcc.workId },
+      requestId: `${failedCorrOcc.workId}:corr`,
+      pipeline: 'claude',
+      params: { mode: 'implement', jobOccurrence: failedCorrOcc.id },
+    });
+    if ('reason' in cr2Outcome) throw new Error(cr2Outcome.reason);
+    const cr2 = (await native.listRuns({ workId: failedCorrOcc.workId })).find(
+      (candidate) => candidate.runId.endsWith('/r2'),
+    )!;
+    await native.transactRun({
+      runId: cr2.runId,
+      decide: ({ task, run }) => ({
+        task: {
+          ...task!.task,
+          delivery: {
+            state: 'waiting',
+            repo: 'jlapenna/agent-lcars',
+            number: 1000,
+            head: 'c'.repeat(40),
+            runId: cr1.runId,
+            correctionRunId: cr2.runId,
+            nextCheckAt: at.toISOString(),
+          },
+        },
+        run: run!,
+        outbox: [],
+      }),
+    });
+    await orchestrator.report(cr2.runId, {
+      ok: false,
+      summary: 'verification-failed',
+      message: 'CI fix failed',
+    });
+    await jobs.reconcile(store.jobs.get(id)!);
+    expect(store.jobs.get(id)!.active).toBeUndefined();
+    expect((await store.readOccurrence(failedCorrOcc.id))?.successful).toBe(
+      false,
+    );
+
+    // 3. Prompt within 51 bytes of WORK_DESCRIPTION_MAX_BYTES at baseline=null still fits when baseline overflows.
+    const headerEstimate =
+      'Repository job `near-limit` in `jlapenna/homelab` (pinned definition commit `' +
+      'a'.repeat(40) +
+      '`, timeout `30m`).\n\n';
+    const padLen = 253_952 - Buffer.byteLength(headerEstimate) - 4 - 20;
+    const nearLimitDef = parseJobDefinition(
+      'jlapenna/homelab',
+      'a'.repeat(40),
+      'near-limit',
+      stringify({
+        version: 1,
+        description: 'Near-limit prompt',
+        triggers: { manual: true },
+        execution: {
+          harness: 'claude',
+          prompt: './prompt.md',
+          profile: 'repository',
+          timeout: '30m',
+          maxAttempts: 1,
+          resources: {
+            requests: { ...allocation },
+            limits: { ...allocation },
+          },
+        },
+        inputs: {},
+        concurrency: { maxRuns: 1, overlap: 'skip' },
+        state: { previousSuccessfulResult: true },
+        result: { contract: 'report-v1', requiredArtifacts: ['report.md'] },
+      }),
+      `${'x'.repeat(padLen)}{{ baseline }}`,
+    );
+    const rendered = renderHarnessJobPrompt(
+      nearLimitDef,
+      {},
+      'large-baseline-'.repeat(200),
+    );
+    expect(rendered.endsWith('none')).toBe(true);
+
+    // 4. deliveryCorrectionAuthorized requires unique work.cron+goose scheduler grant.
+    const prevGrants = process.env['AGENT_LCARS_WORK_GRANTS'];
+    try {
+      const taskSnap = (await native.readTask({
+        workId: failedCorrOcc.workId,
+      }))!.task;
+      const cronTask = {
+        ...taskSnap,
+        work: {
+          ...taskSnap.work,
+          origin: { principal: 'svc:job-scheduler', channel: 'api' },
+        },
+      };
+      process.env['AGENT_LCARS_WORK_GRANTS'] = JSON.stringify([
+        {
+          principal: 'svc:job-scheduler',
+          subjects: ['job-scheduler@agent-lcars.iam.gserviceaccount.com'],
+          pipelines: ['goose', 'claude'],
+          scopes: ['work.cron'],
+        },
+      ]);
+      expect(deliveryCorrectionAuthorized(cronTask, cr2)).toBe(true);
+
+      process.env['AGENT_LCARS_WORK_GRANTS'] = JSON.stringify([
+        {
+          principal: 'svc:job-scheduler',
+          subjects: ['job-scheduler@agent-lcars.iam.gserviceaccount.com'],
+          pipelines: ['claude'],
+          scopes: ['work.cron'],
+        },
+      ]);
+      expect(deliveryCorrectionAuthorized(cronTask, cr2)).toBe(false);
+    } finally {
+      if (prevGrants === undefined)
+        delete process.env['AGENT_LCARS_WORK_GRANTS'];
+      else process.env['AGENT_LCARS_WORK_GRANTS'] = prevGrants;
+    }
   });
 
   it('validates apphosting.yaml work grants and job profiles', () => {

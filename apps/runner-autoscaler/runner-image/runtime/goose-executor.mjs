@@ -75,11 +75,22 @@ export function gooseExecutor({
         fileParameters ? run.fileRecipeText : run.definition.recipeText,
         { mode: 0o600 },
       );
-      await subprocess(executable, ['recipe', 'validate', recipe], {
-        cwd: workingDirectory,
-        signal,
-        environment,
-      });
+      try {
+        await subprocess(executable, ['recipe', 'validate', recipe], {
+          cwd: workingDirectory,
+          signal,
+          environment,
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.startsWith('Goose exited ') ||
+            error.message === 'Goose output exceeds 16 MiB')
+        ) {
+          markRecipeFailure(error);
+        }
+        throw error;
+      }
       const args = [
         'run',
         '--recipe',
@@ -127,6 +138,13 @@ export function gooseExecutor({
             }),
         });
       } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.startsWith('Goose exited ') ||
+            error.message === 'Goose output exceeds 16 MiB')
+        ) {
+          markRecipeFailure(error);
+        }
         const providerOutcome = classifyGooseProviderFailure(error);
         if (providerOutcome && error instanceof Error) {
           error.providerOutcome = providerOutcome;
@@ -335,7 +353,7 @@ export async function settleGooseFailure(
 export async function subprocess(
   executable,
   args,
-  { cwd, signal, environment, onSpawn },
+  { cwd, signal, environment, onSpawn, label = 'Goose' },
 ) {
   if (signal.aborted) throw new Error('cancelled before process start');
   return new Promise((resolve, reject) => {
@@ -369,7 +387,7 @@ export async function subprocess(
       // stderr keeps only a 4 KiB tail, so only stdout counts toward the guard.
       if (output) bytes += chunk.length;
       if (bytes > OUTPUT_MAX_BYTES) {
-        failure = recipeError('Goose output exceeds 16 MiB');
+        failure = new Error(`${label} output exceeds 16 MiB`);
         stop();
       } else if (output) stdout.push(chunk);
       else stderr = (stderr + chunk.toString('utf8')).slice(-4096);
@@ -396,7 +414,7 @@ export async function subprocess(
       // Also terminate any descendants retaining a detached process group.
       kill('SIGKILL');
       if (failure) reject(failure);
-      else if (signal.aborted) reject(new Error('Goose cancelled'));
+      else if (signal.aborted) reject(new Error(`${label} cancelled`));
       else if (code !== 0) {
         // Keep resource, enforcement and provider-transport causes without
         // leaking provider output, tool responses or credentials into shared
@@ -406,8 +424,8 @@ export async function subprocess(
             /No space left on device|Cannot allocate memory|Operation not permitted|Permission denied|Read-only file system|No such file or directory|out of memory|Network error|Could not connect|Request timed out|Rate limit exceeded|ResourceExhausted|RESOURCE_EXHAUSTED|insufficient_quota|exceeded your current quota|usage_limit_reached|service_spend_limit_reached|org_spend_cap_reached|Credit balance is too low|monthly spend limit|model is at capacity|Server error/giu,
           ) ?? [];
         reject(
-          recipeError(
-            `Goose exited ${code ?? exitSignal}${causes.length ? `: ${[...new Set(causes)].join('; ')}` : ''}`,
+          new Error(
+            `${label} exited ${code ?? exitSignal}${causes.length ? `: ${[...new Set(causes)].join('; ')}` : ''}`,
           ),
         );
       } else if (onSpawn && !providerStarted)

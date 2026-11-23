@@ -17,7 +17,12 @@ import { z } from 'zod';
 
 import { isControlPlaneRepository } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
-import { grantForPrincipal, resolvePrincipal, workGrants } from './work-grants';
+import {
+  grantForPrincipal,
+  jobAutomationPrincipalForGrants,
+  resolvePrincipal,
+  workGrants,
+} from './work-grants';
 import { currentFallbackPipelines } from './work-provider-fallback';
 
 export interface DeliveryGithubDeps {
@@ -479,13 +484,17 @@ export function deliveryCorrectionAuthorized(
         isControlPlaneRepository,
       ).includes(run.pipeline)
     );
+  const grants = workGrants();
+  const exactGrant = grantForPrincipal(payload.data.origin.principal, grants);
   const grant =
-    grantForPrincipal(payload.data.origin.principal) ??
-    resolvePrincipal(payload.data.origin.principal);
+    exactGrant ?? resolvePrincipal(payload.data.origin.principal, grants);
+  const isJobAutomation =
+    Boolean(run.params?.['jobOccurrence']) &&
+    exactGrant !== undefined &&
+    exactGrant.principal === jobAutomationPrincipalForGrants(grants);
   if (
-    (grant?.scopes.includes('work.operator') === true ||
-      (grant?.scopes.includes('work.cron') === true &&
-        Boolean(run.params?.['jobOccurrence']))) &&
+    grant !== undefined &&
+    (grant.scopes.includes('work.operator') || isJobAutomation) &&
     grant.pipelines.includes(
       run.pipeline as 'claude' | 'codex' | 'opencode' | 'agy',
     )

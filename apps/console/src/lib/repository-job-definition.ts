@@ -533,5 +533,8 @@ export function renderHarnessJobPrompt(
       '[prior baseline omitted to fit Work description budget]',
     );
   }
+  if (!fitsWorkDescription(candidate) && rawBaseline !== 'none') {
+    candidate = build('none');
+  }
   return workDescriptionSchema.parse(candidate);
 }
