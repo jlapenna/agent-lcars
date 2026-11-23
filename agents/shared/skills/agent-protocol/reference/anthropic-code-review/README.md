@@ -54,23 +54,26 @@ review and comment-quality guidance applies.
        (`prev_reviewed_sha`) is reachable in git (`git diff <prev_reviewed_sha>..HEAD`),
        and that delta has $\le 200$ changed lines (`additions + deletions`)
        without touching `.github/`, `infra/`, `agents/`, `.agents/`,
-       auth/credential/secret handling, or `runner-image` paths. Inspect
+       `third_party/`, `renovate.json`, auth/credential/secret handling,
+       `runner-image`, or `claw-image` paths. Inspect
        `prev_reviewed_sha..HEAD` (plus surrounding callers) and every unresolved
        `agent-lcars[bot]` review thread directly in the coordinator session. Do
        **not** re-litigate untouched files or lines already reviewed at
        `prev_reviewed_sha`.
      - _Docs-only or small low-risk diff:_ Use when either every changed file is
        non-executable documentation (`*.md` or `*.txt` outside `.agents/`,
-       `agents/`, `.github/`, and `infra/`), or total changed lines
-       (`additions + deletions`) are $\le 40$ and touch no `.github/`, `infra/`,
-       `agents/`, `.agents/`, auth/credential/secret, or `runner-image` paths.
+       `agents/`, `.github/`, `infra/`, and `third_party/`), or total changed
+       lines (`additions + deletions`) are $\le 40$ and touch no `.github/`,
+       `infra/`, `agents/`, `.agents/`, `third_party/`, `renovate.json`,
+       auth/credential/secret, `runner-image`, or `claw-image` paths.
        Complete the review directly in the coordinator session with 0 child
        subagents.
    - **Full 2-pass review (`bugs` + `guardrails`):** Use for all other Round 1
      reviews, whenever `prev_reviewed_sha` is unreachable or the base branch
      changed, or when an incremental delta exceeds 200 lines or touches
-     `.github/`, `infra/`, `agents/`, `.agents/`, auth/credentials/secrets, or
-     `runner-image` paths.
+     `.github/`, `infra/`, `agents/`, `.agents/`, `third_party/`,
+     `renovate.json`, auth/credentials/secrets, `runner-image`, or `claw-image`
+     paths.
 
    **Resolving fixed bot threads on re-review (both tiers):** Whenever unresolved
    review threads authored by `agent-lcars[bot]` (or `agent-lcars`) exist on the
