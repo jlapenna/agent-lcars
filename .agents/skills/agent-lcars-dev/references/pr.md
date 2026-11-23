@@ -162,8 +162,8 @@
    minutes until its merge command was run a second time (#3473). Read the
    rule suite after a merge, as below: a `bypass` there is the signal.
 
-   Execute the closing-scope guard and arming
-   only as the `&&`-chained sequence above: a rejected, incomplete or
+   Execute the closing-scope guard and whichever arming call you use
+   only as an `&&`-chained sequence: a rejected, incomplete or
    changed-scope read must stop the chain. Arming does not declare checks
    passed; an already-eligible PR can merge immediately. If arming fails,
    re-read the exact PR/head and diagnose the error. Never add `--admin`,
@@ -234,7 +234,7 @@
    for the hand-over record and the admin-bypass hazard.
 
    The ruleset enforces required `E2E`, `Verify`,
-   `LCARS review` (a commit status GitHub Actions publishes on the PR head),
+   `LCARS review` (published on the PR head),
    `Runner image pnpm-store seed`, and `repository-owned Terraform`,
    `required_review_thread_resolution`, linear history, and no deletion or
    force-push. The up-to-date-branch policy is **non-strict** (harmonized
