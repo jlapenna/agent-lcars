@@ -145,11 +145,13 @@
 
    A required context that is not successful there is the wait. Find why it
    has not passed or why its publisher has not run; never merge around it.
-   To arm a PR whose checks have already finished, queue with the shared
-   protocol's arm recipe in
+   While a required context is still pending, arm with the shared protocol's
+   recipe in
    [`agent-protocol.md`](../../../../agents/shared/skills/agent-protocol/reference/agent-protocol.md),
    chained to the same guard: its `enablePullRequestAutoMerge` call can only
-   queue, and GitHub refuses it for a PR that could merge now.
+   queue. GitHub refuses that call for a PR that could merge now; when every
+   required context is already successful on the head, the guarded CLI
+   sequence above is the one that merges it.
 
    A required check must be one the ruleset can see. From 2026-11-22 to
    2026-11-23 `main` required `LCARS review (merge candidate)`, a check
