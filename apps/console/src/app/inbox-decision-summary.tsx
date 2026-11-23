@@ -1,12 +1,11 @@
 import 'server-only';
 
-import { Suspense } from 'react';
-
 import {
   getInboxDecisionSummary,
   inboxDecisionContext,
 } from '../lib/inbox-decision-summary';
 import { type InboxCard, nativeCardText } from './inbox-card';
+import { NavSuspense } from './nav-suspense';
 
 export async function InboxDecisionDescription({
   context,
@@ -43,7 +42,7 @@ export function withInboxDecisionSummary(
   return {
     ...card,
     decisionSummary: (
-      <Suspense
+      <NavSuspense
         fallback={
           <span role="status" aria-label="Decision summary">
             Generating summary… {fallback}
@@ -55,7 +54,7 @@ export function withInboxDecisionSummary(
           observedAt={observedAt}
           fallback={fallback}
         />
-      </Suspense>
+      </NavSuspense>
     ),
   };
 }

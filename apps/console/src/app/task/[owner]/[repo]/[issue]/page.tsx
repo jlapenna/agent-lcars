@@ -1,6 +1,5 @@
 import { Text } from '@mantine/core';
 import { notFound } from 'next/navigation';
-import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -11,6 +10,7 @@ import { getTaskDetail } from '../../../../../lib/task-detail';
 import { ConsoleCommandUtilities } from '../../../../console-command-utilities';
 import { repoScopedConsoleHrefs } from '../../../../console-hrefs';
 import { DetailWorkspace } from '../../../../detail-workspace';
+import { NavSuspense } from '../../../../nav-suspense';
 import { NavPageLoading } from '../../../../page-loading';
 import { withConsolePageShell } from '../../../../with-console-page-shell';
 import { LogicalWorkCard } from '../../../logical-work-card';
@@ -164,7 +164,7 @@ async function TaskDetailPageContent({ params }: PageProps) {
 // boundary, same as /sessions/[id] - see that page's identical comment.
 export default function TaskDetailPage({ params }: PageProps) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="deck"
@@ -175,6 +175,6 @@ export default function TaskDetailPage({ params }: PageProps) {
       }
     >
       <TaskDetailPageContent params={params} />
-    </Suspense>
+    </NavSuspense>
   );
 }

@@ -5,7 +5,7 @@ import {
 } from '@agent-lcars/telemetry';
 import { Anchor, Card, Group, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
-import { cache, Suspense } from 'react';
+import { cache } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -35,6 +35,7 @@ import {
   ToolbarSelect,
   ToolbarWindow,
 } from '../console-toolbar';
+import { NavSuspense } from '../nav-suspense';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { IssueGroupedSessions } from './issue-grouped-sessions';
@@ -294,14 +295,14 @@ function SessionsViewContent({
   watchedRepos,
 }: SessionsViewProps) {
   return (
-    <Suspense fallback={<PageLoading rows={6} header={false} />}>
+    <NavSuspense fallback={<PageLoading rows={6} header={false} />}>
       <SessionsBody
         query={query}
         view={view}
         filters={filters}
         watchedRepos={watchedRepos}
       />
-    </Suspense>
+    </NavSuspense>
   );
 }
 
@@ -317,9 +318,9 @@ const SessionsPageView = withConsolePageShell(
         Durable session records ·{' '}
         {query.repo && `${repoDisplayName(query.repo)} — `}
         {describeArchiveWindow(query)} ·{' '}
-        <Suspense fallback="…">
+        <NavSuspense fallback="…">
           <SessionCount query={query} />
-        </Suspense>
+        </NavSuspense>
         {query.repo && (
           <>
             {' · '}
@@ -401,7 +402,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
 // #160).
 export default function SessionsPage({ searchParams }: PageProps) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="sessions"
@@ -412,6 +413,6 @@ export default function SessionsPage({ searchParams }: PageProps) {
       }
     >
       <SessionsPageShell searchParams={searchParams} />
-    </Suspense>
+    </NavSuspense>
   );
 }

@@ -1,6 +1,6 @@
 import { SESSION_AGENTS } from '@agent-lcars/telemetry';
 import { Button, Text } from '@mantine/core';
-import { cache, Suspense } from 'react';
+import { cache } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -27,6 +27,7 @@ import {
   ToolbarWindow,
 } from '../console-toolbar';
 import { loadFleetReadouts } from '../fleet-readouts';
+import { NavSuspense } from '../nav-suspense';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { parseViewFilters } from '../sessions/session-view-filters';
 import { withConsolePageShell } from '../with-console-page-shell';
@@ -226,9 +227,9 @@ interface CostsViewProps {
 
 function CostsViewContent({ query, watchedRepos }: CostsViewProps) {
   return (
-    <Suspense fallback={<PageLoading rows={6} header={false} />}>
+    <NavSuspense fallback={<PageLoading rows={6} header={false} />}>
       <CostsBody query={query} watchedRepos={watchedRepos} />
-    </Suspense>
+    </NavSuspense>
   );
 }
 
@@ -242,9 +243,9 @@ const CostsPageView = withConsolePageShell(
     subtitle: (
       <>
         Cost ledger · {describeArchiveWindow(query)} ·{' '}
-        <Suspense fallback="…">
+        <NavSuspense fallback="…">
           <SessionCount query={query} />
-        </Suspense>
+        </NavSuspense>
       </>
     ),
     utilities: (
@@ -291,7 +292,7 @@ async function CostsPageShell({ searchParams }: PageProps) {
 // boundary - see /sessions' page.tsx for the same shape and reasoning.
 export default function CostsPage({ searchParams }: PageProps) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="costs"
@@ -302,6 +303,6 @@ export default function CostsPage({ searchParams }: PageProps) {
       }
     >
       <CostsPageShell searchParams={searchParams} />
-    </Suspense>
+    </NavSuspense>
   );
 }
