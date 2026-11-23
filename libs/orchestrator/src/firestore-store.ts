@@ -57,8 +57,10 @@ import {
   workRevisionSchema,
 } from './model';
 import {
+  type ProviderCooldown,
   providerCooldownForRun,
   providerIsCoolingDown,
+  shouldWriteProviderCooldown,
 } from './provider-cooldown';
 import { retainsPhysicalClaim } from './provider-routing';
 import {
@@ -200,9 +202,46 @@ export class FirestoreStore implements OrchestratorStore {
     );
   }
 
-  #writeProviderCooldown(tx: Transaction, run: Run): void {
-    const cooldown = providerCooldownForRun(run);
-    if (cooldown !== undefined) {
+  async #prepareProviderCooldownWrites(
+    tx: Transaction,
+    runs: readonly (Run | undefined)[],
+  ): Promise<ProviderCooldown[]> {
+    const candidates: ProviderCooldown[] = [];
+    for (const run of runs) {
+      if (run === undefined) continue;
+      const cooldown = providerCooldownForRun(run);
+      if (cooldown !== undefined) candidates.push(cooldown);
+    }
+    if (candidates.length === 0) return [];
+    const pipelines = [...new Set(candidates.map((c) => c.pipeline))];
+    const snapshots = await Promise.all(
+      pipelines.map((pipeline) =>
+        tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
+      ),
+    );
+    const effective = new Map<string, unknown>(
+      pipelines.map((pipeline, index) => [pipeline, snapshots[index]?.data()]),
+    );
+    const writes = new Map<string, ProviderCooldown>();
+    for (const candidate of candidates) {
+      if (
+        shouldWriteProviderCooldown(
+          effective.get(candidate.pipeline),
+          candidate,
+        )
+      ) {
+        effective.set(candidate.pipeline, candidate);
+        writes.set(candidate.pipeline, candidate);
+      }
+    }
+    return [...writes.values()];
+  }
+
+  #commitProviderCooldownWrites(
+    tx: Transaction,
+    writes: readonly ProviderCooldown[],
+  ): void {
+    for (const cooldown of writes) {
       tx.set(
         this.#providerCooldowns.doc(encodeURIComponent(cooldown.pipeline)),
         cooldown,
@@ -576,6 +615,12 @@ export class FirestoreStore implements OrchestratorStore {
         requestId,
         previousRun,
       });
+      const cooldownWrites = isRefusal(outcome)
+        ? []
+        : await this.#prepareProviderCooldownWrites(tx, [
+            outcome.run,
+            ...(outcome.additionalRuns ?? []),
+          ]);
       if (bindingToCreate !== undefined && bindingRef !== undefined) {
         tx.create(bindingRef, bindingToCreate);
       }
@@ -595,12 +640,11 @@ export class FirestoreStore implements OrchestratorStore {
       tx.set(taskRef, nextTaskDoc);
       if (outcome.run !== undefined) {
         tx.set(this.#runRef(outcome.run.runId), outcome.run);
-        this.#writeProviderCooldown(tx, outcome.run);
       }
       for (const run of outcome.additionalRuns ?? []) {
         tx.set(this.#runRef(run.runId), run);
-        this.#writeProviderCooldown(tx, run);
       }
+      this.#commitProviderCooldownWrites(tx, cooldownWrites);
       for (const entry of outcome.outbox) {
         tx.set(this.#outboxRef(entry.entryId), entry);
       }
@@ -626,6 +670,10 @@ export class FirestoreStore implements OrchestratorStore {
       if (currentRevision !== expectedRevision) {
         throw new StoreConflict(decision.task.task);
       }
+      const cooldownWrites = await this.#prepareProviderCooldownWrites(tx, [
+        decision.run,
+        ...(decision.additionalRuns ?? []),
+      ]);
 
       const nextTaskDoc: z.infer<typeof taskDocSchema> = {
         task: decision.task,
@@ -635,12 +683,11 @@ export class FirestoreStore implements OrchestratorStore {
 
       if (decision.run !== undefined) {
         tx.set(this.#runRef(decision.run.runId), decision.run);
-        this.#writeProviderCooldown(tx, decision.run);
       }
       for (const run of decision.additionalRuns ?? []) {
         tx.set(this.#runRef(run.runId), run);
-        this.#writeProviderCooldown(tx, run);
       }
+      this.#commitProviderCooldownWrites(tx, cooldownWrites);
       for (const entry of decision.outbox) {
         tx.set(this.#outboxRef(entry.entryId), entry);
       }
@@ -721,18 +768,21 @@ export class FirestoreStore implements OrchestratorStore {
       if (taskRef === undefined) {
         throw new Error('run transaction decision has no task reference');
       }
+      const cooldownWrites = await this.#prepareProviderCooldownWrites(tx, [
+        outcome.run,
+        ...(outcome.additionalRuns ?? []),
+      ]);
       tx.set(taskRef, {
         task: outcome.task,
         revision: (task?.revision ?? 0) + 1,
       });
       if (outcome.run !== undefined) {
         tx.set(this.#runRef(outcome.run.runId), outcome.run);
-        this.#writeProviderCooldown(tx, outcome.run);
       }
       for (const additionalRun of outcome.additionalRuns ?? []) {
         tx.set(this.#runRef(additionalRun.runId), additionalRun);
-        this.#writeProviderCooldown(tx, additionalRun);
       }
+      this.#commitProviderCooldownWrites(tx, cooldownWrites);
       for (const entry of outcome.outbox) {
         tx.set(this.#outboxRef(entry.entryId), entry);
       }
