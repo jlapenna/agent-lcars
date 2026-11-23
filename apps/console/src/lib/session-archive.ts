@@ -17,6 +17,8 @@ import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
 } from '@agent-lcars/telemetry/server';
+import { isE2eTesting } from '@agent-lcars/util-server';
+import { cacheLife } from 'next/cache';
 
 import { DEFAULT_ARCHIVE_DAYS, ONE_HOUR_DAYS } from './archive-window';
 import {
@@ -280,6 +282,58 @@ export interface SessionArchiveResult {
  * own sort) and the cost/token ledger from the *same* doc set, so the two
  * views on the page are always consistent with each other.
  */
+type ArchiveDocsFilter = {
+  activeSince: string;
+  source?: SessionArchiveQuery['source'];
+  issueNumber?: number;
+};
+
+async function listArchiveDocs(
+  filter: ArchiveDocsFilter,
+): Promise<SessionDoc[]> {
+  const firestore = await getAgentTelemetryReaderFirestore();
+  return listSessionDocs(firestore, { ...filter, exhaustive: true });
+}
+
+/**
+ * Same short window as the dashboard's projection cache
+ * (DASHBOARD_CACHE_LIFE): loads within 30 s reuse one read, and nothing
+ * served is older than 60 s. Sessions, Costs and the cost readouts all read
+ * this archive, and the 14-day window is about 6,000 documents: some 5 s of
+ * Firestore streaming that every navigation used to pay again. Telemetry is
+ * read-only to the console, so no console write needs to invalidate it.
+ */
+const SESSION_ARCHIVE_CACHE_LIFE = { stale: 30, revalidate: 30, expire: 60 };
+
+/** Keyed by the window in days rather than its exact start, so successive
+ * loads share an entry; the cached read fixes its own start. */
+async function listCachedArchiveDocs(
+  days: number,
+  source: ArchiveDocsFilter['source'],
+  issueNumber: number | undefined,
+): Promise<SessionDoc[]> {
+  'use cache';
+  cacheLife(SESSION_ARCHIVE_CACHE_LIFE);
+  return listArchiveDocs({
+    activeSince: new Date(
+      Date.now() - days * 24 * 60 * 60 * 1000,
+    ).toISOString(),
+    ...(source && { source }),
+    ...(issueNumber !== undefined && { issueNumber }),
+  });
+}
+
+/** Windows up to the 14-day default read through the cache; wider ones, a
+ * snapshot's own clock, and hermetic E2E fixtures read Firestore directly. */
+function readArchiveDocs(
+  filter: ArchiveDocsFilter,
+  cacheableDays: number | undefined,
+): Promise<SessionDoc[]> {
+  return cacheableDays === undefined || isE2eTesting()
+    ? listArchiveDocs(filter)
+    : listCachedArchiveDocs(cacheableDays, filter.source, filter.issueNumber);
+}
+
 export async function getSessionArchive(
   query: SessionArchiveQuery,
   options: {
@@ -300,15 +354,19 @@ export async function getSessionArchive(
 
   let docs: SessionDoc[];
   try {
-    const firestore = await getAgentTelemetryReaderFirestore();
-    docs = await listSessionDocs(firestore, {
-      activeSince,
-      ...(query.source && { source: query.source }),
-      ...(query.issueNumber !== undefined && {
-        issueNumber: query.issueNumber,
-      }),
-      exhaustive: true,
-    });
+    docs = await readArchiveDocs(
+      {
+        activeSince,
+        ...(query.source && { source: query.source }),
+        ...(query.issueNumber !== undefined && {
+          issueNumber: query.issueNumber,
+        }),
+      },
+      // A snapshot consumer names its own clock, so it reads uncached.
+      options.observedAt === undefined && query.days <= DEFAULT_ARCHIVE_DAYS
+        ? query.days
+        : undefined,
+    );
   } catch (error) {
     logger.error('agent-lcars: failed to list session archive:', error);
     return {
