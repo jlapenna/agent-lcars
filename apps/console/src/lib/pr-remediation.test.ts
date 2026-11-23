@@ -42,6 +42,7 @@ interface MockPrSnapshot {
   headRefName?: string;
   headRefOid?: string;
   headRepository?: { nameWithOwner: string } | null;
+  closingIssues?: { number: number; repo: string }[];
   mergeable?: string;
   mergeStateStatus?: string;
   author?: { login: string } | null;
@@ -84,6 +85,12 @@ function makeGraphqlPr(overrides: MockPrSnapshot = {}) {
       overrides.headRepository === undefined
         ? { nameWithOwner: REPO }
         : overrides.headRepository,
+    closingIssuesReferences: {
+      nodes: (overrides.closingIssues ?? []).map(({ number, repo }) => ({
+        number,
+        repository: { nameWithOwner: repo },
+      })),
+    },
     mergeable: overrides.mergeable ?? 'MERGEABLE',
     mergeStateStatus: overrides.mergeStateStatus ?? 'BLOCKED',
     author:
@@ -649,6 +656,46 @@ describe('automatic pull-request review & conflict remediation', () => {
     expect(
       await reconcilePullRequestRemediation(f.remediationDeps, anchor),
     ).toEqual({ action: 'ignored', reason: 'parked-or-excluded-label' });
+  });
+
+  it('defers while the issue-anchored run authoring the PR branch is still live', async () => {
+    const f = createFixture();
+    const anchor = { repo: REPO, issue: 4002 };
+    const source = { repo: REPO, issue: 3999 };
+    const authoring = await f.orchestrator.request({
+      taskId: source,
+      requestId: 'author-3999',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'api' },
+        spec: {
+          title: 'Author the change',
+          description: 'Implement the source issue',
+          pipeline: 'claude',
+          target: { repo: REPO },
+        },
+      },
+    });
+    if ('refused' in authoring) throw new Error('authoring run was refused');
+
+    f.setPr(REPO, 4002, {
+      closingIssues: [{ number: 3999, repo: REPO }],
+      mergeable: 'CONFLICTING',
+      mergeStateStatus: 'DIRTY',
+      reviewThreads: [{ id: 'PRRT_LIVE', isResolved: false }],
+    });
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+    ).toEqual({ action: 'ignored', reason: 'author-run-live' });
+    expect(await f.store.readActiveRun(anchor)).toBeUndefined();
+
+    await f.orchestrator.report(authoring.run.runId, { ok: true });
+    const settled = await reconcilePullRequestRemediation(
+      f.remediationDeps,
+      anchor,
+    );
+    expect(settled).toMatchObject({ action: 'remediated' });
   });
 
   it('deduplicates identical state and caps consecutive automatic remediation rounds', async () => {

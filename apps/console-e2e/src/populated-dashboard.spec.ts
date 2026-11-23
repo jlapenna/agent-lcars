@@ -160,17 +160,10 @@ test.describe('populated dashboard', () => {
     await expect(page.getByText(/Base branch has moved/).first()).toBeVisible();
 
     // A PR blocked only by unresolved review threads stays out of the human
-    // Inbox, while still surfacing its thread count on its task detail page.
+    // Inbox; PR remediation owns it.
     await expect(
       page.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.mergeBlockedThreads}`),
     ).toHaveCount(0);
-    await page.goto(
-      `/task/supersprinklesracing/sprinkles/${E2E_ITEM_NUMBERS.mergeBlockedThreads}`,
-    );
-    await expect(
-      page.getByText('3 unresolved review threads').first(),
-    ).toBeVisible();
-    await page.goto('/inbox');
 
     // Claimed work retains its native status-comment preview, but the retired
     // GitHub-comment-derived live resume command is not rendered.

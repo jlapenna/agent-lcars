@@ -407,7 +407,9 @@ target policy and squash arming. Pending review and CI transfer to the
 existing durable monitor; it does not retain the implementation executor or
 declare delivery complete. The target's branch protection decides what review
 and checks a merge needs, so the merge itself is final logical landing and ends
-monitoring; nothing re-verifies or corrects a merged PR. Actionable same-head
+monitoring; nothing re-verifies or corrects a merged PR itself. Its merge does
+wake conflict remediation for the other open PRs on the same base (see
+[automatic PR remediation](#automatic-pr-remediation)). Actionable same-head
 feedback on an open PR remains a bounded correction. Normal Run
 settlement, credential cleanup and positive physical
 retirement release implementation resources. Task.delivery retains logical
@@ -430,6 +432,23 @@ and repository policy. Credential debt and physically retained
 claims remain owned by the existing queue/capacity barriers.
 
 An auto-merge arm alone is not landing; the merged PR and its merge commit are.
+
+### Automatic PR remediation
+
+`lib/pr-remediation.ts` corrects open same-repository PRs that no delivery
+binding owns: merge conflicts, unresolved review threads from trusted
+(`OWNER`, `MEMBER`, `COLLABORATOR` or fleet/review bot) authors, and
+current-head blocking reviews. It admits an `implement` run on the PR anchor
+under `svc:github-pr-remediation`, picking a provider from the authoring
+pipeline with cross-provider quota fallback, and requests a cross-model
+`review` after a remediation push. `pull_request`, `pull_request_review` and
+`pull_request_review_thread` webhooks wake it; a merged PR sweeps the open PRs
+on its base. It defers to a live run on the PR anchor or on any linked closing
+issue, to a waiting delivery binding (which keeps its same-provider correction
+above), to an agent `PARK`, and to `status:needs-human`, `status:blocked` and
+Renovate PRs. Fork PRs are never remediated. After
+`MAX_AUTO_PR_REMEDIATION_ROUNDS` consecutive rounds it applies
+`status:needs-human`; these blockers otherwise never enter the Decision Inbox.
 A delivery binding has two states: waiting until the PR merges, then complete.
 A PR closed without merging, or merged into a branch other than the bound
 target, drops the binding. There is no runtime-receipt state; a WorkSpec's

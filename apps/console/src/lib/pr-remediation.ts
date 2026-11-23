@@ -83,6 +83,19 @@ const pullRequestSnapshotSchema = z.object({
   headRefName: z.string().min(1),
   headRefOid: sha,
   headRepository: z.object({ nameWithOwner: z.string() }).nullable(),
+  closingIssuesReferences: z
+    .object({
+      nodes: z.array(
+        z
+          .object({
+            number: z.number().int().positive(),
+            repository: z.object({ nameWithOwner: z.string() }),
+          })
+          .nullable(),
+      ),
+    })
+    .nullable()
+    .optional(),
   mergeable: z.string(),
   mergeStateStatus: z.string(),
   author: z.object({ login: z.string() }).nullable(),
@@ -262,6 +275,9 @@ const PR_SNAPSHOT_QUERY = `
         headRefName
         headRefOid
         headRepository { nameWithOwner }
+        closingIssuesReferences(first: 10) {
+          nodes { number repository { nameWithOwner } }
+        }
         mergeable
         mergeStateStatus
         author { login }
@@ -285,6 +301,27 @@ const PR_SNAPSHOT_QUERY = `
     }
   }
 `;
+
+async function linkedIssueRunIsLive(
+  deps: PrRemediationDeps,
+  anchor: GithubAnchor,
+  snapshot: PullRequestSnapshot,
+): Promise<boolean> {
+  const issues = (snapshot.closingIssuesReferences?.nodes ?? []).flatMap(
+    (node) =>
+      node !== null &&
+      node.number !== anchor.issue &&
+      node.repository.nameWithOwner.toLowerCase() === anchor.repo.toLowerCase()
+        ? [node.number]
+        : [],
+  );
+  const runs = await Promise.all(
+    issues.map((issue) =>
+      deps.store.readActiveRun({ repo: anchor.repo, issue }),
+    ),
+  );
+  return runs.some((run) => run !== undefined && isLive(run.state));
+}
 
 async function readPullRequestSnapshot(
   deps: PrRemediationDeps,
@@ -578,6 +615,14 @@ export async function reconcilePullRequestRemediation(
     anchor.repo.toLowerCase()
   ) {
     return { action: 'ignored', reason: 'fork-pull-request' };
+  }
+
+  // The orchestrator lock is per task, so the PR anchor does not contend with
+  // the issue-anchored run that is still authoring this branch. Defer while
+  // any linked source issue has a live run; its completion binds
+  // Task.delivery, and the delivery monitor owns the PR from then on.
+  if (await linkedIssueRunIsLive(deps, anchor, snapshot)) {
+    return { action: 'ignored', reason: 'author-run-live' };
   }
 
   const author = snapshot.author?.login;

@@ -111,7 +111,7 @@ export function queueDisclosureLabels(item: ActionItem): string[] {
  * Diagnostic thread-count badge shown on pull request cards that carry
  * unresolved review threads (#538). Unresolved threads no longer queue a PR
  * into the Decision Inbox on their own, so this renders only when the PR is
- * viewed on its task detail page or queued for an actual human decision.
+ * queued for an actual human decision.
  */
 export function mergeBlockedReason(item: ActionItem): string | undefined {
   const count = item.unresolvedReviewThreadCount;
