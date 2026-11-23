@@ -29,6 +29,10 @@ import {
   type GithubWorkAdmissionOutcome,
 } from './github-work-admission';
 import {
+  graphqlActorSchema,
+  normalizeGraphqlActorLogin,
+} from './graphql-actor';
+import {
   type DrainOutboxResult,
   wakeDeliveryMonitor,
 } from './orchestrator-dispatch';
@@ -98,7 +102,7 @@ const pullRequestSnapshotSchema = z.object({
     .optional(),
   mergeable: z.string(),
   mergeStateStatus: z.string(),
-  author: z.object({ login: z.string() }).nullable(),
+  author: graphqlActorSchema.nullable(),
   labels: z.object({
     nodes: z.array(z.object({ name: z.string() }).nullable()),
   }),
@@ -114,7 +118,7 @@ const pullRequestSnapshotSchema = z.object({
           state: z.string(),
           body: z.string().nullable().optional(),
           authorAssociation: z.string().nullable().optional(),
-          author: z.object({ login: z.string() }).nullable(),
+          author: graphqlActorSchema.nullable(),
           commit: z.object({ oid: sha }).nullable(),
         })
         .nullable(),
@@ -132,7 +136,7 @@ const pullRequestSnapshotSchema = z.object({
               z
                 .object({
                   authorAssociation: z.string().nullable().optional(),
-                  author: z.object({ login: z.string() }).nullable().optional(),
+                  author: graphqlActorSchema.nullable().optional(),
                 })
                 .nullable(),
             ),
@@ -280,12 +284,12 @@ const PR_SNAPSHOT_QUERY = `
         }
         mergeable
         mergeStateStatus
-        author { login }
+        author { __typename login }
         labels(first: 100) { nodes { name } }
         assignees(first: 20) { nodes { login } }
         reviews(last: 100) {
           pageInfo { hasPreviousPage }
-          nodes { databaseId state body authorAssociation author { login } commit { oid } }
+          nodes { databaseId state body authorAssociation author { __typename login } commit { oid } }
         }
         reviewThreads(first: 100) {
           pageInfo { hasNextPage }
@@ -293,7 +297,7 @@ const PR_SNAPSHOT_QUERY = `
             id
             isResolved
             comments(first: 1) {
-              nodes { authorAssociation author { login } }
+              nodes { authorAssociation author { __typename login } }
             }
           }
         }
@@ -358,11 +362,15 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
       continue;
     }
     if (review.commit.oid !== head) continue;
-    const login = review.author.login;
-    if (!isTrustedRemediationReviewer(login, review.authorAssociation)) {
+    const login = normalizeGraphqlActorLogin(review.author);
+    if (
+      !login ||
+      !isTrustedRemediationReviewer(login, review.authorAssociation)
+    ) {
       continue;
     }
-    const isLcarsBot = login.toLowerCase() === 'agent-lcars[bot]';
+    const authorKey = login.toLowerCase();
+    const isLcarsBot = authorKey === 'agent-lcars[bot]';
     const key =
       review.databaseId !== null && review.databaseId !== undefined
         ? `${login}:${review.databaseId}`
@@ -381,16 +389,16 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
     }
 
     if (review.state === 'CHANGES_REQUESTED') {
-      latestByAuthor.set(login, { verdict: 'blocked', key });
+      latestByAuthor.set(authorKey, { verdict: 'blocked', key });
     } else if (review.state === 'APPROVED' || review.state === 'DISMISSED') {
-      latestByAuthor.set(login, { verdict: 'clear', key });
+      latestByAuthor.set(authorKey, { verdict: 'clear', key });
     } else if (review.state === 'COMMENTED' && isLcarsBot) {
       if (hasReviewLineMarker(review.body, '<!-- lcars-review:block -->')) {
-        latestByAuthor.set(login, { verdict: 'blocked', key });
+        latestByAuthor.set(authorKey, { verdict: 'blocked', key });
       } else if (
         hasReviewLineMarker(review.body, '<!-- lcars-review:pass -->')
       ) {
-        latestByAuthor.set(login, { verdict: 'clear', key });
+        latestByAuthor.set(authorKey, { verdict: 'clear', key });
       }
     }
   }
@@ -449,7 +457,7 @@ async function resolveAuthorPipeline(
         ? newestImplementRun.pipeline
         : undefined,
     labels: labels.map((name) => ({ name })),
-    userLogin: snapshot.author?.login,
+    userLogin: normalizeGraphqlActorLogin(snapshot.author),
     body: snapshot.body,
     headRef: snapshot.headRefName,
   });
@@ -547,7 +555,11 @@ function buildRemediationContext(input: {
 export async function reconcilePullRequestRemediation(
   deps: PrRemediationDeps,
   anchor: GithubAnchor,
-  options?: { afterRun?: Run; waitForMergeability?: boolean },
+  options?: {
+    afterRun?: Run;
+    waitForMergeability?: boolean;
+    wakeDelivery?: boolean;
+  },
 ): Promise<PrRemediationResult> {
   if (!isControlPlaneRepository(anchor.repo)) {
     return { action: 'ignored', reason: 'wrong-repo' };
@@ -572,12 +584,14 @@ export async function reconcilePullRequestRemediation(
     number: anchor.issue,
   });
   if (waitingDeliveries.length > 0) {
-    const woken = await wakeDeliveryMonitor(deps, {
-      repo: anchor.repo,
-      number: anchor.issue,
-    });
-    if (woken.length > 0) {
-      await deps.drain(Math.max(10, woken.length * 2));
+    if (options?.wakeDelivery !== false) {
+      const woken = await wakeDeliveryMonitor(deps, {
+        repo: anchor.repo,
+        number: anchor.issue,
+      });
+      if (woken.length > 0) {
+        await deps.drain(Math.max(10, woken.length * 2));
+      }
     }
     return { action: 'ignored', reason: 'delivery-owned' };
   }
@@ -625,7 +639,7 @@ export async function reconcilePullRequestRemediation(
     return { action: 'ignored', reason: 'author-run-live' };
   }
 
-  const author = snapshot.author?.login;
+  const author = normalizeGraphqlActorLogin(snapshot.author);
   if (!author || isAutomatedReviewExcludedAuthor(author)) {
     return { action: 'ignored', reason: 'excluded-author' };
   }
@@ -698,7 +712,7 @@ export async function reconcilePullRequestRemediation(
         firstComment === undefined ||
         firstComment === null ||
         !isTrustedRemediationReviewer(
-          firstComment.author?.login,
+          normalizeGraphqlActorLogin(firstComment.author),
           firstComment.authorAssociation,
         )
       ) {
@@ -949,6 +963,124 @@ export async function reconcileMergedPullRequestConflicts(
         'agent-lcars: post-merge conflict check failed for %s#%s:',
         input.repo,
         pr.number,
+        error,
+      );
+    }
+  }
+}
+
+/**
+ * Periodic maintenance sweep over open GitHub PR projections so PRs whose
+ * review/conflict arrived before rollout, during a host restart, or while a
+ * sibling authoring run was still live get picked up automatically without
+ * needing a manual GitHub event.
+ */
+export async function reconcileOpenPullRequestRemediations(
+  deps: PrRemediationDeps,
+  deadlineMs: number,
+): Promise<void> {
+  const watchedRepos = getWatchedRepos();
+  const projections: Awaited<
+    ReturnType<OrchestratorStore['listOpenGithubAnchorProjections']>
+  > = [];
+  try {
+    let cursor: Parameters<
+      OrchestratorStore['listOpenGithubAnchorProjectionPage']
+    >[0]['cursor'];
+    for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+      if (Date.now() + 10_000 >= deadlineMs) break;
+      const page = await deps.store.listOpenGithubAnchorProjectionPage({
+        limit: 200,
+        cursor,
+      });
+      projections.push(...page.projections);
+      if (page.nextCursor === undefined) break;
+      cursor = page.nextCursor;
+    }
+  } catch (error) {
+    logger.warn(
+      'agent-lcars: open PR remediation sweep could not read projections:',
+      error,
+    );
+    return;
+  }
+
+  const hasConcreteRemediationSignal = (
+    projection: (typeof projections)[number],
+  ): boolean =>
+    (projection.unresolvedReviewThreadCount ?? 0) > 0 ||
+    projection.mergeableState === 'dirty' ||
+    projection.failingChecks?.some((check) =>
+      check.name.startsWith('LCARS review'),
+    ) === true;
+
+  const eligible = projections.filter((projection) => {
+    if (
+      projection.kind !== 'pr' ||
+      projection.state !== 'open' ||
+      projection.draft === true ||
+      projection.mergedAt != null ||
+      projection.labels.includes('bot:renovate') ||
+      projection.labels.includes('status:needs-human') ||
+      projection.labels.includes('status:blocked')
+    ) {
+      return false;
+    }
+    if (!isControlPlaneRepository(projection.anchor.repo)) return false;
+    const watched = watchedRepos.find(
+      (repo) => repoKey(repo) === projection.anchor.repo,
+    );
+    if (watched === undefined || watched.agents === false) return false;
+    if (
+      projection.headRepository !== undefined &&
+      projection.headRepository.toLowerCase() !==
+        projection.anchor.repo.toLowerCase()
+    ) {
+      return false;
+    }
+    if (isAutomatedReviewExcludedAuthor(projection.author)) return false;
+    return (
+      hasConcreteRemediationSignal(projection) ||
+      projection.reviewRequirement === 'required'
+    );
+  });
+  // Prioritize PRs with concrete thread, merge-conflict, or LCARS-review block
+  // signals ahead of generic `reviewRequirement === 'required'`.
+  eligible.sort(
+    (left, right) =>
+      (hasConcreteRemediationSignal(left) ? 0 : 1) -
+      (hasConcreteRemediationSignal(right) ? 0 : 1),
+  );
+
+  // Enqueue only: `handleReconcile`'s single outbox drain runs immediately
+  // afterward and owns outbox claims, backoff, and response accounting.
+  const enqueueOnlyDeps: PrRemediationDeps = {
+    ...deps,
+    drain: async () => ({ dispatched: [], reported: [], failed: [] }),
+  };
+
+  let inspected = 0;
+  for (const projection of eligible) {
+    if (Date.now() + 10_000 >= deadlineMs || inspected >= 10) break;
+    try {
+      const active = await deps.store.readActiveRun(projection.anchor);
+      if (active !== undefined && isLive(active.state)) continue;
+      const waitingDeliveries = await deps.store.readWaitingDeliveryTasks({
+        repo: projection.anchor.repo,
+        number: projection.anchor.issue,
+      });
+      if (waitingDeliveries.length > 0) continue;
+      inspected += 1;
+      await reconcilePullRequestRemediation(
+        enqueueOnlyDeps,
+        projection.anchor,
+        { wakeDelivery: false },
+      );
+    } catch (error) {
+      logger.warn(
+        'agent-lcars: open PR remediation sweep failed for %s#%s:',
+        projection.anchor.repo,
+        projection.anchor.issue,
         error,
       );
     }

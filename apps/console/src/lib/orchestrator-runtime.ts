@@ -28,6 +28,7 @@ import { executeSummaries } from './inbox-summary-work';
 import { observeJobCredentials } from './job-secrets-runtime';
 import {
   reconcileMergedPullRequestConflicts,
+  reconcileOpenPullRequestRemediations,
   reconcilePullRequestRemediation,
 } from './pr-remediation';
 import { observeRepositoryAgents } from './repository-agents-runtime';
@@ -143,6 +144,19 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
                 ...github,
               },
               input,
+            );
+          },
+          reconcileOpenPullRequestRemediations: (deadline) => {
+            const runtime = createOrchestratorRuntime();
+            const github = orchestratorGithubRuntimeDeps(process.env);
+            return reconcileOpenPullRequestRemediations(
+              {
+                store,
+                orchestrator,
+                drain: runtime.drain,
+                ...github,
+              },
+              deadline,
             );
           },
         }),
