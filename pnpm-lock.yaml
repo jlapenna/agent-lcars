@@ -326,6 +326,12 @@ importers:
 
   libs/work: {}
 
+  packages/anthropic-code-review:
+    dependencies:
+      '@anthropics/claude-plugins-official':
+        specifier: github:anthropics/claude-plugins-official#e6143c9807a001832badb63e89d58ffe25d542ec
+        version: https://codeload.github.com/anthropics/claude-plugins-official/tar.gz/e6143c9807a001832badb63e89d58ffe25d542ec
+
   packages/fleet-tools: {}
 
 packages:
@@ -341,6 +347,10 @@ packages:
     peerDependenciesMeta:
       '@modelcontextprotocol/server':
         optional: true
+
+  '@anthropics/claude-plugins-official@https://codeload.github.com/anthropics/claude-plugins-official/tar.gz/e6143c9807a001832badb63e89d58ffe25d542ec':
+    resolution: {gitHosted: true, integrity: sha512-PNi/Bi45piEPPmgvZByBlG32dgmqWfHwmQomKjl3cxFvqZ2FhtWzLxI6E6zqNgI0YJtqY0+mIDdpiJXOTZ1l6A==, tarball: https://codeload.github.com/anthropics/claude-plugins-official/tar.gz/e6143c9807a001832badb63e89d58ffe25d542ec}
+    version: 0.0.0
 
   '@apidevtools/json-schema-ref-parser@9.1.2':
     resolution: {integrity: sha512-r1w81DpR+KyRWd3f+rk6TNqMgedmAxZP5v5KWlXQWlgMUUtyEJch0DKEci1SorPMiSeM8XPl7MZ3miJ60JIpQg==}
@@ -7703,6 +7713,8 @@ snapshots:
       zod: 4.6.7
     optionalDependencies:
       '@modelcontextprotocol/server': 2.4.0
+
+  '@anthropics/claude-plugins-official@https://codeload.github.com/anthropics/claude-plugins-official/tar.gz/e6143c9807a001832badb63e89d58ffe25d542ec': {}
 
   '@apidevtools/json-schema-ref-parser@9.1.2':
     dependencies:

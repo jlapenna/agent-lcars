@@ -82,10 +82,7 @@ for (const path of [...files].sort()) {
 }
 const procedure = join(output, 'procedure');
 mkdirSync(procedure, { mode: 0o700 });
-const packager = join(
-  root,
-  'apps/runner-autoscaler/runner-image/package-anthropic-review.sh',
-);
+const packager = join(root, 'packages/anthropic-code-review/package-review.sh');
 run('bash', [packager, procedure]);
 const adapter = readFileSync(join(procedure, 'README.md'));
 const imageId = process.env.LCARS_REVIEW_QUALIFICATION_IMAGE_ID;

@@ -775,9 +775,10 @@ directory):
 - `prepare-opencode-store.sh`: present, but run at image build: bakes an empty, migrated OpenCode store for
   the runner user after checking the binary matches its pin; refuses a store
   with session history.
-- `package-anthropic-review.sh`: build-time only, run in a builder stage and
-  absent from the running image. It packages the code-review command and license from the locked
-  `third_party/anthropic-plugins` submodule, records its revision and
+- `packages/anthropic-code-review/package-review.sh` (outside this directory):
+  build-time only, run in a builder stage and absent from the running image.
+  It packages the code-review command and license from the pnpm-locked
+  `@anthropics/claude-plugins-official` dependency, records its revision and
   renders that revision into the LCARS reviewer instructions. The running image holds only
   that packaged output, under
   `/usr/local/lib/agent-lcars/agents/shared/skills/agent-protocol/reference/anthropic-code-review`.

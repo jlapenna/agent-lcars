@@ -1,0 +1,23 @@
+{
+  "name": "@agent-lcars/anthropic-code-review",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Anthropic's code-review command, locked by pnpm and packaged into the runner image for LCARS review dispatches.",
+  "license": "SEE LICENSE IN ../../LICENSE",
+  "scripts": {
+    "test": "bash package-review.test.sh"
+  },
+  "dependencies": {
+    "@anthropics/claude-plugins-official": "github:anthropics/claude-plugins-official#e6143c9807a001832badb63e89d58ffe25d542ec"
+  },
+  "nx": {
+    "targets": {
+      "test": {
+        "inputs": [
+          "default",
+          "{workspaceRoot}/agents/shared/skills/agent-protocol/reference/anthropic-code-review/README.md"
+        ]
+      }
+    }
+  }
+}
