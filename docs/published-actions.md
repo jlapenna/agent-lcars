@@ -45,12 +45,12 @@ needs `contents: read`, `pull-requests: read`, and `checks: read` on the
 workflow token. Pass the App client ID and private key through its declared
 inputs. All triggers for the trusted publisher must use one repository-wide
 concurrency group with `cancel-in-progress: false`. Use the repository’s
-runner and credential environment for that trusted job. Require
-`LCARS review (merge candidate)` from Agent LCARS App 4457090 and require
-review-thread resolution in the target repository. **Do not switch a ruleset
-to that context yet.** GitHub's auto-merge counts a check on the test merge
-commit, but a ruleset evaluating the update of the default branch does not
-find it there: with that context required, every merge needs the
+runner and credential environment for that trusted job. Once a ruleset can see it, require
+`LCARS review (merge candidate)` from Agent LCARS App 4457090; require
+review-thread resolution in the target repository either way. **Do not switch
+a ruleset to that context yet.** GitHub's auto-merge counts a check on the
+test merge commit, but a ruleset evaluating the update of the default branch
+does not find it there: with that context required, every merge needs the
 administrator bypass and an actor without one cannot merge (#3473). Until a
 PR has landed through it as an actor that cannot bypass, keep requiring the
 head-scoped `LCARS review` status that `lcars-review-status.yml` publishes. The shared agent protocol
