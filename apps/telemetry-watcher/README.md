@@ -20,7 +20,7 @@ including the retired `runner sidecar`, is a usage error.
 
 ## `lcars` commands
 
-Both installed launchers (`bin/install-session-title-cli.sh` and the runner
+Both installed launchers (the workstation one from `bin/lcars-launcher.sh` and the runner
 image's `lcars.sh`) send `lcars hook ...` to a separate bundle built from
 `src/hook-cli.ts`; every other command goes to the operator CLI dispatched by
 `src/session-title-cli.ts`. The hook bundle prints usage to stderr for a
@@ -298,26 +298,36 @@ telemetry-tool runtime path.
 ## Installing the `lcars` CLI
 
 The `lcars session title "..."` and `lcars hook` commands depend on a
-`lcars` launcher existing on the workstation — nothing installs it
-automatically. From the primary `~/p/agent-lcars` checkout (the one that
-persists on the host long-term; this builds an Nx target, so it needs a real
-checkout, and the checkout's own `dist/` is never referenced directly — see
-the script's header for why):
+`lcars` launcher existing on the workstation. Homegit installs it on the
+hosts it enrolls for telemetry: `.github/workflows/publish-workstation-cli.yml`
+packs the three bundles and the launcher from each `main` revision that
+passes CI (`bin/package-workstation-cli.sh`, checked by
+`bin/verify-workstation-cli.sh`) and publishes them as
+`lcars-workstation-cli.tar.gz` on the `workstation-cli` release. Homegit
+unpacks that archive at `~/.local/share/agent-lcars-cli`, links
+`~/.local/bin/lcars` to the launcher inside, and refreshes both on apply, so a merged change
+reaches workstations without a manual step. To see what a host runs:
 
 ```bash
-apps/telemetry-watcher/bin/install-session-title-cli.sh
+cat ~/.local/share/agent-lcars-cli/REVISION
+(cd ~/.local/share/agent-lcars-cli && sha256sum -c SHA256SUMS)
 ```
 
-This builds the `session-title-cli` Nx target and copies its bundle to
-`~/.local/lib/agent-lcars/lcars-session-title.cjs` (override with
-`AGENT_LCARS_SESSION_TITLE_CLI_LIB_DIR`), then generates a `lcars` launcher
-at `~/.local/bin/lcars` (override with
-`AGENT_LCARS_SESSION_TITLE_CLI_BIN_DIR`) that resolves `node` itself —
-covering this fleet's fnm-managed installs, where the CLI shim isn't
-reliably on PATH for every caller. Add `~/.local/bin` to the account's PATH
-for interactive use. Re-run this script after any change to the CLI lands on
-that checkout's `main`. Then follow [Host setup](#host-setup) to install the
-hook entries.
+The launcher resolves `node` itself, covering this fleet's fnm-managed
+installs, where the CLI shim isn't reliably on PATH for every caller. Add
+`~/.local/bin` to the account's PATH for interactive use, then follow
+[Host setup](#host-setup) to install the hook entries.
+
+To try a checkout's own build, use the development installer. It builds the
+Nx targets and copies the bundles out of the checkout (see the script's
+header for why `dist/` is never referenced directly). It refuses to write
+over the copy homegit manages, so on an enrolled host install beside it:
+
+```bash
+AGENT_LCARS_SESSION_TITLE_CLI_LIB_DIR=~/.local/lib/agent-lcars-dev \
+AGENT_LCARS_SESSION_TITLE_CLI_BIN_DIR=~/.local/lib/agent-lcars-dev/bin \
+  apps/telemetry-watcher/bin/install-session-title-cli.sh
+```
 
 The runner image bakes its own copy (`apps/runner-autoscaler/runner-image/lcars.sh`).
 

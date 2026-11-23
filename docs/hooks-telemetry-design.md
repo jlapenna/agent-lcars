@@ -4,8 +4,11 @@ Status: shipped. Owner: telemetry. Hooks are the only live telemetry path for
 Claude Code, Codex, OpenCode, and Antigravity on workstations and
 QueueExecutor runners. The polling host watcher daemon (`apps/telemetry-watcher`
 host mode, #2540) and the runner's live polling sidecar are retired and their
-code is deleted; the workstation CLI installer is
-`apps/telemetry-watcher/bin/install-session-title-cli.sh`.
+code is deleted. Workstations receive the CLI from the published
+`workstation-cli` release, which homegit installs (see the Workstation CLI row
+in [deployment-boundary.md](deployment-boundary.md));
+`apps/telemetry-watcher/bin/install-session-title-cli.sh` is the development
+installer.
 
 ## GitHub actor observation for spend attribution
 
@@ -303,17 +306,20 @@ trusted_hash = "..."` in `~/.codex/config.toml`, and homegit's
   `[hooks]` by policy and `allow_managed_hooks_only = true` can refuse
   everything else.
 - `~/.config/opencode/plugins/lcars-telemetry.js` installed by homegit.
-- `lcars` binary: stop relying on the manual
-  `bin/install-session-title-cli.sh` (formerly `deploy/`). `packages/fleet-tools`
+- `lcars` binary: delivered by homegit, not by a manual
+  `bin/install-session-title-cli.sh` run. `packages/fleet-tools`
   (`@agent-lcars/agent-tools`) is dependency-free committed scripts packed
   straight from a sparse clone by homegit's
-  `homegit-repo-tools-bootstrap.sh`, so a built esbuild bundle does not fit
-  there. Instead a workflow on `main` builds the `session-title-cli` target
-  and uploads `lcars-session-title.cjs` as a GitHub Release asset tagged
-  `lcars-cli/<sha>`; the same bootstrap script downloads the latest asset
-  (checksum pinned in the chezmoi source) to `~/.local/lib/agent-lcars/` and
-  writes the `~/.local/bin/lcars` launcher. `install-session-title-cli.sh`
-  stays for development.
+  `homegit-repo-tools-bootstrap.sh`, so built esbuild bundles do not fit
+  there. Instead `.github/workflows/publish-workstation-cli.yml` builds the
+  session-title, hook and hook-flush bundles and their launcher from each
+  `main` revision that passes CI and publishes them as one archive on the
+  `workstation-cli` release. Homegit unpacks it at
+  `~/.local/share/agent-lcars-cli` with a native archive external and links
+  `~/.local/bin/lcars` to the launcher inside. The release follows `main`: homegit does not pin
+  Joe-owned software, so there is no checksum in the chezmoi source, and the
+  archive's own `SHA256SUMS` and `REVISION` are the adoption evidence.
+  `install-session-title-cli.sh` stays for development.
 - Credentials: `~/.config/agent-lcars/writer-key.json` (mode 0600), the
   `telemetry-writer` key delivered by homegit (4.4).
 - Config: `~/.config/agent-lcars/config.json` `{ "repos": ["jlapenna/*"] }`
