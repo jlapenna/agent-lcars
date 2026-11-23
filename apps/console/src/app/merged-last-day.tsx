@@ -1,5 +1,6 @@
+import { Suspense } from 'react';
+
 import { mergedLastDay } from '../lib/merged-pulls';
-import { NavSuspense } from './nav-suspense';
 import { UNAVAILABLE } from './ops-primitives';
 
 async function MergedLastDayCount({ repo }: { repo?: string }) {
@@ -16,8 +17,8 @@ async function MergedLastDayCount({ repo }: { repo?: string }) {
  */
 export function MergedLastDay({ repo }: { repo?: string }) {
   return (
-    <NavSuspense fallback={`${UNAVAILABLE} merged · 24h`}>
+    <Suspense fallback={`${UNAVAILABLE} merged · 24h`}>
       <MergedLastDayCount repo={repo} />
-    </NavSuspense>
+    </Suspense>
   );
 }

@@ -5,7 +5,7 @@ import {
 } from '@agent-lcars/telemetry';
 import { Anchor, Card, Group, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
-import { cache } from 'react';
+import { cache, Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -318,9 +318,9 @@ const SessionsPageView = withConsolePageShell(
         Durable session records ·{' '}
         {query.repo && `${repoDisplayName(query.repo)} — `}
         {describeArchiveWindow(query)} ·{' '}
-        <NavSuspense fallback="…">
+        <Suspense fallback="…">
           <SessionCount query={query} />
-        </NavSuspense>
+        </Suspense>
         {query.repo && (
           <>
             {' · '}

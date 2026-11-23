@@ -1,6 +1,6 @@
 import { SESSION_AGENTS } from '@agent-lcars/telemetry';
 import { Button, Text } from '@mantine/core';
-import { cache } from 'react';
+import { cache, Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -243,9 +243,9 @@ const CostsPageView = withConsolePageShell(
     subtitle: (
       <>
         Cost ledger · {describeArchiveWindow(query)} ·{' '}
-        <NavSuspense fallback="…">
+        <Suspense fallback="…">
           <SessionCount query={query} />
-        </NavSuspense>
+        </Suspense>
       </>
     ),
     utilities: (

@@ -1,8 +1,7 @@
-import { type ReactNode } from 'react';
+import { type ReactNode, Suspense } from 'react';
 
 import { DataWarnings } from '../console-header';
 import { ConsoleWorkspace } from '../console-workspace';
-import { NavSuspense } from '../nav-suspense';
 
 /**
  * Route-level composition for native work items.
@@ -87,10 +86,8 @@ export function WorkReadWarnings({
   read: () => Promise<WorkRead | undefined>;
 }) {
   return (
-    <NavSuspense
-      fallback={<DataWarnings warnings={[]} sourcesChecked={false} />}
-    >
+    <Suspense fallback={<DataWarnings warnings={[]} sourcesChecked={false} />}>
       <WorkReadVerdict read={read} />
-    </NavSuspense>
+    </Suspense>
   );
 }
