@@ -123,8 +123,47 @@
 
    Require an open, ready PR at `reviewed_head` before arming. Afterward,
    confirm either a non-null SQUASH `autoMergeRequest` at that same head or
-   an actual merge of that head. Execute the closing-scope guard and arming
-   only as the `&&`-chained sequence above: a rejected, incomplete or
+   an actual merge of that head.
+
+   **Arm once, then leave it.** An armed PR that has not merged is waiting
+   on a required check, not stuck. Do not run `gh pr merge` on it again:
+   `gh pr merge --auto` merges at once, instead of queueing, when GitHub
+   reports the PR as `CLEAN`, `HAS_HOOKS` or `UNSTABLE`, and an
+   administrator's merge bypasses a required check that is still missing.
+   To see what an armed PR is waiting for, read the requirement and the
+   head's checks:
+
+   ```bash
+   gh api repos/jlapenna/agent-lcars/rules/branches/main \
+     --jq '.[] | select(.type == "required_status_checks")
+           | .parameters.required_status_checks[].context'
+   gh api "repos/jlapenna/agent-lcars/commits/$reviewed_head/check-runs" --paginate \
+     --jq '.check_runs[] | [.name, .status, .conclusion] | @tsv'
+   gh api "repos/jlapenna/agent-lcars/commits/$reviewed_head/status" \
+     --jq '.statuses[] | [.context, .state] | @tsv'
+   ```
+
+   A required context that is not successful there is the wait. Find why it
+   has not passed or why its publisher has not run; never merge around it.
+   While a required context is still pending, arm with the shared protocol's
+   recipe in
+   [`agent-protocol.md`](../../../../agents/shared/skills/agent-protocol/reference/agent-protocol.md),
+   chained to the same guard: its `enablePullRequestAutoMerge` call can only
+   queue. GitHub refuses that call for a PR that could merge now; when every
+   required context is already successful on the head, the guarded CLI
+   sequence above is the one that merges it.
+
+   A required check must be one the ruleset can see. From 2026-11-22 to
+   2026-11-23 `main` required `LCARS review (merge candidate)`, a check
+   published on a PR's test merge commit. GitHub's auto-merge counted it
+   there, but the ruleset evaluating the update of `main` did not, so every
+   maintainer merge was recorded as a `bypass`, merges by an actor that
+   cannot bypass were refused, and PR #3469 sat armed and green for 31
+   minutes until its merge command was run a second time (#3473). Read the
+   rule suite after a merge, as below: a `bypass` there is the signal.
+
+   Execute the closing-scope guard and whichever arming call you use
+   only as an `&&`-chained sequence: a rejected, incomplete or
    changed-scope read must stop the chain. Arming does not declare checks
    passed; an already-eligible PR can merge immediately. If arming fails,
    re-read the exact PR/head and diagnose the error. Never add `--admin`,
@@ -150,8 +189,11 @@
    reads OPEN/ready with all required checks green. Record that refusal as a
    state change, not transport loss: it repeats
    identically, so re-issuing it is a blind retry. Re-read the head, closing
-   scope, reviews and required checks, then use the guarded CLI sequence
-   above; it can merge the already-eligible head normally. Do not manufacture
+   scope, reviews and required checks. Only when every context the ruleset
+   requires is successful on that head (the reads under "Arm once, then
+   leave it" above; `UNSTABLE` or "all of `gh pr checks` green" is not
+   that), use the guarded CLI sequence above, which then merges the
+   eligible head normally. Do not manufacture
    a new revision merely to make the queue-only API accept the request.
    Never add `--admin`, relax or fabricate checks/statuses, change policy,
    or introduce a wrapper or credential merely to arm.
@@ -192,7 +234,8 @@
    for the hand-over record and the admin-bypass hazard.
 
    The ruleset enforces required `E2E`, `Verify`,
-   `LCARS review`, `Runner image pnpm-store seed`, and `repository-owned Terraform`,
+   `LCARS review` (published on the PR head),
+   `Runner image pnpm-store seed`, and `repository-owned Terraform`,
    `required_review_thread_resolution`, linear history, and no deletion or
    force-push. The up-to-date-branch policy is **non-strict** (harmonized
    with the sprinkles repo, 2026-08-11): an armed PR merges on green even
