@@ -6,6 +6,8 @@ import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
 } from '@agent-lcars/telemetry/server';
+import { isE2eTesting } from '@agent-lcars/util-server';
+import { cacheLife } from 'next/cache';
 
 /** Mirrors cli-sessions.ts's ACTIVE_WINDOW_HOURS: a runner session only
  * matters while there's a live/recent broker run to join it to (In Flight
@@ -37,19 +39,38 @@ export interface RunnerSessionsResult {
  * is a separate, concurrently-developed piece) or the store may be
  * unreachable (PRD user story 16).
  */
-export async function getRunnerSessionsByRunId(): Promise<RunnerSessionsResult> {
+async function listRunnerSessions(): Promise<IssueAgentSessionDoc[]> {
   const activeSince = new Date(
     Date.now() - ACTIVE_WINDOW_HOURS * 60 * 60 * 1000,
   ).toISOString();
+  const firestore = await getAgentTelemetryReaderFirestore();
+  const docs = await listSessionDocs(firestore, { activeSince });
+  return docs.filter(
+    (doc): doc is IssueAgentSessionDoc =>
+      doc.source === 'issue-agent' && Boolean(doc.runId),
+  );
+}
 
+/** The broker runs this joins to come from the 30 s dashboard cache, so a
+ * fresher telemetry read buys nothing; the window is ~800 full session
+ * documents (several MB) that Bridge and Agents would otherwise re-read on
+ * every navigation. Same lifetime and E2E bypass as `dashboard-data.ts`. */
+const RUNNER_SESSIONS_CACHE_LIFE = { stale: 30, revalidate: 30, expire: 60 };
+
+async function listCachedRunnerSessions(): Promise<IssueAgentSessionDoc[]> {
+  'use cache';
+  cacheLife(RUNNER_SESSIONS_CACHE_LIFE);
+  return listRunnerSessions();
+}
+
+export async function getRunnerSessionsByRunId(): Promise<RunnerSessionsResult> {
   try {
-    const firestore = await getAgentTelemetryReaderFirestore();
-    const docs = await listSessionDocs(firestore, { activeSince });
+    const docs = await (isE2eTesting()
+      ? listRunnerSessions()
+      : listCachedRunnerSessions());
     const sessionsByRunId = new Map<string, IssueAgentSessionDoc>();
     for (const doc of docs) {
-      if (doc.source === 'issue-agent' && doc.runId) {
-        sessionsByRunId.set(doc.runId, doc);
-      }
+      if (doc.runId) sessionsByRunId.set(doc.runId, doc);
     }
     return { sessionsByRunId, warnings: [] };
   } catch (error) {

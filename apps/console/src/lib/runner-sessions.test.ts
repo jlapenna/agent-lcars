@@ -3,9 +3,12 @@ import type {
   IssueAgentSessionDoc,
 } from '@agent-lcars/telemetry';
 import { listSessionDocs } from '@agent-lcars/telemetry/server';
+import { cacheLife } from 'next/cache';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getRunnerSessionsByRunId } from './runner-sessions';
+
+vi.mock('next/cache', () => ({ cacheLife: vi.fn() }));
 
 vi.mock('@agent-lcars/telemetry/server', () => ({
   getAgentTelemetryReaderFirestore: vi.fn(),
@@ -74,6 +77,18 @@ describe('getRunnerSessionsByRunId', () => {
     expect(sessionsByRunId.get('111')?.sessionId).toBe('s1');
     expect(sessionsByRunId.get('222')?.sessionId).toBe('s2');
     expect(sessionsByRunId.size).toBe(2);
+  });
+
+  it('reads through the short shared cache outside E2E', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([]);
+
+    await getRunnerSessionsByRunId();
+
+    expect(cacheLife).toHaveBeenCalledWith({
+      stale: 30,
+      revalidate: 30,
+      expire: 60,
+    });
   });
 
   it('drops cli-source docs and issue-agent docs with no runId', async () => {
