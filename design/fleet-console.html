@@ -282,6 +282,7 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
 .op-row .t { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .op-row .line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; font-size: 12px; color: var(--ink-dim); }
 .op-row .acts { display: flex; align-items: center; gap: 4px; }
+.op-row .acts .live-view { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; font-size: 13px; white-space: nowrap; }
 
 /* hosts */
 .host-spec { font: 400 11px/1.4 var(--f-mono); color: var(--ink-dim); display: block; margin-top: 2px; white-space: nowrap; }
@@ -645,7 +646,9 @@ const RECENT_WORK = [
   ['P3', 'supersprinklesracing/sprinkles', 'user:jlapenna', 'members: settle the Strava connect copy', 'claude', 'neutral', 'canceled', '1d ago'],
 ];
 const CLI = [
-  { title: 'Console restyle to design mockup', live: 'live', agent: 'claude code', repo: 'agent-lcars' },
+  // `pane`: the session runs in a terminal a host viewer can show, so its row
+  // also offers the live view. A row without one keeps the single action.
+  { title: 'Console restyle to design mockup', live: 'live', agent: 'claude code', repo: 'agent-lcars', pane: true },
   { title: 'Review product specs and file issues', live: 'live', agent: 'codex', repo: 'agent-lcars' },
   { title: 'Wedding invite delivery verification', live: 'idle', agent: 'claude code', repo: 'jlapenna/wedding' },
 ];
@@ -765,7 +768,7 @@ function fleetPanel() {
 function cliPanel() {
   const rows = CLI.map((c, i) => `<div class="op-row" data-od-id="cli-session-${i + 1}">
     <div><div class="t">${c.title}</div><div class="line"><span class="tag ${c.live}">${c.live}</span><span class="tag">${c.agent}</span><span class="tag">${c.repo}</span></div></div>
-    <div class="acts"><a class="btn btn-secondary btn-sm" href="#sessions">Open session</a></div></div>`).join('');
+    <div class="acts">${c.pane ? '<a class="live-view" href="#sessions" target="_blank" rel="noreferrer">Open live ↗</a>' : ''}<a class="btn btn-secondary btn-sm" href="#sessions">Open session</a></div></div>`).join('');
   return `<section class="panel" data-od-id="panel-cli-sessions"><div>
     <div class="panel-head"><h2>CLI sessions</h2><span class="count">${CLI.length}</span></div>
     <div class="ops-rows">${rows}</div>

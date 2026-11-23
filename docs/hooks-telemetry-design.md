@@ -375,11 +375,42 @@ them:
   same reason, but derives state on the console from the event stream
   rather than from a per-host server, because a per-host server is the
   daemon this design removes.
-- **Pane identity when present.** If `HERDR_ENV=1`, the client adds
-  `herdr: { paneId: HERDR_PANE_ID }` to the event. The console can then
-  deep-link a live session to its pane via `herdr pane get`, and a later
-  phase can join herdr's `blocked` recognition, which sees approval UIs no
-  hook reports.
+- **Pane identity when present.** On a workstation the client adds
+  `herdrPaneId` to the summary: the address herdr-core gives the session's
+  own terminal, which is also the pane ID Ovis opens it by. It is an
+  identifier observed from the hook's process, never transcript content,
+  and a dispatched runner never sets it.
+
+  A herdr-core terminal exports no identity of its own, and `herdr-core get`
+  with no target cannot resolve itself from a hook, so the client asks the
+  core for its live terminals and matches each one's shell and foreground
+  PID against its own ancestors
+  (`apps/telemetry-watcher/src/lib/hook/herdr-pane.ts`). It makes one
+  `terminal.list` call on the core's own socket and never runs the
+  `herdr-core` program: every command of that program but `--version` starts
+  a core when none is running, and finding it would depend on a `PATH` a
+  hook does not reliably inherit. No socket means no core, which is a
+  definite "not in a terminal". An exported `HERDR_PANE_ID` is not trusted:
+  every process started under a pane inherits it. The lookup runs before the per-session lock, so a slow
+  herdr-core never makes a queued event give up. Its answer is kept in the
+  per-session state file and asked for again only when the session starts
+  again, or five minutes after herdr-core failed to answer. A write with no
+  pane clears the stored one, so a session resumed elsewhere never keeps a
+  link to an address herdr-core may hand out again, and a stored value that
+  is malformed is dropped on read rather than refused.
+
+  The console links a session to that pane in its host's Ovis while the
+  session displays as live or idle and has not recorded its end
+  (`sessionLiveViewUrl` in `apps/console/src/lib/deployment.ts`,
+  `AGENT_LCARS_OVIS_URL_BY_HOST`). The link is a plain new-tab navigation
+  from the browser to the host over the LAN or VPN: session content never
+  passes through the console, Firestore or GCS, and nothing runs on the host
+  until someone opens it. A session that dies without a `SessionEnd` keeps
+  its link until it stops displaying as idle. A terminal outlives its
+  sessions, so in a session list a pane's link goes only to the session most
+  recently active in it (`getCliSessions`); a session page reads one session
+  and cannot tell. A later phase can join herdr's
+  `blocked` recognition, which sees approval UIs no hook reports.
 
 ## 5. Hook configuration
 

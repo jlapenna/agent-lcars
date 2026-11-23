@@ -247,6 +247,13 @@ env:
     availability:
       - RUNTIME
 
+  # Which hosts serve Ovis, so a live session there can link to its own
+  # pane. A host that is not listed gets no link.
+  - variable: AGENT_LCARS_OVIS_URL_BY_HOST
+    value: '{"pike":"https://herdr.lan.jlapenna.net"}'
+    availability:
+      - RUNTIME
+
   # The curated repo list this console watches. It must exactly match
   # AGENT_LCARS_CONTROL_PLANE_REPOSITORIES; either mismatch fails closed.
   # Every watched repository uses the canonical Claude, Codex, and OpenCode

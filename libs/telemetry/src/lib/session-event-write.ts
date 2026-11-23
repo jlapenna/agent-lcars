@@ -48,6 +48,7 @@ export function summaryFromSessionDoc(doc: SessionDoc): SessionSummary {
       ...(doc.cwd && { cwd: doc.cwd }),
       ...(doc.worktree && { worktree: doc.worktree }),
       ...(doc.branch && { branch: doc.branch }),
+      ...(doc.herdrPaneId && { herdrPaneId: doc.herdrPaneId }),
       ...(doc.githubActor && { githubActor: doc.githubActor }),
       ...(doc.artifacts && { artifacts: doc.artifacts }),
     }),

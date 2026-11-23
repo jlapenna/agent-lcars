@@ -1,10 +1,15 @@
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { displayLiveness, totalTokens } from '@agent-lcars/telemetry';
+import {
+  displayLiveness,
+  totalTokens,
+  watchableHerdrPaneId,
+} from '@agent-lcars/telemetry';
 import { Anchor, Badge, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
 
 import {
   agentSessionResumeScript,
+  sessionLiveViewUrl,
   shareArtifactUrl,
 } from '../../../lib/deployment';
 import { sessionDurationSeconds } from '../../../lib/session-archive';
@@ -70,6 +75,14 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
   );
   const cliHost = doc.source === 'cli' ? doc.host : undefined;
   const cliArtifacts = doc.source === 'cli' ? (doc.artifacts ?? []) : [];
+  const liveViewUrl =
+    doc.source === 'cli'
+      ? sessionLiveViewUrl({
+          liveness,
+          host: doc.host,
+          herdrPaneId: watchableHerdrPaneId(doc),
+        })
+      : undefined;
   const repo = doc.repo;
   const hasDeliverables =
     doc.deliverables.prNumbers.length > 0 ||
@@ -88,6 +101,17 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
           {LIVENESS_LABELS[liveness]}
         </Badge>
         <AgentBadge agent={doc.agent} />
+        {liveViewUrl && (
+          <Anchor
+            href={liveViewUrl}
+            target="_blank"
+            rel="noreferrer"
+            size="sm"
+            data-testid="session-header-live-view"
+          >
+            Open live ↗
+          </Anchor>
+        )}
       </Group>
 
       <SessionStatusLine

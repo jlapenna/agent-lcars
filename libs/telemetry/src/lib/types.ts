@@ -168,6 +168,10 @@ export interface SessionSummary {
   cwd?: string;
   worktree?: string;
   branch?: string;
+  /** The herdr-core terminal this session runs in, observed by the host hook
+   * and never read from the transcript. Only meaningful together with
+   * `host`: it names a terminal of that host's herdr-core. */
+  herdrPaneId?: string;
   /** Hook-observed GitHub /user identity, never extracted from transcript text. */
   githubActor?: string;
   /** Which GitHub repo this session belongs to. `cli` summaries get this
@@ -329,6 +333,9 @@ export interface CliSessionDoc extends BaseSessionDoc {
   cwd?: string;
   worktree?: string;
   branch?: string;
+  /** See {@link SessionSummary.herdrPaneId}. Host-scoped: a runner session
+   * never runs in a herdr terminal. */
+  herdrPaneId?: string;
   /** Host-scoped, like `cwd`/`branch` - issue-agent (runner) sessions have
    * no artifact story yet, so this only ever appears on `cli` docs. */
   artifacts?: string[];
@@ -426,7 +433,8 @@ export interface BuildSessionDocOptions {
 /**
  * Closed union of `SessionDoc` fields a write can request DELETED from
  * Firestore rather than merely omitted (issue #1257) — `status` and
- * `statusUpdatedAt` (always requested together), `resolvedModel`, and CLI
+ * `statusUpdatedAt` (always requested together), `resolvedModel`,
+ * `herdrPaneId` (a session no longer observed in a herdr-core terminal), and CLI
  * archive capability fields (revoked when consent is absent; see
  * {@link buildSessionWrite}'s `clearFields` derivation in `session-doc.ts`).
  * Closed on purpose: nothing else on `SessionDoc` is deletable this way, so
@@ -435,6 +443,7 @@ export interface BuildSessionDocOptions {
  */
 export type ClearableSessionField =
   | 'githubActor'
+  | 'herdrPaneId'
   | 'status'
   | 'statusUpdatedAt'
   | 'resolvedModel'

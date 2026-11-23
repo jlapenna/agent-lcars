@@ -1217,3 +1217,220 @@ describe('Codex child publication ownership (#2669)', () => {
     },
   );
 });
+
+describe('lcars hook herdr pane', () => {
+  const stateDirectory = (home: string) => path.join(home, STATE_DIR);
+
+  it('reports the terminal it runs in and reuses the answer on later events', async () => {
+    const home = tempHome();
+    const resolveHerdrPane = vi.fn(async () => ({
+      status: 'found' as const,
+      paneId: 't36',
+    }));
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('SessionStart'), { resolveHerdrPane }),
+    );
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('Stop'), { resolveHerdrPane }),
+    );
+
+    const events = spooledEvents(home);
+    expect(events.map((event) => event.summary?.herdrPaneId)).toEqual([
+      't36',
+      't36',
+    ]);
+    expect(events.every((event) => parseSessionEventV1(event).ok)).toBe(true);
+    expect(resolveHerdrPane).toHaveBeenCalledTimes(1);
+    expect(
+      readHookSessionState(stateDirectory(home), SESSION_ID),
+    ).toMatchObject({ herdrPaneId: 't36', herdrPaneResolved: true });
+  });
+
+  it('asks again when the session starts again, and drops a pane it has left', async () => {
+    const home = tempHome();
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('SessionStart'), {
+        resolveHerdrPane: async () => ({ status: 'found', paneId: 't36' }),
+      }),
+    );
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('SessionStart'), {
+        resolveHerdrPane: async () => ({ status: 'none' }),
+      }),
+    );
+
+    const [first, second] = spooledEvents(home);
+    expect(first.summary?.herdrPaneId).toBe('t36');
+    expect(second.summary?.herdrPaneId).toBeUndefined();
+    const write = sessionWriteForEvent(second, undefined, second.occurredAt);
+    expect(write?.clearFields).toContain('herdrPaneId');
+    const state = readHookSessionState(stateDirectory(home), SESSION_ID);
+    expect(state?.herdrPaneId).toBeUndefined();
+    expect(state?.herdrPaneResolved).toBe(true);
+  });
+
+  it('keeps the known pane, backs off, and asks again when herdr-core cannot answer', async () => {
+    const home = tempHome();
+    const at = (minute: number) => ({
+      now: () => new Date(Date.UTC(2026, 9, 10, 12, minute)),
+    });
+    const unanswered = vi.fn(async () => ({ status: 'unknown' as const }));
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('Stop'), { ...at(0), resolveHerdrPane: unanswered }),
+    );
+    // Too soon after the failure: this event does not ask.
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('Stop'), { ...at(1), resolveHerdrPane: unanswered }),
+    );
+    expect(unanswered).toHaveBeenCalledTimes(1);
+    expect(
+      readHookSessionState(stateDirectory(home), SESSION_ID),
+    ).toMatchObject({ herdrPaneCheckedAt: '2026-10-10T12:00:00.000Z' });
+
+    const answered = vi.fn(async () => ({
+      status: 'found' as const,
+      paneId: 't36',
+    }));
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('Stop'), { ...at(6), resolveHerdrPane: answered }),
+    );
+    // A session start that cannot be answered keeps what was known.
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('SessionStart'), {
+        ...at(7),
+        resolveHerdrPane: async () => {
+          throw new Error('herdr-core timed out');
+        },
+      }),
+    );
+
+    expect(
+      spooledEvents(home).map((event) => event.summary?.herdrPaneId),
+    ).toEqual([undefined, undefined, 't36', 't36']);
+    expect(answered).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again after a session start that herdr-core could not answer', async () => {
+    const home = tempHome();
+    const at = (minute: number) => ({
+      now: () => new Date(Date.UTC(2026, 9, 10, 12, minute)),
+    });
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('SessionStart'), {
+        ...at(0),
+        resolveHerdrPane: async () => ({ status: 'found', paneId: 't36' }),
+      }),
+    );
+    // Resumed, possibly in another terminal, while herdr-core is down.
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('SessionStart'), {
+        ...at(10),
+        resolveHerdrPane: async () => ({ status: 'unknown' }),
+      }),
+    );
+    const afterFailure = readHookSessionState(stateDirectory(home), SESSION_ID);
+    expect(afterFailure?.herdrPaneId).toBe('t36');
+    expect(afterFailure?.herdrPaneResolved).toBeUndefined();
+    expect(afterFailure?.herdrPaneCheckedAt).toBe('2026-10-10T12:10:00.000Z');
+
+    const moved = vi.fn(async () => ({
+      status: 'found' as const,
+      paneId: 't2j',
+    }));
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('Stop'), { ...at(12), resolveHerdrPane: moved }),
+    );
+    expect(moved).not.toHaveBeenCalled();
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('Stop'), { ...at(16), resolveHerdrPane: moved }),
+    );
+    expect(moved).toHaveBeenCalledTimes(1);
+
+    expect(
+      spooledEvents(home).map((event) => event.summary?.herdrPaneId),
+    ).toEqual(['t36', 't36', 't36', 't2j']);
+    expect(
+      readHookSessionState(stateDirectory(home), SESSION_ID),
+    ).toMatchObject({ herdrPaneId: 't2j', herdrPaneResolved: true });
+  });
+
+  it('does not unsettle an answer another event recorded while it was asking', async () => {
+    const home = tempHome();
+    // This event reads the state, finds no answer and asks. Before its own
+    // failed answer comes back, a second event of the session resolves t36.
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('Stop'), {
+        resolveHerdrPane: async () => {
+          await executeHookCommand(
+            ['claude'],
+            deps(home, payload('Stop'), {
+              resolveHerdrPane: async () => ({
+                status: 'found',
+                paneId: 't36',
+              }),
+            }),
+          );
+          return { status: 'unknown' };
+        },
+      }),
+    );
+
+    const state = readHookSessionState(stateDirectory(home), SESSION_ID);
+    expect(state).toMatchObject({
+      herdrPaneId: 't36',
+      herdrPaneResolved: true,
+    });
+    expect(state?.herdrPaneCheckedAt).toBeUndefined();
+  });
+
+  it('asks before taking the session lock, so a slow answer blocks no other event', async () => {
+    const home = tempHome();
+    const lock = path.join(
+      stateDirectory(home),
+      'hook-sessions',
+      `${SESSION_ID}.lock`,
+    );
+    let lockedWhileAsking: boolean | undefined;
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('SessionStart'), {
+        resolveHerdrPane: async () => {
+          lockedWhileAsking = fs.existsSync(lock);
+          return { status: 'found', paneId: 't36' };
+        },
+      }),
+    );
+    expect(lockedWhileAsking).toBe(false);
+    expect(spooledEvents(home)[0].summary?.herdrPaneId).toBe('t36');
+  });
+
+  it('never looks for a terminal on a dispatched runner', async () => {
+    const home = tempHome();
+    const resolveHerdrPane = vi.fn(async () => ({
+      status: 'found' as const,
+      paneId: 't36',
+    }));
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('SessionStart'), {
+        env: { LCARS_RUN_ID: 'run-9', LCARS_REPO: 'jlapenna/agent-lcars' },
+        resolveHerdrPane,
+      }),
+    );
+    expect(resolveHerdrPane).not.toHaveBeenCalled();
+    expect(spooledEvents(home)[0].summary?.herdrPaneId).toBeUndefined();
+  });
+});

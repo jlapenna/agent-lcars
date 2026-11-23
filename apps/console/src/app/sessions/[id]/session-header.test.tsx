@@ -3,8 +3,8 @@ import type {
   IssueAgentSessionDoc,
 } from '@agent-lcars/telemetry';
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionHeader } from './session-header';
 
@@ -351,5 +351,48 @@ describe('SessionHeader', () => {
   it('renders the explicit antigravity identity', () => {
     renderHeader(agentDoc({ agent: 'antigravity' }));
     expect(screen.getByText('antigravity')).toBeTruthy();
+  });
+  describe('live view link', () => {
+    const OVIS = 'AGENT_LCARS_OVIS_URL_BY_HOST';
+    const liveDoc = () =>
+      cliDoc({
+        liveness: 'live',
+        lastActivityAt: NOW,
+        observedAt: NOW,
+        host: 'pike',
+        herdrPaneId: 't36',
+      });
+
+    // This suite does not unmount between tests; a link left by one case
+    // must not satisfy or fail the next.
+    beforeEach(cleanup);
+    afterEach(() => {
+      cleanup();
+      delete process.env[OVIS];
+    });
+
+    it('opens a live session in its own Ovis pane, in a new tab', () => {
+      process.env[OVIS] = '{"pike":"https://herdr.example.test"}';
+      renderHeader(liveDoc());
+      const link = screen.getByTestId('session-header-live-view');
+      expect(link.getAttribute('href')).toBe(
+        'https://herdr.example.test/?pane=t36&view=chat',
+      );
+      expect(link.getAttribute('target')).toBe('_blank');
+    });
+
+    it('shows no link for an ended session or a host without Ovis', () => {
+      process.env[OVIS] = '{"pike":"https://herdr.example.test"}';
+      // Ended five minutes ago: still displayed as live, but it has left
+      // its terminal.
+      renderHeader(cliDoc({ host: 'pike', herdrPaneId: 't36' }));
+      expect(screen.getByTestId('session-header-liveness').textContent).toBe(
+        'live',
+      );
+      expect(screen.queryByTestId('session-header-live-view')).toBeNull();
+      cleanup();
+      renderHeader({ ...liveDoc(), host: 'laptop' });
+      expect(screen.queryByTestId('session-header-live-view')).toBeNull();
+    });
   });
 });
