@@ -24,10 +24,8 @@ const AUTOMATED_BOT_LOGINS = new Set([
  * review/runtime pins and require explicit review + qualification once a
  * maintainer marks their draft PR ready for review (`renovate.json`).
  */
-const QUALIFICATION_REQUIRED_RENOVATE_REFS = new Set([
-  'renovate/runner-cli-runtimes',
-  'renovate/anthropic-review-workflow',
-]);
+const QUALIFICATION_REQUIRED_RENOVATE_REF_RE =
+  /^renovate\/(?:major-)?(?:runner-cli-runtimes|anthropic-review-workflow)$/iu;
 
 const ATTEMPT_CLAIM_RE = /<!--\s*attempt-claim:g\d+:([^\s>]+)\s*-->/gu;
 
@@ -59,8 +57,8 @@ export function isUnattendedDependencyBotPullRequest(input: {
 }): boolean {
   if (!input.userLogin) return false;
   if (!DEPENDENCY_BOT_LOGINS.has(input.userLogin.toLowerCase())) return false;
-  const normalizedRef = input.headRef?.toLowerCase() ?? '';
-  return !QUALIFICATION_REQUIRED_RENOVATE_REFS.has(normalizedRef);
+  const normalizedRef = input.headRef ?? '';
+  return !QUALIFICATION_REQUIRED_RENOVATE_REF_RE.test(normalizedRef);
 }
 
 export interface PullRequestAuthorSignals {

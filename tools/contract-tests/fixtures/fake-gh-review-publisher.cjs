@@ -74,7 +74,14 @@ if (route === 'graphql') {
   const defaultCommitAuthor =
     author.__typename === 'Bot' ? `${author.login}[bot]` : author.login;
   const commits = entry.commits ?? [
-    { oid: entry.head, authorLogin: defaultCommitAuthor },
+    {
+      oid: entry.head,
+      authorLogin: defaultCommitAuthor,
+      signature:
+        author.__typename === 'Bot'
+          ? { isValid: true, wasSignedByGitHub: true }
+          : null,
+    },
   ];
   respond({
     data: {
@@ -95,6 +102,13 @@ if (route === 'graphql') {
                 author: {
                   user: c.authorLogin ? { login: c.authorLogin } : null,
                 },
+                signature:
+                  c.signature !== undefined
+                    ? c.signature
+                    : author.__typename === 'Bot' &&
+                        c.authorLogin === defaultCommitAuthor
+                      ? { isValid: true, wasSignedByGitHub: true }
+                      : null,
               },
             })),
           },

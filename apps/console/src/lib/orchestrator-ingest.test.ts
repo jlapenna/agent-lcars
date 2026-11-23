@@ -1354,6 +1354,7 @@ describe('unified cross-model PR review intake', () => {
 
     for (const headRef of [
       'renovate/runner-cli-runtimes',
+      'renovate/major-runner-cli-runtimes',
       'renovate/anthropic-review-workflow',
     ]) {
       expect(

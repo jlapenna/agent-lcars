@@ -67,9 +67,10 @@ that a deployed reviewer produced a review and the App published a successful ch
 Before switching enforcement or replacing its publisher, verify each affected
 open PR that GitHub can merge has a successful `LCARS review` check from App 4457090 on its current head. The publisher accepts
 the deployed reviewer’s existing attempt and verdict markers. Non-draft Renovate
-and Dependabot PRs whose commits are all authored by the bot (excluding LCARS's
-qualification-gated `renovate/runner-cli-runtimes` and
-`renovate/anthropic-review-workflow` branches) automatically receive a passing
+and Dependabot PRs whose commits are all GitHub-signed by the bot (excluding LCARS's
+qualification-gated `renovate/runner-cli-runtimes`,
+`renovate/major-runner-cli-runtimes`, `renovate/anthropic-review-workflow`, and
+`renovate/major-anthropic-review-workflow` branches) automatically receive a passing
 verdict unless an `agent-lcars[bot]` review at that head requested changes. A maintainer can request a fresh review on any PR with `/review`. In member
 repositories, request review again after pushes and reopenings. After changing the target branch,
 request a review with `/review` if none is running. Wait for the controller’s completion comment linking a review submitted after the switch, then request the next review with `/review`. The publisher checks the controller’s completion comment and the later attempt number on this PR. That later run starts after the old comparison’s review has finished. For fleet-managed auto-merge callers,

@@ -89,7 +89,11 @@ function publisher(options: {
   author?: { __typename: string; login: string };
   isDraft?: boolean;
   headRefName?: string;
-  commits?: Array<{ oid: string; authorLogin: string | null }>;
+  commits?: Array<{
+    oid: string;
+    authorLogin: string | null;
+    signature?: { isValid: boolean; wasSignedByGitHub: boolean } | null;
+  }>;
 }) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'review-publisher-'));
   roots.push(root);
@@ -316,10 +320,24 @@ describe('shared LCARS review publisher', () => {
       },
     ],
     [
+      'unsigned/amended commit preserving Renovate author header',
+      {
+        author: { __typename: 'Bot', login: 'renovate' },
+        commits: [{ oid: HEAD, authorLogin: 'renovate[bot]', signature: null }],
+      },
+    ],
+    [
       'qualification-required runner CLI branch',
       {
         author: { __typename: 'Bot', login: 'renovate' },
         headRefName: 'renovate/runner-cli-runtimes',
+      },
+    ],
+    [
+      'qualification-required major runner CLI branch',
+      {
+        author: { __typename: 'Bot', login: 'renovate' },
+        headRefName: 'renovate/major-runner-cli-runtimes',
       },
     ],
     [

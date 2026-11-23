@@ -54,7 +54,7 @@ read_candidate() {
         author { __typename login }
         commits(last:100) {
           totalCount
-          nodes { commit { oid author { user { login } } } }
+          nodes { commit { oid author { user { login } } signature { isValid wasSignedByGitHub } } }
         }
         potentialMergeCommit { oid parents(first:2) { nodes { oid } } }
         timelineItems(last:1, itemTypes:[BASE_REF_CHANGED_EVENT]) {
@@ -105,13 +105,15 @@ read_verdict() {
       ($pr_meta.isDraft == false) and
       ($pr_meta.author.__typename == "Bot") and
       ($pr_meta.author.login == "renovate" or $pr_meta.author.login == "dependabot") and
-      ($pr_meta.headRefName != "renovate/runner-cli-runtimes") and
-      ($pr_meta.headRefName != "renovate/anthropic-review-workflow") and
+      (($pr_meta.headRefName // "" | test("^renovate/(major-)?(runner-cli-runtimes|anthropic-review-workflow)$")) | not) and
       (($pr_meta.author.login + "[bot]") as $expected_author |
         ($pr_meta.commits.totalCount >= 1 and $pr_meta.commits.totalCount <= 100) and
         (($pr_meta.commits.nodes | length) == $pr_meta.commits.totalCount) and
         any($pr_meta.commits.nodes[]; .commit.oid == $head) and
-        all($pr_meta.commits.nodes[]; .commit.author.user.login == $expected_author));
+        all($pr_meta.commits.nodes[];
+          .commit.author.user.login == $expected_author and
+          .commit.signature.isValid == true and
+          .commit.signature.wasSignedByGitHub == true));
     [.[][] | select(.user.login == "agent-lcars[bot]") | . + {run: attempt}] as $reviews
     | [if $base_event.id != null then
          $reviews[] | select(.run != null and .submitted_at > $base_event.createdAt) as $review |

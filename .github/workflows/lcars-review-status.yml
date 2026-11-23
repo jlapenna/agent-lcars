@@ -41,7 +41,7 @@ jobs:
           set -euo pipefail
           # Re-read every open head. Fork events can lack PR numbers, and
           # GitHub may coalesce queued runs in the concurrency group.
-          pulls=$(gh api --paginate "repos/$REPO/pulls?base=$BASE&state=open&per_page=100" --jq '.[] | [.number, .head.sha, .draft, .user.login, .head.ref] | @tsv')
+          pulls=$(gh api --paginate "repos/$REPO/pulls?base=$BASE&state=open&per_page=100" --jq '.[] | [.number, .head.sha, .draft, (.user.login // "-"), .head.ref] | @tsv')
           declare -A states descriptions prs
           while IFS=$'\t' read -r pr head is_draft pr_user head_ref; do
             [[ -n "$pr" ]] || continue
@@ -58,14 +58,16 @@ jobs:
             ' <<< "$reviews")
             if [[ "$state" == pending && "$is_draft" == false &&
                   ( "$pr_user" == "renovate[bot]" || "$pr_user" == "dependabot[bot]" ) &&
-                  "$head_ref" != "renovate/runner-cli-runtimes" &&
-                  "$head_ref" != "renovate/anthropic-review-workflow" ]]; then
+                  ! "$head_ref" =~ ^renovate/(major-)?(runner-cli-runtimes|anthropic-review-workflow)$ ]]; then
               pr_commits=$(gh api --paginate --slurp "repos/$REPO/pulls/$pr/commits?per_page=100")
               if jq -e --arg head "$head" --arg author "$pr_user" '
                 [.[][]] as $commits |
                 ($commits | length) >= 1 and ($commits | length) <= 100 and
                 any($commits[]; .sha == $head) and
-                all($commits[]; .author.login == $author)
+                all($commits[];
+                  .author.login == $author and
+                  .committer.login == "web-flow" and
+                  .commit.verification.verified == true)
               ' <<< "$pr_commits" >/dev/null; then
                 state=automated_pass
               fi
