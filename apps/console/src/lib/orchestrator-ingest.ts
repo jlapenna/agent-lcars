@@ -413,6 +413,8 @@ function interpretPullRequestEvent(
       isUnattendedDependencyBotPullRequest({
         userLogin: pullRequest.user.login,
         headRef: pullRequest.head?.ref,
+        action,
+        senderLogin: sender.login,
       }) ||
       (!requiresReview &&
         (isAutomatedReviewExcludedAuthor(pullRequest.user.login) ||

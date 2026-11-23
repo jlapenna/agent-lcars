@@ -1378,6 +1378,52 @@ describe('unified cross-model PR review intake', () => {
         }),
       ).toMatchObject({ kind: 'request', params: { mode: 'review' } });
     }
+
+    // A non-qualified Renovate draft major marked ready by a maintainer with
+    // untouched bot commits stays on the publisher fast path...
+    expect(
+      interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: {
+          action: 'ready_for_review',
+          repository: { full_name: REPO },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: 813,
+            title: 'chore(deps): update major dependency',
+            user: { login: 'renovate[bot]' },
+            head: { ref: 'renovate/major-nextjs', sha: '1'.repeat(40) },
+            labels: [],
+          },
+          sender: { login: 'jlapenna' },
+        },
+      }),
+    ).toEqual({ kind: 'ignore', reason: 'excluded-review-author' });
+
+    // ...whereas a maintainer or agent pushing a fix commit (`synchronize`)
+    // onto an open Renovate PR dispatches review automatically.
+    expect(
+      interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: {
+          action: 'synchronize',
+          repository: { full_name: REPO },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: 814,
+            title: 'chore(deps): update major dependency',
+            user: { login: 'renovate[bot]' },
+            head: { ref: 'renovate/major-nextjs', sha: '2'.repeat(40) },
+            labels: [],
+          },
+          sender: { login: 'jlapenna' },
+        },
+      }),
+    ).toMatchObject({ kind: 'request', params: { mode: 'review' } });
   });
 
   it('supports the unified review label and redirects same-model review:* labels to the opposite model', () => {

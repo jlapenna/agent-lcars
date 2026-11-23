@@ -71,7 +71,11 @@ and Dependabot PRs whose commits are all GitHub-signed by the bot (excluding LCA
 qualification-gated `renovate/runner-cli-runtimes`,
 `renovate/major-runner-cli-runtimes`, `renovate/anthropic-review-workflow`, and
 `renovate/major-anthropic-review-workflow` branches) automatically receive a passing
-verdict unless an `agent-lcars[bot]` review at that head requested changes. A maintainer can request a fresh review on any PR with `/review`. In member
+verdict unless an `agent-lcars[bot]` review at that head requested changes. Pushing a
+non-bot fix commit to an open Renovate/Dependabot PR dispatches review automatically
+where automatic `synchronize` review is enabled; if non-bot or amended commits were
+pushed while the PR was still a draft, request review with `/review` after marking it
+ready. A maintainer can request a fresh review on any PR with `/review`. In member
 repositories, request review again after pushes and reopenings. After changing the target branch,
 request a review with `/review` if none is running. Wait for the controller’s completion comment linking a review submitted after the switch, then request the next review with `/review`. The publisher checks the controller’s completion comment and the later attempt number on this PR. That later run starts after the old comparison’s review has finished. For fleet-managed auto-merge callers,
 include `--ci-workflow lcars-review-event.yml` alongside the existing CI workflow

@@ -54,9 +54,18 @@ export function isAutomatedReviewExcludedAuthor(
 export function isUnattendedDependencyBotPullRequest(input: {
   userLogin: string | undefined;
   headRef?: string | undefined;
+  action?: string | undefined;
+  senderLogin?: string | undefined;
 }): boolean {
   if (!input.userLogin) return false;
   if (!DEPENDENCY_BOT_LOGINS.has(input.userLogin.toLowerCase())) return false;
+  if (
+    input.action !== 'ready_for_review' &&
+    input.senderLogin !== undefined &&
+    !DEPENDENCY_BOT_LOGINS.has(input.senderLogin.toLowerCase())
+  ) {
+    return false;
+  }
   const normalizedRef = input.headRef ?? '';
   return !QUALIFICATION_REQUIRED_RENOVATE_REF_RE.test(normalizedRef);
 }
