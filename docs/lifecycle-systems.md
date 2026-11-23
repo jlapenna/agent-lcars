@@ -91,7 +91,8 @@ and `lcars work create/redispatch --fallback-pipelines codex,opencode` expose th
 same contract; `--fallback-pipelines none` disables an inherited list. GitHub
 pull-request review runs admitted through `pr-review-routing.ts` populate
 `spec.fallbackPipelines` automatically under principal `svc:github-pr-review`
-(listed before the author fallback is appended: `codex` PR -> `claude` with
+([automatic PR remediation](#automatic-pr-remediation) does the same under
+`svc:github-pr-remediation`; listed before the author fallback is appended: `codex` PR -> `claude` with
 `['agy']`; `claude` PR -> `codex` with `['agy']`;
 `agy` PR -> `claude` with `['codex']`, or `codex` with `['claude']` when
 `review:codex` is requested; `opencode`/human PR -> `claude` with
@@ -433,22 +434,6 @@ claims remain owned by the existing queue/capacity barriers.
 
 An auto-merge arm alone is not landing; the merged PR and its merge commit are.
 
-### Automatic PR remediation
-
-`lib/pr-remediation.ts` corrects open same-repository PRs that no delivery
-binding owns: merge conflicts, unresolved review threads from trusted
-(`OWNER`, `MEMBER`, `COLLABORATOR` or fleet/review bot) authors, and
-current-head blocking reviews. It admits an `implement` run on the PR anchor
-under `svc:github-pr-remediation`, picking a provider from the authoring
-pipeline with cross-provider quota fallback, and requests a cross-model
-`review` after a remediation push. `pull_request`, `pull_request_review` and
-`pull_request_review_thread` webhooks wake it; a merged PR sweeps the open PRs
-on its base. It defers to a live run on the PR anchor or on any linked closing
-issue, to a waiting delivery binding (which keeps its same-provider correction
-above), to an agent `PARK`, and to `status:needs-human`, `status:blocked` and
-Renovate PRs. Fork PRs are never remediated. After
-`MAX_AUTO_PR_REMEDIATION_ROUNDS` consecutive rounds it applies
-`status:needs-human`; these blockers otherwise never enter the Decision Inbox.
 A delivery binding has two states: waiting until the PR merges, then complete.
 A PR closed without merging, or merged into a branch other than the bound
 target, drops the binding. There is no runtime-receipt state; a WorkSpec's
@@ -468,3 +453,27 @@ commit-status contexts remain unknown without an undeclared grant. Independent
 current review feedback remains actionable. A PR closed without merging
 releases delivery ownership; an open draft or unarmed PR retains it and does not
 request correction.
+
+### Automatic PR remediation
+
+`lib/pr-remediation.ts` corrects open same-repository PRs that no delivery
+binding owns: merge conflicts, unresolved review threads from trusted
+(`OWNER`, `MEMBER`, `COLLABORATOR` or fleet/review bot) authors, and
+current-head blocking reviews. It admits an `implement` run on the PR anchor
+under `svc:github-pr-remediation`, picking a provider from the authoring
+pipeline with cross-provider quota fallback, and requests a cross-model
+`review` after a remediation push. `pull_request`, `pull_request_review` and
+`pull_request_review_thread` webhooks wake it; a merged PR sweeps the open PRs
+on its base. It defers to a live run on the PR anchor or on any linked closing
+issue, to a waiting delivery binding (which keeps its same-provider correction
+above), to an agent `PARK`, and to `status:needs-human`, `status:blocked` and
+Renovate PRs. Fork PRs are never remediated. After
+`MAX_AUTO_PR_REMEDIATION_ROUNDS` consecutive rounds it applies
+`status:needs-human`; these blockers otherwise never enter the Decision Inbox.
+
+The round count comes from run history and resets only on a human `reply` or
+a non-remediation caller run. Removing `status:needs-human` alone fires
+`pull_request: unlabeled`, so the label is re-applied while the same blockers
+remain; reply on the PR to resume automatic remediation. When review threads
+or reviews exceed one GraphQL page, remediation stops and parks only a
+conflicting PR.
