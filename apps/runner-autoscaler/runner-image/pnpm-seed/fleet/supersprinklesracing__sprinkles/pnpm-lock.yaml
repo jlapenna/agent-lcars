@@ -789,18 +789,9 @@ importers:
       '@repo/maintenance-members':
         specifier: workspace:*
         version: link:../../../libs/maintenance-members
-      '@repo/race-events':
-        specifier: workspace:*
-        version: link:../../../libs/race-events
       '@repo/race-report-drafts':
         specifier: workspace:*
         version: link:../../../libs/race-report-drafts
-      '@repo/races':
-        specifier: workspace:*
-        version: link:../../../libs/races
-      '@repo/results':
-        specifier: workspace:*
-        version: link:../../../libs/results
       '@repo/riders':
         specifier: workspace:*
         version: link:../../../libs/riders
@@ -858,18 +849,9 @@ importers:
       '@repo/qbp':
         specifier: workspace:*
         version: link:../../../libs/qbp
-      '@repo/race-events':
-        specifier: workspace:*
-        version: link:../../../libs/race-events
       '@repo/race-report-drafts':
         specifier: workspace:*
         version: link:../../../libs/race-report-drafts
-      '@repo/races':
-        specifier: workspace:*
-        version: link:../../../libs/races
-      '@repo/results':
-        specifier: workspace:*
-        version: link:../../../libs/results
       '@repo/riders':
         specifier: workspace:*
         version: link:../../../libs/riders
@@ -978,24 +960,15 @@ importers:
       '@repo/pipeline-status':
         specifier: workspace:*
         version: link:../../../libs/pipeline-status
-      '@repo/provider-service':
-        specifier: workspace:*
-        version: link:../../../libs/provider-service
       '@repo/qbp':
         specifier: workspace:*
         version: link:../../../libs/qbp
-      '@repo/race-events':
-        specifier: workspace:*
-        version: link:../../../libs/race-events
       '@repo/race-report-drafts':
         specifier: workspace:*
         version: link:../../../libs/race-report-drafts
       '@repo/races':
         specifier: workspace:*
         version: link:../../../libs/races
-      '@repo/results':
-        specifier: workspace:*
-        version: link:../../../libs/results
       '@repo/rider-claims':
         specifier: workspace:*
         version: link:../../../libs/rider-claims
@@ -2243,6 +2216,9 @@ importers:
       '@repo/logging':
         specifier: workspace:*
         version: link:../logging
+      '@repo/riders':
+        specifier: workspace:*
+        version: link:../riders
       '@repo/secrets':
         specifier: workspace:*
         version: link:../secrets
