@@ -27,9 +27,8 @@ printf '%s\n' 'process.exit(Number(process.env.IMAGE_TEST_REPO_TOOLS_FAILURE || 
 cp "$here/runtime/install-skills.sh" "$here/runtime/layer1-skills.conf" "$lib/runtime/"
 cp -R "$repo_root/agents/shared/skills" "$lib/agents/shared/skills"
 # The gate checks only that the review files exist and that the revision is
-# immutable. A fixture keeps this test runnable without the
-# third_party/anthropic-plugins submodule; prepare-dispatch.test.sh covers the
-# packager and the image build packages the real locked dependency.
+# immutable. packages/anthropic-code-review/package-review.test.sh covers the
+# packager, and the image build packages the real locked dependency.
 review_fixture="$lib/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
 mkdir -p "$review_fixture"
 for review_file in README.md upstream.md LICENSE; do

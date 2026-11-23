@@ -151,9 +151,8 @@ PY
 mkdir -p "$baked/agents/shared/skills"
 cp -R "$repo_root/agents/shared/skills/." "$baked/agents/shared/skills/"
 # Review dispatch only requires the packaged procedure files to be present.
-# Packaging the real locked dependency is prepare-dispatch.test.sh's and the
-# image build's job; a fixture keeps this harness runnable without the
-# third_party/anthropic-plugins submodule.
+# packages/anthropic-code-review/package-review.test.sh covers packaging, and
+# the image build packages the real locked dependency.
 review_package="$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
 mkdir -p "$review_package"
 for review_file in README.md upstream.md LICENSE revision; do

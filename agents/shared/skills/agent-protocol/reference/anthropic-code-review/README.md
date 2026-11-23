@@ -7,29 +7,31 @@ material, not a plugin to install or a second dispatch entry point.
 
 ## Dependency
 
-Anthropic's `code-review` plugin is a native Git submodule at
-`third_party/anthropic-plugins`. `.gitmodules` declares its repository and
-tracking branch; the committed gitlink is the authoritative version lock.
-Renovate's `git-submodules` manager proposes separate draft PRs with auto-merge
-disabled. Review upstream changes against this adapter and qualify them on a
-real PR before making an update ready. Initialize the dependency with
-`git submodule update --init --depth 1` (worktree setup
-and CI do this automatically).
+Anthropic's `code-review` plugin is a pnpm dependency of the
+`packages/anthropic-code-review` workspace package. Its manifest pins
+`github:anthropics/claude-plugins-official` to a full upstream commit, and
+`pnpm-lock.yaml` records that tarball's integrity hash; `pnpm install` installs
+it with every other dependency. Renovate proposes commit updates as separate
+draft PRs with auto-merge disabled. Review upstream changes against this
+adapter and qualify them on a real PR before making an update ready.
 
 The runner build packages the unmodified
 `plugins/code-review/commands/code-review.md` and its Apache-2.0 `LICENSE`
-from that locked checkout. `apps/runner-autoscaler/runner-image/package-anthropic-review.sh` refuses a
-revision mismatch or modified review source, and writes the exact revision to
-`revision` beside this adapter. Use the packaged upstream revision below in the procedure receipt.
+from that installed dependency.
+`packages/anthropic-code-review/package-review.sh` refuses a manifest that does
+not pin a full commit or that the lockfile does not match, and writes the exact
+revision to `revision` beside this adapter. Use the packaged upstream revision
+below in the procedure receipt.
 
 Packaged upstream revision: `@ANTHROPIC_REVIEW_REVISION@`.
 
 The rest of the marketplace is excluded from the
 runtime image. No worker downloads or resolves the dependency at runtime.
 
-When Renovate updates the gitlink, review the upstream command and reconcile
-these adaptations. The runner publisher tracks that dependency root as a
-Dockerfile COPY input, so a dependency-only update rebuilds the image.
+When Renovate updates the pinned commit, review the upstream command and
+reconcile these adaptations. The runner publisher tracks
+`packages/anthropic-code-review` as a Dockerfile COPY input, so a
+dependency-only update rebuilds the image.
 
 ## LCARS adaptations
 

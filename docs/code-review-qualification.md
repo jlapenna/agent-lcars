@@ -1,8 +1,8 @@
 # Qualifying the native review procedure
 
 The runner packages Anthropic's immutable `code-review` command and the LCARS
-adapter for Claude Code, Codex, OpenCode and Antigravity. The Git submodule is
-its dependency lock. The adapter lives at
+adapter for Claude Code, Codex, OpenCode and Antigravity. The
+`packages/anthropic-code-review` pnpm dependency is its lock. The adapter lives at
 `agents/shared/skills/agent-protocol/reference/anthropic-code-review/README.md`.
 
 The four native CLI versions are image dependencies too. Renovate updates
