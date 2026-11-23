@@ -16,30 +16,56 @@ mkdir -p "$baked/runtime"
 cp -R "$here/." "$baked/runtime/"
 mkdir -p "$baked/agents/shared/skills"
 cp -R "$repo_root/agents/shared/skills/." "$baked/agents/shared/skills/"
-bash "$repo_root/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" \
-  "$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
-review_package="$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
-cmp "$repo_root/third_party/anthropic-plugins/plugins/code-review/commands/code-review.md" "$review_package/upstream.md"
-cmp "$repo_root/third_party/anthropic-plugins/plugins/code-review/LICENSE" "$review_package/LICENSE"
-[ "$(cat "$review_package/revision")" = "$(git -C "$repo_root" rev-parse :third_party/anthropic-plugins)" ]
+# Package from a fixture dependency rather than the real
+# third_party/anthropic-plugins submodule, so this test runs in any checkout.
+# The production packager gets an isolated parent repository whose index locks
+# the fixture's commit; the image build packages the real locked dependency.
+dependency_fixture="$tmp/anthropic-plugins-fixture"
+mkdir -p "$dependency_fixture/plugins/code-review/commands"
+printf '%s\n' '# fixture code-review command' > "$dependency_fixture/plugins/code-review/commands/code-review.md"
+printf '%s\n' 'fixture license' > "$dependency_fixture/plugins/code-review/LICENSE"
+git init --quiet "$dependency_fixture"
+git -C "$dependency_fixture" add -A
+git -C "$dependency_fixture" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit --quiet -m fixture
+fixture_revision="$(git -C "$dependency_fixture" rev-parse HEAD)"
+adapter_relpath=agents/shared/skills/agent-protocol/reference/anthropic-code-review/README.md
+make_lock_fixture() {
+  local fixture="$1" locked="$2"
+  mkdir -p "$fixture/apps/runner-autoscaler/runner-image" "$fixture/third_party" "$(dirname "$fixture/$adapter_relpath")"
+  cp "$repo_root/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" "$fixture/apps/runner-autoscaler/runner-image/"
+  cp "$repo_root/$adapter_relpath" "$fixture/$adapter_relpath"
+  ln -s "$dependency_fixture" "$fixture/third_party/anthropic-plugins"
+  git init --quiet "$fixture"
+  git -C "$fixture" update-index --add --cacheinfo "160000,$locked,third_party/anthropic-plugins"
+}
 
-grep -Fq "$(cat "$review_package/revision")" "$review_package/README.md"
+lock_fixture="$tmp/lock-fixture"
+make_lock_fixture "$lock_fixture" "$fixture_revision"
+review_package="$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+bash "$lock_fixture/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" "$review_package"
+cmp "$dependency_fixture/plugins/code-review/commands/code-review.md" "$review_package/upstream.md"
+cmp "$dependency_fixture/plugins/code-review/LICENSE" "$review_package/LICENSE"
+[ "$(cat "$review_package/revision")" = "$fixture_revision" ]
+grep -Fq "$fixture_revision" "$review_package/README.md"
 
 # A valid source checkout at a different locked revision must never package.
-# Give the production packager an isolated parent index, keeping the real
-# dependency checkout and its index untouched.
-lock_fixture="$tmp/lock-fixture"
-mkdir -p "$lock_fixture/apps/runner-autoscaler/runner-image" "$lock_fixture/third_party"
-cp "$repo_root/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" "$lock_fixture/apps/runner-autoscaler/runner-image/"
-ln -s "$repo_root/third_party/anthropic-plugins" "$lock_fixture/third_party/anthropic-plugins"
-git init --quiet "$lock_fixture"
-git -C "$lock_fixture" update-index --add --cacheinfo \
-  160000,1111111111111111111111111111111111111111,third_party/anthropic-plugins
-if bash "$lock_fixture/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" "$tmp/mismatched-package" > "$tmp/lock-error" 2>&1; then
+mismatch_fixture="$tmp/mismatch-fixture"
+make_lock_fixture "$mismatch_fixture" 1111111111111111111111111111111111111111
+if bash "$mismatch_fixture/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" "$tmp/mismatched-package" > "$tmp/lock-error" 2>&1; then
   echo 'review dependency: packaging accepted a checkout that differs from the lock' >&2
   exit 1
 fi
 grep -Fq 'not at its locked revision' "$tmp/lock-error"
+
+# Modified source in the locked checkout must never package.
+printf '%s\n' 'tampered' >> "$dependency_fixture/plugins/code-review/commands/code-review.md"
+if bash "$lock_fixture/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" "$tmp/modified-package" > "$tmp/modified-error" 2>&1; then
+  echo 'review dependency: packaging accepted modified source files' >&2
+  exit 1
+fi
+grep -Fq 'modified source files' "$tmp/modified-error"
+git -C "$dependency_fixture" checkout --quiet -- .
 
 fail() {
   echo "$1" >&2
