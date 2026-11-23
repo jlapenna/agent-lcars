@@ -126,31 +126,57 @@
    an actual merge of that head.
 
    **Arm once, then leave it.** An armed PR that has not merged is waiting,
-   not stuck, and `gh pr checks` does not show everything it waits for: the
-   required `LCARS review (merge candidate)` check appears only once the
-   `Publish LCARS merge candidate` workflow has copied the review's verdict
-   onto the test merge commit, which can trail a green PR by minutes. Do not
-   run `gh pr merge` on it again. `gh pr merge --auto` merges at once when
-   GitHub reports the PR as `CLEAN`, `HAS_HOOKS` or `UNSTABLE`, and an
-   administrator's merge bypasses a required check that is still missing. PR
-   #3469 merged that way on 2026-11-23: every listed check was green, the
-   merge command was run a second time to nudge it, and the rule suite
-   recorded `bypass` with `required_status_checks` failing on the missing
-   merge-candidate check. To see what an armed PR is waiting for, read the
-   requirement and the head's checks instead:
+   not stuck, and `gh pr checks` does not show everything it waits for. The
+   required `LCARS review (merge candidate)` check is not on the PR's head
+   at all: the `Publish LCARS merge candidate` workflow copies the review's
+   verdict onto the PR's test merge commit, and it reads `failure` there
+   until a review has passed on the current head. That can trail a green PR
+   by minutes.
+
+   Do not run `gh pr merge` on an armed PR again. `gh pr merge --auto`
+   merges at once, instead of queueing, when GitHub reports the PR as
+   `CLEAN`, `HAS_HOOKS` or `UNSTABLE`; a PR whose checks are green and whose
+   merge-candidate check is still failing reads `UNSTABLE`; and an
+   administrator's merge bypasses that required check. PR #3469 merged that
+   way on 2026-11-23: every listed check was green, the merge command was
+   run a second time to nudge it, and the rule suite recorded `bypass` with
+   `required_status_checks` failing on the merge-candidate check. The same
+   happens on a first arming that comes after CI has finished and before
+   the review has passed, so arm while required checks are still pending,
+   or queue with the API call below, which can only queue and is refused
+   for a PR that could merge now (`pr_node_id` is the `id` the `gh pr view`
+   read above returns):
+
+   ```bash
+   gh api graphql -f id="$pr_node_id" -f head="$reviewed_head" -f query='
+     mutation($id: ID!, $head: GitObjectID!) {
+       enablePullRequestAutoMerge(input: {
+         pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $head
+       }) { pullRequest { autoMergeRequest { enabledAt mergeMethod } } }
+     }'
+   ```
+
+   To see what an armed PR is waiting for, read the requirement, then the
+   checks on the head and on the test merge commit:
 
    ```bash
    gh api repos/jlapenna/agent-lcars/rules/branches/main \
      --jq '.[] | select(.type == "required_status_checks")
            | .parameters.required_status_checks[].context'
-   gh api "repos/jlapenna/agent-lcars/commits/$reviewed_head/check-runs" --paginate \
-     --jq '.check_runs[] | [.name, .status, .conclusion] | @tsv'
-   gh api "repos/jlapenna/agent-lcars/commits/$reviewed_head/status" \
-     --jq '.statuses[] | [.context, .state] | @tsv'
+   candidate="$(gh api "repos/jlapenna/agent-lcars/pulls/$pr_number" --jq .merge_commit_sha)"
+   for sha in "$reviewed_head" "$candidate"; do
+     gh api "repos/jlapenna/agent-lcars/commits/$sha/check-runs" --paginate \
+       --jq '.check_runs[] | [.name, .status, .conclusion] | @tsv'
+     gh api "repos/jlapenna/agent-lcars/commits/$sha/status" \
+       --jq '.statuses[] | [.context, .state] | @tsv'
+   done
    ```
 
-   A required context that is not successful in those lists is the wait.
-   Find why its publisher has not run; never merge around it. Execute the closing-scope guard and arming
+   A required context that is not successful on either commit is the wait.
+   Find why it has not passed or why its publisher has not run; never merge
+   around it.
+
+   Execute the closing-scope guard and arming
    only as the `&&`-chained sequence above: a rejected, incomplete or
    changed-scope read must stop the chain. Arming does not declare checks
    passed; an already-eligible PR can merge immediately. If arming fails,
@@ -178,10 +204,10 @@
    state change, not transport loss: it repeats
    identically, so re-issuing it is a blind retry. Re-read the head, closing
    scope, reviews and required checks. Only when every context the ruleset
-   requires is successful on that head (the reads under "Arm once, then
-   leave it" above; `UNSTABLE` or "all of `gh pr checks` green" is not that)
-   use the guarded CLI sequence above, which then merges the eligible head
-   normally. Do not manufacture
+   requires is successful, on the head or on the test merge commit as it
+   applies (the reads under "Arm once, then leave it" above; `UNSTABLE` or
+   "all of `gh pr checks` green" is not that), use the guarded CLI sequence
+   above, which then merges the eligible head normally. Do not manufacture
    a new revision merely to make the queue-only API accept the request.
    Never add `--admin`, relax or fabricate checks/statuses, change policy,
    or introduce a wrapper or credential merely to arm.
