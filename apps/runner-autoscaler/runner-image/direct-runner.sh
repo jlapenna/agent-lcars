@@ -742,7 +742,7 @@ if [ "$MODE" = "review" ]; then
 Review the routed pull request in the JSON brief at \$AGENT_DISPATCH_CONTEXT.
 Read AGENTS.md, then the shared protocol at \$AGENT_PROTOCOL_PATH, and
 the Anthropic review procedure at \$AGENT_REVIEW_PATH, in that order.
-Complete its independent reviewer and finding-validation passes before
+Complete its applicable review tier and finding-validation steps before
 submitting your verdict. It adapts the pinned upstream command to this
 provider and LCARS's review deliverable; follow its publication instructions.
 

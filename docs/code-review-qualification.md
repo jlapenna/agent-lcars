@@ -14,11 +14,20 @@ These inputs invalidate the image layers when a release changes. Runtime and
 upstream-procedure updates arrive as draft PRs outside unattended auto-merge;
 the maintainer completing an update runs qualification before making it ready.
 
-Run this explicit, paid functional evaluation when changing the procedure or
-qualifying runtime updates. It is not scheduled monitoring or a health probe.
-Build the pushed candidate with `AGENT_LCARS_REF` set to its full source SHA
-and `--label org.opencontainers.image.revision=<same-SHA>`. Use the owning image
-workflow’s other build inputs, then inspect its immutable local ID:
+Run this explicit, paid functional evaluation when qualifying runtime CLI
+updates, updating the `third_party/anthropic-plugins` submodule gitlink, or
+changing how native child-session delegation or isolation works across
+harnesses. Maintainer-directed policy refinements inside the LCARS adapter
+(`README.md` review-tier thresholds, pass responsibilities, materiality filters,
+or publication formatting that keep the same native delegation primitives) are
+verified by `prepare-dispatch.test.sh`, the probe contract tests
+(`review-evidence.test.mjs`, `collect-review-evidence.test.mjs`,
+`qualify-review-matrix.test.mjs`), and live `LCARS review` execution rather than
+requiring a full four-provider container matrix run. It is not scheduled
+monitoring or a health probe. Build the pushed candidate with `AGENT_LCARS_REF`
+set to its full source SHA and `--label org.opencontainers.image.revision=<same-SHA>`.
+Use the owning image workflow’s other build inputs, then inspect its immutable
+local ID:
 
 ```bash
 docker image inspect --format '{{.Id}}' <candidate-tag>
@@ -92,12 +101,14 @@ under that bounded outer deadline, without its earlier ten-minute idle cutoff.
 
 Inspect `matrix.json` and each case's `run/evaluation.json`, `receipt.json`,
 `review.json`, native transcripts and manifest. Acceptance requires all four
-providers to complete all cases, four distinct native reviewer completions per
-case, a fresh completed validator for every candidate, the known defect found
-and independently confirmed, and source-bound publication payloads. The native
-collector checks parent/session identity rather than trusting model-authored
-receipts. Its regression keyword check is only a minimum guard: inspect the
-actual claimed defect and validator evidence before accepting it.
+providers to complete all cases, two distinct native reviewer completions
+(`guardrails` and `bugs`) per full-review case, a fresh completed validator for
+each deduplicated candidate, zero inline review comments on passing verdicts,
+the known defect found and independently confirmed, and source-bound publication
+payloads. The native collector checks parent/session identity rather than
+trusting model-authored receipts. Its regression keyword check is only a minimum
+guard: inspect the actual claimed defect and validator evidence before accepting
+it.
 
 Publication is captured as COMMENT payloads to avoid posting evaluation traffic
 to historical PRs. These tests do not prove a successful GitHub review API write.
