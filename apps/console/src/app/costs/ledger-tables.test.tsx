@@ -4,7 +4,7 @@ import { describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getWatchedRepos } from '../../lib/github-client';
 import type { SessionLedger } from '../../lib/session-ledger';
-import { LedgerTables } from './ledger-tables';
+import { LedgerTables, MAX_DISCLOSED_ISSUE_ROWS } from './ledger-tables';
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/',
@@ -54,6 +54,51 @@ describe('LedgerTables', () => {
     expect(within(remainder).getAllByTestId('ledger-issue-row')).toHaveLength(
       3,
     );
+  });
+
+  it('caps the disclosed issues and links to the full ledger', () => {
+    const issues = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        issueNumber: i + 1,
+        sessions: 1,
+        turns: 2,
+        tokens: 100,
+        costUsd: 0.1,
+      }));
+    const total = 15 + MAX_DISCLOSED_ISSUE_ROWS + 20;
+    const { unmount } = render(
+      <MantineProvider>
+        <LedgerTables
+          ledger={{ byIssue: issues(total), byWeek: [] }}
+          showAllIssuesHref="/costs?ledger=all"
+        />
+      </MantineProvider>,
+    );
+    let remainder = screen.getByTestId('ledger-issue-remainder');
+    expect(remainder).not.toHaveAttribute('open');
+    expect(within(remainder).getAllByTestId('ledger-issue-row')).toHaveLength(
+      MAX_DISCLOSED_ISSUE_ROWS,
+    );
+    const link = within(remainder).getByTestId('ledger-issue-show-all');
+    expect(link).toHaveAttribute('href', '/costs?ledger=all');
+    expect(link).toHaveTextContent(`Show all ${total} issues (20 more)`);
+    unmount();
+
+    render(
+      <MantineProvider>
+        <LedgerTables
+          ledger={{ byIssue: issues(total), byWeek: [] }}
+          showAllIssues
+          showAllIssuesHref="/costs?ledger=all"
+        />
+      </MantineProvider>,
+    );
+    remainder = screen.getByTestId('ledger-issue-remainder');
+    expect(remainder).toHaveAttribute('open');
+    expect(within(remainder).getAllByTestId('ledger-issue-row')).toHaveLength(
+      total - 15,
+    );
+    expect(screen.queryByTestId('ledger-issue-show-all')).toBeNull();
   });
 
   it('renders no truncation note while the window still fits', () => {

@@ -30,19 +30,37 @@ actual_version="$(timeout -k 2s "${version_timeout_seconds}s" "$opencode_bin" --
 tmp="$(mktemp -d)"
 server_pid=""
 cleanup() {
+  local drain_status=0
   if [ -n "$server_pid" ]; then
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   fi
   # Detached telemetry clients can outlive the CLI and recreate files during rm.
   # Keep the scratch intact when ownership or retirement cannot be established.
-  python3 "$here/drain-hook-test-clients.py" "$tmp" || return 1
-  rm -rf "$tmp"
-  if [ -n "${HOOK_TEST_LIB_DIR:-}" ]; then
-    printf 'drained\n' > "$lib_dir/.hook-smoke-drained"
+  python3 "$here/drain-hook-test-clients.py" "$tmp" || drain_status=$?
+  if [ "$drain_status" -eq 75 ]; then
+    if [ -n "${HOOK_TEST_LIB_DIR:-}" ]; then
+      printf 'deadline\n' > "$lib_dir/.hook-smoke-deadline-degraded" || return 1
+    fi
+    return 0
+  fi
+  if [ "$drain_status" -ne 0 ]; then
+    return 1
+  fi
+  rm -rf "$tmp" || return 1
+  [ ! -e "$tmp" ] || return 1
+  if [ -n "${HOOK_TEST_LIB_DIR:-}" ] && [ ! -e "$lib_dir/.hook-smoke-deadline-degraded" ]; then
+    printf 'drained\n' > "$lib_dir/.hook-smoke-drained" || return 1
   fi
 }
-trap cleanup EXIT
+on_exit() {
+  local exit_status=$?
+  if ! cleanup && [ "$exit_status" -eq 0 ]; then
+    exit 1
+  fi
+  exit "$exit_status"
+}
+trap on_exit EXIT
 
 source "${here}/hook-telemetry-assertions.sh"
 source_config_dir="${HOOK_TEST_OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
@@ -151,6 +169,12 @@ framework_started_seconds=$SECONDS
 framework_status=0
 env -i \
   PATH="$tmp/bin:$PATH" \
+  GIT_TERMINAL_PROMPT=0 \
+  GIT_CONFIG_COUNT=2 \
+  GIT_CONFIG_KEY_0=protocol.https.allow \
+  GIT_CONFIG_VALUE_0=never \
+  GIT_CONFIG_KEY_1=protocol.http.allow \
+  GIT_CONFIG_VALUE_1=never \
   LCARS_RUN_ID=hook-test-run LCARS_REPO=hook-test/repo LCARS_ISSUE_NUMBER=7 \
   LCARS_TELEMETRY_CREDENTIALS_FILE="$tmp/not-a-credential.json" \
   OPENCODE_DISABLE_AUTOUPDATE=true \

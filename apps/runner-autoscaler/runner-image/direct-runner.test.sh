@@ -150,8 +150,14 @@ else:
 PY
 mkdir -p "$baked/agents/shared/skills"
 cp -R "$repo_root/agents/shared/skills/." "$baked/agents/shared/skills/"
-bash "$repo_root/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" \
-  "$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+# Review dispatch only requires the packaged procedure files to be present.
+# packages/anthropic-code-review/package-review.test.sh covers packaging, and
+# the image build packages the real locked dependency.
+review_package="$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+mkdir -p "$review_package"
+for review_file in README.md upstream.md LICENSE revision; do
+  printf 'fixture %s\n' "$review_file" > "$review_package/$review_file"
+done
 
 BAKED_RUNTIME_HELPERS_DIR="$baked/runtime"
 BAKED_PREPARE_DISPATCH="$baked/runtime/prepare-dispatch.sh"
@@ -578,9 +584,11 @@ FAKE
   cat > "$bindir/codex" <<'FAKE'
 #!/usr/bin/env bash
 if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
+  printf '%s' "${TZ:-}" > "$CODEX_LOGIN_TZ_LOG"
   exit 0
 fi
 echo "$@" >> "$CODEX_ARGS_LOG"
+printf '%s' "${TZ:-}" > "$CODEX_TZ_LOG"
 worker-control-fixture
 printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
@@ -654,6 +662,20 @@ fi
 if [ "${FAKE_CODEX_USAGE_LIMIT_EVENT:-}" = "1" ]; then
   echo '{"type":"error","message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."}'
   echo '{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."}}'
+  exit 1
+fi
+if [ "${FAKE_CODEX_SAME_DAY_USAGE_LIMIT:-}" = "1" ]; then
+  echo '{"type":"error","message":"You’ve hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 6:48 AM."}'
+  echo '{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 6:48 AM."}}'
+  exit 1
+fi
+if [ -n "${FAKE_CODEX_USAGE_LIMIT_ON_ROUND:-}" ] && [ "$run_count" -eq "$FAKE_CODEX_USAGE_LIMIT_ON_ROUND" ]; then
+  echo '{"type":"error","message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."}'
+  echo '{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."}}'
+  exit 1
+fi
+if [ -n "${FAKE_CODEX_EVENTS_FILE:-}" ]; then
+  cat "$FAKE_CODEX_EVENTS_FILE"
   exit 1
 fi
 if [ "${FAKE_CODEX_STDERR_LIMIT_PROSE:-}" = "1" ]; then
@@ -760,6 +782,22 @@ fi
 exit "${FAKE_OPENCODE_EXIT_CODE:-0}"
 FAKE
   chmod +x "$bindir/opencode"
+
+  cat > "$bindir/date" <<'FAKE'
+#!/usr/bin/env bash
+if [ "${1:-}" = '+%b %-d, %Y' ] && [ -n "${FAKE_CODEX_UTC_DATES:-}" ]; then
+  [ "${TZ:-}" = "UTC" ] && [ "${LC_ALL:-}" = "C" ] || exit 2
+  idx=0
+  [ ! -f "$RUNNER_TEMP/fake-utc-date-idx" ] || idx=$(cat "$RUNNER_TEMP/fake-utc-date-idx")
+  IFS='|' read -ra dates <<<"$FAKE_CODEX_UTC_DATES"
+  selected="${dates[$idx]:-${dates[${#dates[@]}-1]}}"
+  echo $((idx + 1)) > "$RUNNER_TEMP/fake-utc-date-idx"
+  printf '%s\n' "$selected"
+  exit 0
+fi
+exec /bin/date "$@"
+FAKE
+  chmod +x "$bindir/date"
 
   cat > "$bindir/timeout" <<'FAKE'
 #!/usr/bin/env bash
@@ -938,6 +976,8 @@ run_scenario() {
   export WORKER_RUN_COUNT_FILE="$dir/worker-run-count"
   export WORKER_CONTEXT_LOG="$dir/worker-context.log"
   export CODEX_ENV_LOG="$dir/codex-env.log"
+  export CODEX_TZ_LOG="$dir/codex-tz.log"
+  export CODEX_LOGIN_TZ_LOG="$dir/codex-login-tz.log"
   export CODEX_SESSIONS_DIR_LOG="$dir/codex-sessions-dir.log"
   export CODEX_AUTH_PERSIST_LOG="$dir/codex-auth-persist.log"
   export CODEX_AUTH_REQUEST_LOG="$dir/codex-auth-requests.log"
@@ -2022,10 +2062,17 @@ jq -e '.requested_results == ["report", "park", "no-op"]' "$scenario_runner_temp
 echo "scenario codex-native-report: OK"
 
 # A provider stop after the record is a provider failure, not the report.
-export FAKE_CODEX_LAST_MESSAGE="You've hit your weekly limit · resets Sep 13, 12am (UTC)"
+# When LAST_MESSAGE_FILE is the only evidence (Codex exited 0 with no CLI
+# failure event), it is never stamped with `(UTC)` or wrapped in the
+# retained-failure envelope, so it cannot supply an extended Codex reset.
+export FAKE_CODEX_LAST_MESSAGE="You've hit your usage limit. Try again at Nov 25th, 2026 2:00 PM."
 run_scenario codex-native-report-limit codex
-jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
-  fail "codex native report limit: limit text settled as a report ($(cat "$COMPLETE_LOG"))"
+jq -e '.outcome == "provider-limit" and ((.message | contains("(UTC)")) | not) and ((.message | contains("retained provider failure events:")) | not)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report limit: assistant message was stamped or wrapped as CLI evidence ($(cat "$COMPLETE_LOG"))"
+export FAKE_CODEX_LAST_MESSAGE="You've hit your usage limit. Try again at Nov 25th, 2026 2:00 PM (UTC)."
+run_scenario codex-native-report-limit-quoted-utc codex
+jq -e '.outcome == "provider-limit" and ((.message | startswith("Provider quota or usage limit reached.")) | not)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report limit quoted UTC: assistant message forged the CLI failure envelope ($(cat "$COMPLETE_LOG"))"
 echo "scenario codex-native-report-limit: OK"
 
 # Ordinary report prose discussing quota errors must still settle as a report.
@@ -2664,18 +2711,121 @@ unset FAKE_GH_NO_MATCH FAKE_WORKER_EXIT FAKE_AGY_STDERR FAKE_BRIEF_NO_RESUME
 
 # Codex out of credits: the stderr banner (no JSON event) and the same banner
 # as a structured event are both provider limits, despite the typographic
-# apostrophe. A stderr line that only mentions the phrase is not.
-export FAKE_GH_NO_MATCH=1 FAKE_CODEX_STDERR_USAGE_LIMIT=1
+# apostrophe, and pin Codex to IANA TZ=UTC so its reset carries `(UTC)` without
+# breaking Intl/ZoneInfo in child tools. Same-day date-less resets expand only
+# when the round stays on one UTC calendar date. A stderr line that only
+# mentions the phrase is not a provider stop.
+export FAKE_GH_NO_MATCH=1 FAKE_CODEX_STDERR_USAGE_LIMIT=1 TZ=America/Los_Angeles
 run_scenario codex-stderr-usage-limit codex
-unset FAKE_CODEX_STDERR_USAGE_LIMIT
+unset FAKE_CODEX_STDERR_USAGE_LIMIT TZ
 [ "$rc" -ne 0 ] || fail "codex stderr usage limit: expected failure"
+[ "$(cat "$CODEX_LOGIN_TZ_LOG")" = "UTC" ] || fail "codex login status did not run under TZ=UTC ($(cat "$CODEX_LOGIN_TZ_LOG"))"
+[ "$(cat "$CODEX_TZ_LOG")" = "UTC" ] || fail "codex exec did not run under TZ=UTC ($(cat "$CODEX_TZ_LOG"))"
+TZ="$(cat "$CODEX_TZ_LOG")" "$real_node" -e 'process.exit(new Intl.DateTimeFormat().resolvedOptions().timeZone === "UTC" ? 0 : 1)' ||
+  fail "codex TZ value broke Node Intl.DateTimeFormat timeZone resolution"
 jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex stderr usage limit: wrong failure classification ($(tail -n1 "$COMPLETE_LOG" 2>&1 | head -c 600))"
-jq -e '.message | contains("try again at Nov 11th")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex stderr usage limit: provider cause not retained"
-export FAKE_CODEX_USAGE_LIMIT_EVENT=1
+jq -e '.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC).")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex stderr usage limit: UTC reset not retained ($(tail -n1 "$COMPLETE_LOG"))"
+export FAKE_CODEX_USAGE_LIMIT_EVENT=1 TZ=America/Los_Angeles
 run_scenario codex-usage-limit-event codex
-unset FAKE_CODEX_USAGE_LIMIT_EVENT
+unset FAKE_CODEX_USAGE_LIMIT_EVENT TZ
 [ "$rc" -ne 0 ] || fail "codex usage limit event: expected failure"
+[ "$(cat "$CODEX_TZ_LOG")" = "UTC" ] || fail "codex usage limit event: codex exec did not run under TZ=UTC"
 jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex usage limit event: wrong failure classification ($(tail -n1 "$COMPLETE_LOG" 2>&1 | head -c 600))"
+jq -e '.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC).")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex usage limit event: UTC reset not retained ($(tail -n1 "$COMPLETE_LOG"))"
+export FAKE_CODEX_SAME_DAY_USAGE_LIMIT=1 FAKE_CODEX_UTC_DATES='Nov 9, 2026' TZ=America/Los_Angeles
+run_scenario codex-same-day-usage-limit codex
+unset FAKE_CODEX_SAME_DAY_USAGE_LIMIT FAKE_CODEX_UTC_DATES TZ
+[ "$rc" -ne 0 ] || fail "codex same-day usage limit: expected failure"
+jq -e '.outcome == "provider-limit" and (.message | contains("try again at Nov 9, 2026 6:48 AM (UTC)."))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex same-day usage limit: UTC date was not expanded ($(tail -n1 "$COMPLETE_LOG"))"
+export FAKE_CODEX_SAME_DAY_USAGE_LIMIT=1 FAKE_CODEX_UTC_DATES='Nov 9, 2026|Nov 10, 2026'
+run_scenario codex-midnight-same-day-usage-limit codex
+unset FAKE_CODEX_SAME_DAY_USAGE_LIMIT FAKE_CODEX_UTC_DATES
+[ "$rc" -ne 0 ] || fail "codex midnight same-day usage limit: expected failure"
+jq -e '.outcome == "provider-limit" and (.message | contains("try again at 6:48 AM.")) and ((.message | contains("(UTC)")) | not)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex midnight same-day usage limit: guessed a UTC day across midnight ($(tail -n1 "$COMPLETE_LOG"))"
+export FAKE_BRIEF_NO_RESUME=1 FAKE_CLOCK=1 FAKE_WORKER_ELAPSED=1 CODEX_TIMEOUT_SECONDS=5
+export FAKE_CODEX_LAST_MESSAGE='Inspected the repository; opening PR next.' FAKE_CODEX_USAGE_LIMIT_ON_ROUND=2
+run_scenario codex-correction-round-usage-limit codex
+unset FAKE_BRIEF_NO_RESUME FAKE_CLOCK FAKE_WORKER_ELAPSED CODEX_TIMEOUT_SECONDS FAKE_CODEX_LAST_MESSAGE FAKE_CODEX_USAGE_LIMIT_ON_ROUND
+[ "$rc" -ne 0 ] || fail "codex correction usage limit: expected failure"
+[ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 2 ] || fail "codex correction usage limit: expected two rounds"
+jq -e '.outcome == "provider-limit" and (.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC)."))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex correction usage limit: round-1 message hid round-2 limit reset ($(tail -n1 "$COMPLETE_LOG"))"
+# Even when LAST_MESSAGE_FILE itself begins with a quoted quota banner, a real
+# structured CLI failure event takes precedence over the assistant message.
+export FAKE_CODEX_LAST_MESSAGE="You've hit your usage limit. Try again at Nov 25th, 2026 2:00 PM (UTC)."
+export FAKE_CODEX_USAGE_LIMIT_EVENT=1
+run_scenario codex-cli-failure-precedence codex
+unset FAKE_CODEX_LAST_MESSAGE FAKE_CODEX_USAGE_LIMIT_EVENT
+[ "$rc" -ne 0 ] || fail "codex cli failure precedence: expected failure"
+jq -e '.outcome == "provider-limit" and (.message | startswith("Provider quota or usage limit reached.")) and (.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC).")) and ((.message | contains("Nov 25th")) | not)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex cli failure precedence: assistant message overrode real CLI failure event ($(tail -n1 "$COMPLETE_LOG"))"
+# A complete quota failure record landing right at the 16,000-byte display-trim
+# line boundary (and one followed by >16 KB of non-quota error lines) must both
+# classify as provider-limit and retain the stamped `(UTC)` reset.
+boundary_events="$tmp/codex-boundary-events.jsonl"
+python3 - "$boundary_events" <<'PYEVENTS'
+import json
+import sys
+
+quota_raw = "You\u2019ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."
+quota_annotated_bytes = len((quota_raw[:-1] + " (UTC).").encode("utf-8"))
+# Extracted stream omits the trailing newline via bash $(...), so make
+# `quota_annotated + "\n" + filler` equal exactly 16,000 bytes, preceded by
+# a leading non-quota line + "\n".
+filler_len = 16000 - quota_annotated_bytes - 1
+lines = [
+    json.dumps({"type": "error", "message": "transient upstream retry 1"}),
+    json.dumps({"type": "error", "message": quota_raw}),
+    json.dumps({"type": "error", "message": "x" * filler_len}),
+]
+open(sys.argv[1], "w", encoding="utf-8").write("\n".join(lines) + "\n")
+PYEVENTS
+export FAKE_CODEX_EVENTS_FILE="$boundary_events"
+run_scenario codex-usage-limit-tail-boundary codex
+unset FAKE_CODEX_EVENTS_FILE
+[ "$rc" -ne 0 ] || fail "codex usage limit tail boundary: expected failure"
+jq -e '.outcome == "provider-limit" and (.message | startswith("Provider quota or usage limit reached.")) and (.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC)."))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex usage limit tail boundary: boundary quota line or UTC reset was dropped ($(tail -n1 "$COMPLETE_LOG" | head -c 400))"
+
+trailing_noise_events="$tmp/codex-trailing-noise-events.jsonl"
+python3 - "$trailing_noise_events" <<'PYNOISE'
+import json
+import sys
+
+quota_raw = "You\u2019ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."
+lines = [json.dumps({"type": "error", "message": quota_raw})]
+for i in range(220):
+    lines.append(json.dumps({"type": "error", "message": f"follow-on teardown diagnostic {i:03d}: " + ("z" * 60)}))
+open(sys.argv[1], "w", encoding="utf-8").write("\n".join(lines) + "\n")
+PYNOISE
+export FAKE_CODEX_EVENTS_FILE="$trailing_noise_events"
+run_scenario codex-usage-limit-trailing-noise codex
+unset FAKE_CODEX_EVENTS_FILE
+[ "$rc" -ne 0 ] || fail "codex usage limit trailing noise: expected failure"
+jq -e '.outcome == "provider-limit" and (.message | startswith("Provider quota or usage limit reached.")) and (.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC).")) and ((.message | length) <= 16384)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex usage limit trailing noise: quota classification or UTC reset lost behind trailing errors ($(tail -n1 "$COMPLETE_LOG" | head -c 400))"
+# Codex reports each retry as a top-level `error` event. A dated retry hint in
+# a reconnect notice (even one whose error text spans lines) is not the
+# terminal quota event's reset: a reset-less `usage_limit_reached` keeps the
+# bounded probe, so nothing is stamped `(UTC)`.
+reconnect_events="$tmp/codex-reconnect-events.jsonl"
+python3 - "$reconnect_events" <<'PYRECONNECT'
+import json
+import sys
+
+hint = "You\u2019ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 24th, 2026 6:48 AM."
+lines = [
+    json.dumps({"type": "error", "message": f"Reconnecting... 2/5 (stream error: {hint})"}),
+    json.dumps({"type": "error", "message": f"Reconnecting... 3/5 (stream error:\n{hint})"}),
+    json.dumps({"type": "turn.failed", "error": {"message": "You\u2019ve hit your usage limit (usage_limit_reached). Upgrade to Pro or try again later."}}),
+]
+open(sys.argv[1], "w", encoding="utf-8").write("\n".join(lines) + "\n")
+PYRECONNECT
+export FAKE_CODEX_EVENTS_FILE="$reconnect_events"
+run_scenario codex-usage-limit-reconnect-hint codex
+unset FAKE_CODEX_EVENTS_FILE
+[ "$rc" -ne 0 ] || fail "codex reconnect hint: expected failure"
+jq -e '.outcome == "provider-limit" and (.message | contains("usage_limit_reached")) and (.message | contains("Reconnecting... 3/5 (stream error: You")) and ((.message | contains("(UTC)")) | not)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex reconnect hint: a retry notice supplied the quota reset ($(tail -n1 "$COMPLETE_LOG" | head -c 600))"
 export FAKE_CODEX_STDERR_LIMIT_PROSE=1
 run_scenario codex-stderr-limit-prose codex
 unset FAKE_CODEX_STDERR_LIMIT_PROSE FAKE_GH_NO_MATCH

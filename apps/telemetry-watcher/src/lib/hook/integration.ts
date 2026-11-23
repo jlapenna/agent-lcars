@@ -63,6 +63,7 @@ export const INTEGRATION_TARGETS: Readonly<
       // running, it skips SessionEnd hooks entirely. On a 2-CPU runner that
       // lost every end event (runner-image/hook-telemetry.test.sh).
       { event: 'Stop', timeout: 5 },
+      { event: 'SubagentStop', async: true },
       // SessionEnd's default budget is 1.5 s; a per-hook timeout raises it.
       { event: 'SessionEnd', timeout: 5 },
     ],

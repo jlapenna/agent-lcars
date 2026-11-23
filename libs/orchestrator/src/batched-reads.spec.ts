@@ -123,6 +123,43 @@ function describeBatchedReads(
 
       expect((await store.readTasks(ids)).size).toBe(120);
     });
+
+    it('reads anchor projections in request order across batches', async () => {
+      const store = makeStore();
+      const anchors = Array.from({ length: 130 }, (_, index) => ({
+        repo: 'octo/anchors',
+        issue: index + 1,
+      }));
+      // Every third anchor has a stored projection; the rest are unknown.
+      for (const anchor of anchors.filter((_, index) => index % 3 === 0)) {
+        const generation =
+          await store.beginGithubAnchorProjectionRefresh(anchor);
+        await store.applyGithubAnchorProjectionRefresh({
+          anchor,
+          generation,
+          projection: {
+            anchor,
+            kind: 'pr',
+            state: 'closed',
+            title: `PR ${anchor.issue}`,
+            body: '',
+            url: `https://github.com/octo/anchors/pull/${anchor.issue}`,
+            labels: [],
+            assigneeLogins: [],
+            sourceUpdatedAt: '2026-08-30T12:00:00.000Z',
+            observedAt: '2026-08-30T12:00:01.000Z',
+          },
+        });
+      }
+
+      const read = await store.readGithubAnchorProjections(anchors);
+
+      expect(read.map((projection) => projection?.title)).toEqual(
+        anchors.map((anchor, index) =>
+          index % 3 === 0 ? `PR ${anchor.issue}` : undefined,
+        ),
+      );
+    });
   });
 }
 

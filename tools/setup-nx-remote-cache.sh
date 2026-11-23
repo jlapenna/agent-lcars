@@ -4,7 +4,7 @@
 #
 # The credential is resolved from two sources, first hit wins:
 #
-#   1. The encrypted age secret store (secrets-get / NX_CACHE_TOKEN_SPARK).
+#   1. The encrypted age secret store (secrets get / NX_CACHE_TOKEN_SPARK).
 #      Covers the maintainer's home directory on any fleet host, with no cloud
 #      login required.
 #   2. This repo's own GCP project. Covers runs that do NOT happen in that home
@@ -86,8 +86,8 @@ try_source() {
 }
 
 # 1. Encrypted age store -- maintainer workstations, no cloud login needed.
-if command -v secrets-get >/dev/null 2>&1; then
-  if candidate="$(secrets-get NX_CACHE_TOKEN_SPARK 2>/dev/null)"; then
+if command -v secrets >/dev/null 2>&1; then
+  if candidate="$(secrets get NX_CACHE_TOKEN_SPARK 2>/dev/null)"; then
     try_source "$candidate" "the age secret store (NX_CACHE_TOKEN_SPARK)"
   fi
 fi

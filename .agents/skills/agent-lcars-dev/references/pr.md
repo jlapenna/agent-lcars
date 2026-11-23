@@ -298,10 +298,12 @@
    for your own checkout. Record its absolute path, owning primary and branch,
    and stop your own watchers and servers.
 
-   This repository's Anthropic review dependency is a Git submodule. Before
-   guarded removal or parking, inspect its status, HEAD against the parent
-   gitlink, and local refs for private history. The setup script registers the
-   dependency in per-worktree Git configuration. For a clean checkout at the
+   A worktree set up before the Anthropic review dependency moved to
+   `packages/anthropic-code-review` may still have the retired
+   `third_party/anthropic-plugins` Git submodule initialized. Before guarded
+   removal or parking such a checkout, inspect the submodule's status, HEAD
+   against the branch's gitlink, and local refs for private history. Its setup
+   registered the dependency in per-worktree Git configuration. For a clean checkout at the
    locked upstream revision with no private history, first check
    `git config --local --get-regexp '^submodule[.]third_party/anthropic-plugins[.]'`:
    status 1 (no entry) is required. A shared entry or another error retains the

@@ -99,11 +99,11 @@ Non-goals:
 
 ## 3. Runtime hook surfaces
 
-| Runtime             | Config location                                                                  | Events used                                                                                                         | Notes                                                                                                                                                                                                                                                                                                                              |
-| ------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code 2.1.296 | `~/.claude/settings.json` (user), `--settings <file>` (runner), project settings | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `Notification`, `StopFailure`, `SessionEnd`              | stdin JSON: `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`; `SessionStart` adds `source`, `model`, `session_title`. `async: true` supported. `SessionEnd` budget 1.5 s, raised by per-hook `timeout` up to 60 s.                                                                                     |
-| Codex 0.162.1       | `~/.codex/hooks.json`, `<repo>/.codex/hooks.json`, `requirements.toml` (managed) | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, `Interrupt`                                | Same field names plus `model`, `turn_id`; under `codex exec` `transcript_path` was a real rollout file (verified). Command hooks accept `"async": true` (docs; up to eight background hooks per session). Non-managed hooks need trust against their hash; `--dangerously-bypass-hook-trust` for automation. `SessionEnd` max 3 s. |
-| OpenCode 1.18.35    | plugin in `~/.config/opencode/plugins/` or `opencode.json` `plugin: [...]`       | `event`: `session.created/updated/status/idle/error`, `message.updated`, `message.part.updated`, `permission.asked` | In-process JS. `AssistantMessage` carries `tokens.{input,output,reasoning,cache.read,cache.write}`, `cost`, `modelID`; no transcript parse needed. Already ships `agents/opencode/lcars-session.js`.                                                                                                                               |
+| Runtime             | Config location                                                                  | Events used                                                                                                            | Notes                                                                                                                                                                                                                                                                                                                              |
+| ------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code 2.1.296 | `~/.claude/settings.json` (user), `--settings <file>` (runner), project settings | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SubagentStop`, `Notification`, `StopFailure`, `SessionEnd` | stdin JSON: `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`; `SessionStart` adds `source`, `model`, `session_title`. `async: true` supported. `SessionEnd` budget 1.5 s, raised by per-hook `timeout` up to 60 s.                                                                                     |
+| Codex 0.162.1       | `~/.codex/hooks.json`, `<repo>/.codex/hooks.json`, `requirements.toml` (managed) | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, `Interrupt`                                   | Same field names plus `model`, `turn_id`; under `codex exec` `transcript_path` was a real rollout file (verified). Command hooks accept `"async": true` (docs; up to eight background hooks per session). Non-managed hooks need trust against their hash; `--dangerously-bypass-hook-trust` for automation. `SessionEnd` max 3 s. |
+| OpenCode 1.18.35    | plugin in `~/.config/opencode/plugins/` or `opencode.json` `plugin: [...]`       | `event`: `session.created/updated/status/idle/error`, `message.updated`, `message.part.updated`, `permission.asked`    | In-process JS. `AssistantMessage` carries `tokens.{input,output,reasoning,cache.read,cache.write}`, `cost`, `modelID`; no transcript parse needed. Already ships `agents/opencode/lcars-session.js`.                                                                                                                               |
 
 Rejected: Claude Code `type: "http"` hooks posting straight to LCARS. They
 would send `prompt`/`tool_input` bodies off-host, cannot compute tokens
@@ -354,10 +354,13 @@ them:
 - **Stdin to a temp file first.** The launcher copies stdin to `mktemp`
   before doing anything else and deletes it on exit, so a slow or failing
   client never leaves the runtime blocked on a pipe.
-- **Skip what is not a session.** Claude and OpenCode payloads with
-  `agent_id` remain parent-owned. A Codex child is collected only when its
-  first rollout metadata matches `agent_id` and the hook's parent
-  `session_id`/fork relationship,
+- **Skip what is not a session.** OpenCode payloads and mid-turn Claude
+  `PostToolUse` payloads with `agent_id` remain parent-owned. Claude Code
+  `SubagentStop` collects a verified `<parentSessionId>/subagents/agent-<agentId>.jsonl`
+  child transcript under `<parentSessionId>--subagent--<agentId>` when every record
+  is bound to the parent and child IDs and carries no non-sidechain turns. A Codex child is
+  collected only when its first rollout metadata matches `agent_id` and the
+  hook's parent `session_id`/fork relationship,
   `agent_transcript_path` or an exact-ID rollout lookup supplies the child
   transcript, and an explicit child-thread boundary excludes inherited history, and matching
   thread usage is present. Its own suffix uses the normal publication guards;
@@ -445,6 +448,13 @@ them:
       {
         "hooks": [
           { "type": "command", "command": "lcars hook claude", "timeout": 5 }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "lcars hook claude", "async": true }
         ]
       }
     ],

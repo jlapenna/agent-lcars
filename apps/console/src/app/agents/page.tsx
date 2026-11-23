@@ -117,6 +117,10 @@ async function AgentsPageBody({
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
 
+  const activityRead = getCachedAgentActivity();
+  const outcomeRead = outcomesCursor
+    ? getRecentOutcomesPage(outcomesCursor)
+    : undefined;
   const [
     {
       data: { items },
@@ -128,10 +132,16 @@ async function AgentsPageBody({
     outcomePage,
   ] = await Promise.all([
     getCachedQueueItems(),
-    getCachedAgentActivity(),
+    activityRead,
     getCliSessions(),
-    getRunnerSessionsByRunId(),
-    outcomesCursor ? getRecentOutcomesPage(outcomesCursor) : undefined,
+    Promise.all([activityRead, outcomeRead]).then(([{ data }, page]) =>
+      getRunnerSessionsByRunId([
+        ...data.liveRuns,
+        ...data.recentRuns,
+        ...(page?.runs ?? []),
+      ]),
+    ),
+    outcomeRead,
   ]);
   // Deduped the same way as the home page (page.tsx): parallel fetchers can
   // degrade the same way (e.g. one rate-limit hit per PR-join), and each

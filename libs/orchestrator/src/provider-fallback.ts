@@ -195,7 +195,8 @@ function waitForProvider(input: {
   if (
     policy === undefined ||
     isWorkAnchor(previous.task) ||
-    previous.params?.['mode'] !== 'review'
+    (previous.params?.['mode'] !== 'review' &&
+      policy.principal !== 'svc:github-pr-remediation')
   )
     return input.settled;
   const attempt = (policy.providerWait?.attempt ?? 0) + 1;

@@ -17,6 +17,7 @@ import type {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 class MemoryAgentStore implements AgentStore {
@@ -438,10 +439,14 @@ it('refreshes the least recently attempted repositories first across ticks', asy
   const store = new MemoryAgentStore();
   const seen: string[] = [];
   const fetch = github({ investigator: investigator() });
+  // A controlled clock: each request costs 5 ms, and nothing else moves time,
+  // so the batch budget does not depend on how loaded the test host is.
+  let clock = Date.parse('2026-11-23T00:00:00Z');
+  vi.spyOn(Date, 'now').mockImplementation(() => clock);
   vi.stubGlobal('fetch', async (url: string) => {
     const repository = /repos\/([^/]+\/[^/]+)/u.exec(url)![1]!;
     if (!seen.includes(repository)) seen.push(repository);
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    clock += 5;
     return fetch(url);
   });
   const repositories = ['a/1', 'b/2', 'c/3', 'd/4', 'e/5'];

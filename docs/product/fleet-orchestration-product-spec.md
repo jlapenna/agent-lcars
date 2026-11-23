@@ -62,24 +62,24 @@ The core promises:
 
 ## 2. Actors
 
-| Actor                 | Identity                                                                                       | Interacts via                                                                                                            |
-| --------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Maintainers           | Console allowlist (`jlapenna`, `lizsprinkles`); Work principal `user:jlapenna`                 | GitHub/Linear labels and replies, the console, the `lcars` CLI                                                           |
-| GitHub App (fleet)    | `agent-lcars[bot]`; claim assignee `agent-lcars-bot`                                           | Webhooks into the console; claim, react, comment, and monitor ready PR delivery                                          |
-| Linear integration    | `svc:linear` (HMAC webhook + Linear API key)                                                   | Linear webhooks into the console; updates Linear workflow state and posts outcome comments                               |
-| Claude App            | `claude[bot]`                                                                                  | Authors Claude pipeline deliverables                                                                                     |
-| QueueExecutor         | Grant with `work.executor` (`svc:telemetry-writer`)                                            | Claims runs, launches Kubernetes Jobs, reports placements and exits                                                      |
-| Job scheduler         | Grant with `work.cron` (`svc:job-scheduler`, `goose` + coding harnesses; never runner-mounted) | Ticks schedules/maintenance; the repository-job automation principal                                                     |
-| Dispatched worker     | Per-run token plus its own App token (and optional job-secret grant)                           | Brief/recipe, checkout token, job secrets, heartbeat, introspect, complete                                               |
-| Internal work drivers | `svc:fleet-triage`, `svc:inbox-summary`, `svc:handoff-summary`, `svc:github-pr-review`         | Event-driven issue triage, model-generated Inbox/handoff summaries, and cross-model GitHub PR review with quota fallback |
-| Member automation     | `workflow:member-automation` (GitHub Actions OIDC, 7 repositories)                             | `POST /dispatches/github` from member repositories                                                                       |
-| Work-create workflow  | `workflow:work-create` (`codex-agent` service account)                                         | `work-create.yml`: create, get, cancel, and redispatch items; create and disable schedules                               |
-| Slack bot             | Sprinkles App Hosting service account, channel `slack`                                         | Creates items; receives outcomes over webhook                                                                            |
-| Production verifier   | `svc:production-verifier`                                                                      | Authenticated live verification with `work.operator`                                                                     |
-| Claw admission        | `svc:claw-operator` (`work.claw.admit`), `user:jlapenna`, or a run as `run:<runId>`            | Admits repository-owned claw agent rounds (FL-RA-2)                                                                      |
-| Claw zone executor    | `svc:claw-homelab-ops` (`work.executor` for the zone's `claw-*` runtimes only)                 | A runtimes-only QueueExecutor that claims and runs claw Jobs (FL-EX-1, FL-RA-3)                                          |
-| Session reaper        | `session:expiry` (GitHub OIDC from `work-session-expiry.yml`)                                  | Read-only item access (`work.reaper`) to expire sessions of closed items                                                 |
-| Homelab               | Platform operator                                                                              | Runs k3s, ARC, QueueExecutor and the claw zone; holds host and execution bootstrap credentials                           |
+| Actor                 | Identity                                                                                                            | Interacts via                                                                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Maintainers           | Console allowlist (`jlapenna`, `lizsprinkles`); Work principal `user:jlapenna`                                      | GitHub/Linear labels and replies, the console, the `lcars` CLI                                                                                                     |
+| GitHub App (fleet)    | `agent-lcars[bot]`; claim assignee `agent-lcars-bot`                                                                | Webhooks into the console; claim, react, comment, and monitor ready PR delivery                                                                                    |
+| Linear integration    | `svc:linear` (HMAC webhook + Linear API key)                                                                        | Linear webhooks into the console; updates Linear workflow state and posts outcome comments                                                                         |
+| Claude App            | `claude[bot]`                                                                                                       | Authors Claude pipeline deliverables                                                                                                                               |
+| QueueExecutor         | Grant with `work.executor` (`svc:telemetry-writer`)                                                                 | Claims runs, launches Kubernetes Jobs, reports placements and exits                                                                                                |
+| Job scheduler         | Grant with `work.cron` (`svc:job-scheduler`, `goose` + coding harnesses; never runner-mounted)                      | Ticks schedules/maintenance; the repository-job automation principal                                                                                               |
+| Dispatched worker     | Per-run token plus its own App token (and optional job-secret grant)                                                | Brief/recipe, checkout token, job secrets, heartbeat, introspect, complete                                                                                         |
+| Internal work drivers | `svc:fleet-triage`, `svc:inbox-summary`, `svc:handoff-summary`, `svc:github-pr-review`, `svc:github-pr-remediation` | Event-driven issue triage, model-generated Inbox/handoff summaries, cross-model GitHub PR review with quota fallback, and automatic PR conflict/review remediation |
+| Member automation     | `workflow:member-automation` (GitHub Actions OIDC, 7 repositories)                                                  | `POST /dispatches/github` from member repositories                                                                                                                 |
+| Work-create workflow  | `workflow:work-create` (`codex-agent` service account)                                                              | `work-create.yml`: create, get, cancel, and redispatch items; create and disable schedules                                                                         |
+| Slack bot             | Sprinkles App Hosting service account, channel `slack`                                                              | Creates items; receives outcomes over webhook                                                                                                                      |
+| Production verifier   | `svc:production-verifier`                                                                                           | Authenticated live verification with `work.operator`                                                                                                               |
+| Claw admission        | `svc:claw-operator` (`work.claw.admit`), `user:jlapenna`, or a run as `run:<runId>`                                 | Admits repository-owned claw agent rounds (FL-RA-2)                                                                                                                |
+| Claw zone executor    | `svc:claw-homelab-ops` (`work.executor` for the zone's `claw-*` runtimes only)                                      | A runtimes-only QueueExecutor that claims and runs claw Jobs (FL-EX-1, FL-RA-3)                                                                                    |
+| Session reaper        | `session:expiry` (GitHub OIDC from `work-session-expiry.yml`)                                                       | Read-only item access (`work.reaper`) to expire sessions of closed items                                                                                           |
+| Homelab               | Platform operator                                                                                                   | Runs k3s, ARC, QueueExecutor and the claw zone; holds host and execution bootstrap credentials                                                                     |
 
 ## 3. Goals and non-goals
 
@@ -602,9 +602,11 @@ executor is working an issue; a human assignee owns it regardless.
   container during preemption shutdown, so no attempt is provably unexecuted
   (#2520).
 - **FL-RT-3 [Shipped]** A `provider-limit` failure writes a cooldown that lasts
-  until Claude's reported reset time (if it is within 7 days), or re-probes
-  after 15 minutes. A `provider-capacity` failure always re-probes after 15
-  minutes. Without a fallback policy, nothing reroutes to another provider.
+  until Claude's reported `(UTC)` reset or a runner-captured Codex CLI `(UTC)`
+  reset (if within 7 days), or re-probes after 15 minutes; assistant
+  final-message-only Codex text, zone-less text, or unparseable reset text never
+  extends the hold. A `provider-capacity` failure always re-probes
+  after 15 minutes. Without a fallback policy, nothing reroutes to another provider.
   With an opt-in `fallbackPipelines` order, intersected with the principal's
   pipeline grant, a `provider-limit` or `provider-capacity` failure atomically
   settles the attempt and mints a successor on an authorized alternative, and
@@ -883,6 +885,10 @@ consumed by every dispatched run in every member repository.
     on the PR (`MAX_DELIVERY_CORRECTIONS`), or escalates to `status:needs-human`
     when the correction budget is exhausted. Canonical owner:
     [`lifecycle-systems.md`](../lifecycle-systems.md#ready-deliverable-ownership).
+  - **Open PRs without a delivery binding** are corrected by automatic PR
+    remediation instead, and a merge sweeps the other open PRs on its base for
+    conflicts. Canonical owner:
+    [`lifecycle-systems.md`](../lifecycle-systems.md#automatic-pr-remediation).
 
 ## 9. Resumable conversations
 
