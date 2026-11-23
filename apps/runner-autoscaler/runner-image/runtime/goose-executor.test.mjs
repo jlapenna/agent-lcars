@@ -317,6 +317,66 @@ if (process.argv[2] === 'recipe') {
       classifyGooseProviderFailure(new Error('ordinary error')),
       undefined,
     );
+    // Heartbeat / onProviderStarted failures and missing binaries leave recipeFailure unset.
+    await writeFile(
+      executable,
+      `#!${process.execPath}
+if (process.argv[2] !== 'recipe') {
+  console.log(JSON.stringify({metadata:{status:'completed'},messages:[]}));
+}`,
+      { mode: 0o700 },
+    );
+    const heartbeatFail = gooseExecutor({
+      executable,
+      workingDirectory: directory,
+      environment: {
+        PATH: '/usr/bin:/bin',
+        HOME: directory,
+        GOOSE_PATH_ROOT: directory,
+      },
+      assertAllocation: async () => {
+        /* Process classification fixture. */
+      },
+      onProviderStarted: async () => {
+        throw new Error('Work API HTTP 503');
+      },
+    });
+    await assert.rejects(
+      heartbeatFail({
+        run,
+        baseline: null,
+        signal: new AbortController().signal,
+      }),
+      (error) => {
+        assert.equal(error.recipeFailure, undefined);
+        return true;
+      },
+    );
+    const missingBin = gooseExecutor({
+      executable: join(directory, 'missing-goose-binary'),
+      workingDirectory: directory,
+      environment: {
+        PATH: '/usr/bin:/bin',
+        HOME: directory,
+        GOOSE_PATH_ROOT: directory,
+      },
+      assertAllocation: async () => {
+        /* Process classification fixture. */
+      },
+    });
+    await assert.rejects(
+      missingBin({
+        run,
+        baseline: null,
+        signal: new AbortController().signal,
+      }),
+      (error) => {
+        assert.equal(error.code, 'ENOENT');
+        assert.equal(error.recipeFailure, undefined);
+        assert.equal(error.resultFileMissing, undefined);
+        return true;
+      },
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -424,9 +484,17 @@ test('settleGooseFailure logs cause, persists Codex auth before completing, and 
   // Ordinary recipe/result failures settle as agent-failed with sanitized messages.
   const agentFailures = [];
   for (const err of [
-    new Error('Goose exited 1: Server error'),
-    new SyntaxError('Unexpected token "secret-output" in JSON'),
-    Object.assign(new Error('ENOENT: /tmp/secret'), { code: 'ENOENT' }),
+    Object.assign(new Error('Goose exited 1: Server error'), {
+      recipeFailure: true,
+    }),
+    Object.assign(new SyntaxError('Unexpected token "secret-output" in JSON'), {
+      recipeFailure: true,
+    }),
+    Object.assign(new Error('ENOENT: /tmp/secret'), {
+      code: 'ENOENT',
+      recipeFailure: true,
+      resultFileMissing: true,
+    }),
   ]) {
     const res = await settleGooseFailure(err, {
       aborted: false,
@@ -446,20 +514,32 @@ test('settleGooseFailure logs cause, persists Codex auth before completing, and 
     ],
   );
 
-  // Pre-execution bootstrap errors stay runner-failed via direct-runner exit trap.
-  assert.deepEqual(
-    await settleGooseFailure(new Error('Invalid recipe source revision'), {
-      aborted: false,
-      executionStarted: false,
-      complete: async () => {
-        throw new Error('must not complete as agent-failed');
-      },
-      logError: () => {
-        /* captured elsewhere */
-      },
+  // Infrastructure, heartbeat 5xx, spawn ENOENT, and bootstrap errors stay runner-failed via direct-runner exit trap.
+  const infraLogs = [];
+  for (const err of [
+    new Error('Invalid recipe source revision'),
+    new Error('Work API heartbeat HTTP 503'),
+    Object.assign(new Error('spawn goose ENOENT'), {
+      code: 'ENOENT',
+      syscall: 'spawn goose',
     }),
-    { settled: false },
-  );
+  ]) {
+    assert.deepEqual(
+      await settleGooseFailure(err, {
+        aborted: false,
+        complete: async () => {
+          throw new Error('must not complete as agent-failed');
+        },
+        logError: (message) => infraLogs.push(message),
+      }),
+      { settled: false },
+    );
+  }
+  assert.deepEqual(infraLogs, [
+    'Invalid recipe source revision',
+    'Work API heartbeat HTTP 503',
+    'spawn goose ENOENT',
+  ]);
 });
 
 test('declared file preserves failed grades and nested fields instead of model copies', async () => {

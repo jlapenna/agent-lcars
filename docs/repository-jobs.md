@@ -307,9 +307,11 @@ grants and a matching repository.
 Refresh is required before admitting from a catalog older than ten minutes.
 Source failures disable admission until a successful refresh, which
 reactivates an unvetoed, authorized job. Disable stops new occurrences; use native Work cancellation to stop
-an admitted occurrence. A lost occurrence is failed and never automatically
-retried. An unreleased retirement keeps the job occupied until the existing
-capacity recovery protocol establishes physical termination.
+an admitted occurrence. With `maxAttempts: 1`, a lost occurrence fails
+terminally; with `maxAttempts: 2`, LCARS performs one automatic retry on placed
+worker loss before reconciling from the final retired attempt. An unreleased
+retirement keeps the job occupied until the existing capacity recovery protocol
+establishes physical termination.
 
 ## Invocation parameters and migrated callers
 

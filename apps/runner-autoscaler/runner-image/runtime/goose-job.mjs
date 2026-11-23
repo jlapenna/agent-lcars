@@ -63,7 +63,6 @@ let home;
 let secretHome;
 let timeout;
 let timedOut = false;
-let executionStarted = false;
 let codexAuth;
 let claudeAuth;
 let agyAuth;
@@ -155,7 +154,6 @@ try {
     onProviderStarted: () =>
       call('heartbeat', { providerProcessStarted: true }),
   });
-  executionStarted = true;
   let result;
   try {
     result = await execute({
@@ -170,7 +168,6 @@ try {
   } finally {
     clearTimeout(timeout);
   }
-  executionStarted = false;
   runSignal.throwIfAborted();
   if (codexAuth) await codexAuth.persist();
   await call('recipe', { result });
@@ -181,7 +178,6 @@ try {
     aborted,
     timedOut,
     timeoutMinutes: brief?.definition?.job?.execution?.timeout,
-    executionStarted,
     codexAuth,
     complete: (payload) => call('complete', payload),
   });
