@@ -17,7 +17,12 @@ import { isControlPlaneRepository } from './deployment';
 import { repoKey, supportedAgentPipelines } from './watched-repo';
 import { getWatchedRepos } from './watched-repos-config';
 import { repositoryForbiddenReason } from './work-authorization';
-import { grantForPrincipal, type WorkGrant, workGrants } from './work-grants';
+import {
+  grantForPrincipal,
+  jobAutomationPrincipalForGrants,
+  type WorkGrant,
+  workGrants,
+} from './work-grants';
 
 /** Synthetic principal recorded on signed GitHub webhook PR review admissions
  * so quota/cooldown fallback can re-verify repository admission and review-mode
@@ -145,7 +150,15 @@ export function currentFallbackPipelines(
     );
   }
   const grant = grantForPrincipal(policy.principal, grants);
-  if (grant === undefined || !grant.scopes.includes('work.operator')) return [];
+  const isJobAutomation =
+    Boolean(run.params?.['jobOccurrence']) &&
+    grant !== undefined &&
+    grant.principal === jobAutomationPrincipalForGrants(grants);
+  if (
+    grant === undefined ||
+    (!grant.scopes.includes('work.operator') && !isJobAutomation)
+  )
+    return [];
   return grant.pipelines.filter((pipeline) =>
     policy.allowedPipelines.includes(pipeline),
   );

@@ -19,6 +19,17 @@ export const RESULT_MAX_BYTES = 4 * 1024 * 1024;
 // result, so its memory guard leaves room beyond one maximum result.
 const OUTPUT_MAX_BYTES = 4 * RESULT_MAX_BYTES;
 
+function markRecipeFailure(error, extra = {}) {
+  if (error instanceof Error) {
+    Object.assign(error, { recipeFailure: true, ...extra });
+  }
+  return error;
+}
+
+function recipeError(message, extra = {}) {
+  return markRecipeFailure(new Error(message), extra);
+}
+
 // The adapter runs ONLY inside a caller-owned, enforced job allocation. The
 // caller supplies its admission proof; an unguarded workstation invocation is
 // refused, never silently upgraded into a larger allocation.
@@ -51,7 +62,7 @@ export function gooseExecutor({
         return null;
       });
       if (existing)
-        throw new Error('Declared Goose result file already exists');
+        throw recipeError('Declared Goose result file already exists');
     }
     const directory = await mkdtemp(join(tmpdir(), 'lcars-goose-'));
     try {
@@ -64,11 +75,22 @@ export function gooseExecutor({
         fileParameters ? run.fileRecipeText : run.definition.recipeText,
         { mode: 0o600 },
       );
-      await subprocess(executable, ['recipe', 'validate', recipe], {
-        cwd: workingDirectory,
-        signal,
-        environment,
-      });
+      try {
+        await subprocess(executable, ['recipe', 'validate', recipe], {
+          cwd: workingDirectory,
+          signal,
+          environment,
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.startsWith('Goose exited ') ||
+            error.message === 'Goose output exceeds 16 MiB')
+        ) {
+          markRecipeFailure(error);
+        }
+        throw error;
+      }
       const args = [
         'run',
         '--recipe',
@@ -89,7 +111,7 @@ export function gooseExecutor({
         await mkdir(values, { mode: 0o700 });
         for (const [key, value] of Object.entries(parameters)) {
           if (!/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/u.test(key))
-            throw new Error('Invalid recipe parameter name');
+            throw recipeError('Invalid recipe parameter name');
           const path = join(values, key);
           await writeFile(path, value, { mode: 0o600, flag: 'wx' });
           args.push('--params', `${key}=${path}`);
@@ -98,7 +120,7 @@ export function gooseExecutor({
         for (const [key, value] of Object.entries(parameters)) {
           // Linux refuses one argument above MAX_ARG_STRLEN (128 KiB).
           if (Buffer.byteLength(`${key}=${value}`) >= 128 * 1024)
-            throw new Error(
+            throw recipeError(
               `Recipe parameter ${key} exceeds the 128 KiB argument limit; this occurrence cannot pass values as files`,
             );
           args.push('--params', `${key}=${value}`);
@@ -116,6 +138,13 @@ export function gooseExecutor({
             }),
         });
       } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.startsWith('Goose exited ') ||
+            error.message === 'Goose output exceeds 16 MiB')
+        ) {
+          markRecipeFailure(error);
+        }
         const providerOutcome = classifyGooseProviderFailure(error);
         if (providerOutcome && error instanceof Error) {
           error.providerOutcome = providerOutcome;
@@ -136,13 +165,21 @@ export function gooseExecutor({
   };
 }
 
+function parseJsonContract(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw markRecipeFailure(error);
+  }
+}
+
 function completedConversation(output) {
-  const envelope = JSON.parse(output);
+  const envelope = parseJsonContract(output);
   if (
     envelope.metadata?.status !== 'completed' ||
     !Array.isArray(envelope.messages)
   )
-    throw new Error('Goose did not return a completed conversation');
+    throw recipeError('Goose did not return a completed conversation');
   return envelope;
 }
 
@@ -158,8 +195,8 @@ export function parseGooseResult(output) {
       (part) => part.type === 'text' && typeof part.text === 'string',
     )
   )
-    throw new Error('Goose final assistant response is not result text');
-  return JSON.parse(final.content.map((part) => part.text).join(''));
+    throw recipeError('Goose final assistant response is not result text');
+  return parseJsonContract(final.content.map((part) => part.text).join(''));
 }
 
 function validateResultPath(path) {
@@ -172,23 +209,34 @@ function validateResultPath(path) {
       .slice(2)
       .some((part) => !part || part === '.' || part === '..')
   )
-    throw new Error('Invalid declared Goose result file path');
+    throw recipeError('Invalid declared Goose result file path');
 }
 
 export async function readGooseResultFile(path) {
   validateResultPath(path);
+  const resolved = await realpath(path).catch((error) => {
+    if (error?.code === 'ENOENT') {
+      throw markRecipeFailure(error, { resultFileMissing: true });
+    }
+    throw error;
+  });
   // Reject links in the file or its parents. No model-selected path or fallback.
-  if ((await realpath(path)) !== resolve(path))
-    throw new Error('Declared Goose result file must not use symbolic links');
+  if (resolved !== resolve(path))
+    throw recipeError('Declared Goose result file must not use symbolic links');
   const file = await open(
     path,
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-  );
+  ).catch((error) => {
+    if (error?.code === 'ENOENT') {
+      throw markRecipeFailure(error, { resultFileMissing: true });
+    }
+    throw error;
+  });
   try {
     const info = await file.stat();
     const maximum = RESULT_MAX_BYTES;
     if (!info.isFile() || info.size > maximum)
-      throw new Error(
+      throw recipeError(
         'Declared Goose result must be a regular JSON file within 4 MiB',
       );
     const buffer = Buffer.alloc(maximum + 1);
@@ -203,8 +251,9 @@ export async function readGooseResultFile(path) {
       if (!bytesRead) break;
       size += bytesRead;
     }
-    if (size > maximum) throw new Error('Declared Goose result exceeds 4 MiB');
-    return JSON.parse(buffer.subarray(0, size).toString('utf8'));
+    if (size > maximum)
+      throw recipeError('Declared Goose result exceeds 4 MiB');
+    return parseJsonContract(buffer.subarray(0, size).toString('utf8'));
   } finally {
     await file.close();
   }
@@ -239,37 +288,63 @@ export function classifyGooseProviderFailure(error) {
   return undefined;
 }
 
+function sanitizeGooseFailureMessage(error) {
+  if (!(error instanceof Error)) return 'Goose recipe failed';
+  if (error instanceof SyntaxError) return 'Goose returned invalid JSON result';
+  if (error.resultFileMissing === true)
+    return 'Declared Goose result file was not written';
+  return error.message;
+}
+
 export async function settleGooseFailure(
   error,
-  { aborted, codexAuth, complete, logError = console.error },
+  {
+    aborted,
+    timedOut = false,
+    timeoutMinutes,
+    codexAuth,
+    complete,
+    logError = console.error,
+  },
 ) {
   const providerOutcome =
-    !aborted &&
+    !timedOut &&
     error instanceof Error &&
     (error.providerOutcome === 'provider-limit' ||
       error.providerOutcome === 'provider-capacity')
       ? error.providerOutcome
       : undefined;
-  if (!providerOutcome) {
-    logError(error instanceof Error ? error.message : 'Goose recipe failed');
+  const recipeFailure =
+    !timedOut && error instanceof Error && error.recipeFailure === true;
+  if (
+    (aborted && !timedOut) ||
+    (!timedOut && !providerOutcome && !recipeFailure)
+  ) {
+    logError(sanitizeGooseFailureMessage(error));
     return { settled: false };
   }
-  logError(error.message);
+  const outcome = timedOut
+    ? 'agent-timeout'
+    : (providerOutcome ?? 'agent-failed');
+  const message = timedOut
+    ? `Goose recipe timed out after ${timeoutMinutes ?? 'configured budget'}`
+    : sanitizeGooseFailureMessage(error);
+  logError(message);
   try {
     if (codexAuth && !codexAuth.persistenceAttempted) {
       await codexAuth.persist();
     }
     await complete({
-      outcome: providerOutcome,
+      outcome,
       outcomeReference: null,
-      message: error.message,
+      message,
     });
-    return { settled: true, outcome: providerOutcome };
+    return { settled: true, outcome };
   } catch (settlementError) {
     logError(
       settlementError instanceof Error
         ? settlementError.message
-        : 'Goose provider failure settlement failed',
+        : 'Goose failure settlement failed',
     );
     return { settled: false };
   }
@@ -278,7 +353,7 @@ export async function settleGooseFailure(
 export async function subprocess(
   executable,
   args,
-  { cwd, signal, environment, onSpawn },
+  { cwd, signal, environment, onSpawn, label = 'Goose' },
 ) {
   if (signal.aborted) throw new Error('cancelled before process start');
   return new Promise((resolve, reject) => {
@@ -312,7 +387,7 @@ export async function subprocess(
       // stderr keeps only a 4 KiB tail, so only stdout counts toward the guard.
       if (output) bytes += chunk.length;
       if (bytes > OUTPUT_MAX_BYTES) {
-        failure = new Error('Goose output exceeds 16 MiB');
+        failure = new Error(`${label} output exceeds 16 MiB`);
         stop();
       } else if (output) stdout.push(chunk);
       else stderr = (stderr + chunk.toString('utf8')).slice(-4096);
@@ -339,7 +414,7 @@ export async function subprocess(
       // Also terminate any descendants retaining a detached process group.
       kill('SIGKILL');
       if (failure) reject(failure);
-      else if (signal.aborted) reject(new Error('Goose cancelled'));
+      else if (signal.aborted) reject(new Error(`${label} cancelled`));
       else if (code !== 0) {
         // Keep resource, enforcement and provider-transport causes without
         // leaking provider output, tool responses or credentials into shared
@@ -350,7 +425,7 @@ export async function subprocess(
           ) ?? [];
         reject(
           new Error(
-            `Goose exited ${code ?? exitSignal}${causes.length ? `: ${[...new Set(causes)].join('; ')}` : ''}`,
+            `${label} exited ${code ?? exitSignal}${causes.length ? `: ${[...new Set(causes)].join('; ')}` : ''}`,
           ),
         );
       } else if (onSpawn && !providerStarted)

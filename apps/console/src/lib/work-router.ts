@@ -546,7 +546,11 @@ export const workRouter = os.router({
       throw errors.CONFLICT({
         message: 'Edit tracker-backed work in its issue tracker.',
       });
-    if (recipeWorkSpecSchema.safeParse(task.task.work['spec']).success)
+    const runs = await context.runtime.store.listRuns({ workId: input.id });
+    if (
+      recipeWorkSpecSchema.safeParse(task.task.work['spec']).success ||
+      runs.some((run) => Boolean(run.params?.['jobOccurrence']))
+    )
       throw errors.CONFLICT({
         message:
           'Recipe occurrences are immutable; update the repository definition.',
@@ -583,7 +587,11 @@ export const workRouter = os.router({
     async ({ input, context, errors }) => {
       const task = await readWorkTask(context, input.id);
       if (task === undefined) throw errors.NOT_FOUND();
-      if (recipeWorkSpecSchema.safeParse(task.task.work['spec']).success)
+      const runs = await context.runtime.store.listRuns({ workId: input.id });
+      if (
+        recipeWorkSpecSchema.safeParse(task.task.work['spec']).success ||
+        runs.some((run) => Boolean(run.params?.['jobOccurrence']))
+      )
         throw errors.CONFLICT({
           message: 'Invoke a new occurrence from Jobs after retirement.',
         });
@@ -591,7 +599,6 @@ export const workRouter = os.router({
         throw errors.CONFLICT({
           message: 'Source-managed work is read-only.',
         });
-      const runs = await context.runtime.store.listRuns({ workId: input.id });
       const state = deriveItemState(task.task, runs);
       if (state !== 'parked' && state !== 'failed') {
         throw errors.CONFLICT({

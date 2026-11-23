@@ -631,7 +631,12 @@ export RUNTIME_ENV="$RUNNER_TEMP/runtime-env"
 # activeDeadlineSeconds (queue_kubernetes.go) is the hard backstop: budget
 # plus up to 40 minutes of image pull, bootstrap, credential wait and
 # finalization. A provider default above the budget could never fire first.
-export BUDGET_MINUTES=80
+BRIEF_TIMEOUT_MINUTES="$(jq -r '.timeoutMinutes // empty' <<<"$brief")"
+if [[ "$BRIEF_TIMEOUT_MINUTES" =~ ^[1-9][0-9]*$ ]] && [ "$BRIEF_TIMEOUT_MINUTES" -le 80 ]; then
+  export BUDGET_MINUTES="$BRIEF_TIMEOUT_MINUTES"
+else
+  export BUDGET_MINUTES=80
+fi
 PROVIDER_TIMEOUT_SECONDS=$((BUDGET_MINUTES * 60))
 export AGENT="$AGENT_NAME"
 
