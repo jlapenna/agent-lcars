@@ -147,7 +147,7 @@
    has not passed or why its publisher has not run; never merge around it.
    To arm a PR whose checks have already finished, queue with the shared
    protocol's arm recipe in
-   [`agent-protocol.md`](../../agent-protocol/reference/agent-protocol.md),
+   [`agent-protocol.md`](../../../../agents/shared/skills/agent-protocol/reference/agent-protocol.md),
    chained to the same guard: its `enablePullRequestAutoMerge` call can only
    queue, and GitHub refuses it for a PR that could merge now.
 
