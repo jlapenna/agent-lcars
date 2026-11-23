@@ -1,6 +1,7 @@
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import {
   displayLiveness,
+  isClaudeSubagentSessionId,
   totalTokens,
   watchableHerdrPaneId,
 } from '@agent-lcars/telemetry';
@@ -244,7 +245,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
       {doc.source === 'issue-agent' &&
         doc.transcriptGcsUri &&
         doc.agent === 'claude-code' &&
-        !doc.sessionId.includes('--subagent--') && (
+        !isClaudeSubagentSessionId(doc.sessionId) && (
           <Stack gap={4}>
             <Eyebrow>Resume from archive</Eyebrow>
             <Text size="xs" c="dimmed">
@@ -266,7 +267,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
           doc.agent === 'opencode' ||
           doc.agent === 'antigravity' ||
           (doc.agent === 'claude-code' &&
-            doc.sessionId.includes('--subagent--'))) && (
+            isClaudeSubagentSessionId(doc.sessionId))) && (
           <Stack gap={4}>
             <Eyebrow>Archived transcript</Eyebrow>
             <Text size="xs" c="dimmed" data-testid="archive-no-resume-note">

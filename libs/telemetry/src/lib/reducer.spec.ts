@@ -600,6 +600,10 @@ describe('standalone Claude subagent transcripts', () => {
       // Real Claude Code 2.1.x auxiliary lines omit `isSidechain` (and
       // `fork-context-ref` uses `parentSessionId` without `sessionId`).
       JSON.stringify({
+        type: 'queue-operation',
+        operation: 'dequeue',
+      }),
+      JSON.stringify({
         type: 'fork-context-ref',
         parentSessionId: parentId,
         agentId,
@@ -676,6 +680,10 @@ describe('standalone Claude subagent transcripts', () => {
     [
       'non-sidechain record',
       { sessionId: parentId, agentId, isSidechain: false },
+    ],
+    [
+      'sidechain record missing agentId',
+      { sessionId: parentId, isSidechain: true },
     ],
     [
       'auxiliary-only file with no sidechain turn',

@@ -8,6 +8,7 @@ import {
   LIFECYCLE_METRICS_WINDOW_SECONDS,
   lifecycleMetricSnapshot,
 } from '@agent-lcars/orchestrator';
+import { isClaudeSubagentSessionId } from '@agent-lcars/telemetry';
 import { workRepository } from '@agent-lcars/work';
 import {
   isSourceManagedWork,
@@ -630,7 +631,7 @@ export const workRouter = os.router({
           session.intentId === undefined ||
           !runIds.has(session.intentId) ||
           session.agent !== 'claude-code' ||
-          session.sessionId.includes('--subagent--')
+          isClaudeSubagentSessionId(session.sessionId)
         ) {
           throw errors.BAD_REQUEST({
             message:

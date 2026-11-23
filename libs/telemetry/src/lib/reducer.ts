@@ -496,21 +496,30 @@ function reduceLines(
     const rawSessionId = asString(raw['sessionId']);
     if (subagent) {
       // Real Claude Code 2.1.x subagent files include auxiliary lines
-      // (`api-request*`, `data-flow-*`, `fork-context-ref`) that carry
-      // `agentId` and `sessionId` (or `parentSessionId`) without `isSidechain`.
-      // Reject any mismatched parent/agent identity or explicit `isSidechain: false`,
-      // skip auxiliary lines without `isSidechain`, and require >=1 sidechain record.
+      // (`api-request*`, `data-flow-*`, `fork-context-ref`) without `isSidechain`
+      // and may include id-less metadata lines (`queue-operation`, etc.).
+      // Reject any conflicting parent/agent identity, explicit `isSidechain: false`,
+      // or `isSidechain: true` record missing its bound identity; skip other
+      // non-sidechain records and require >=1 verified sidechain record.
       const boundParentId = rawSessionId ?? asString(raw['parentSessionId']);
+      const rawAgentId = asString(raw['agentId']);
       const sidechainFlag = raw['isSidechain'];
       if (
-        boundParentId !== subagent.parentSessionId ||
-        asString(raw['agentId']) !== subagent.agentId ||
+        (boundParentId !== undefined &&
+          boundParentId !== subagent.parentSessionId) ||
+        (rawAgentId !== undefined && rawAgentId !== subagent.agentId) ||
         sidechainFlag === false
       ) {
         return [];
       }
       if (sidechainFlag !== true) {
         continue;
+      }
+      if (
+        boundParentId !== subagent.parentSessionId ||
+        rawAgentId !== subagent.agentId
+      ) {
+        return [];
       }
       sawSidechainRecord = true;
     }
