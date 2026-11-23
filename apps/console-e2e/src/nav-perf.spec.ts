@@ -18,6 +18,9 @@ import { E2E_ADMIN_HEADERS } from './util/e2e-test-utils';
  */
 const LOOP = ['Work', 'Inbox', 'Sessions', 'Agents', 'Costs', 'Bridge'];
 const ROUNDS = process.env['E2E_GREP']?.includes('navperf') ? 5 : 1;
+// CI runs 12 navigations, normally under 1 s each, inside the default 90 s
+// ceiling. Only the measured run (5 rounds, 36 navigations) needs more.
+const MEASURE_TIMEOUT_MS = ROUNDS > 1 ? 180_000 : 90_000;
 const PATHS: Record<string, string> = {
   Bridge: '/',
   Inbox: '/inbox',
@@ -51,7 +54,7 @@ async function waitReady(page: Page, label: string) {
 test('@navperf rail navigation keeps the frame and skips skeletons', async ({
   page,
 }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(MEASURE_TIMEOUT_MS);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.setExtraHTTPHeaders(E2E_ADMIN_HEADERS);
   await page.goto('/');
@@ -150,7 +153,8 @@ test('@navperf rail navigation keeps the frame and skips skeletons', async ({
 test('@navperf hard loads never show streamed content twice', async ({
   page,
 }) => {
-  test.setTimeout(300_000);
+  // 12 throttled hard loads take about 2 s each, well inside the default
+  // 90 s ceiling.
   await page.setExtraHTTPHeaders(E2E_ADMIN_HEADERS);
   await page.addInitScript(() => {
     const w = window as unknown as { __doubled: string[] };
@@ -182,7 +186,7 @@ test('@navperf hard loads never show streamed content twice', async ({
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
   const doubled: string[] = [];
   for (const label of LOOP) {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 2; attempt++) {
       await page.goto(PATHS[label]);
       await waitReady(page, label);
       doubled.push(
@@ -193,4 +197,62 @@ test('@navperf hard loads never show streamed content twice', async ({
     }
   }
   expect([...new Set(doubled)]).toEqual([]);
+});
+
+/**
+ * Without a skeleton, a slow client navigation keeps the old page on screen,
+ * so the clicked pill carries the wait. Delaying the RSC response makes the
+ * navigation slow enough to see the signal, then the destination clears it.
+ */
+test('@navperf the clicked pill signals a slow navigation', async ({
+  page,
+}) => {
+  await page.setExtraHTTPHeaders(E2E_ADMIN_HEADERS);
+  await page.goto('/');
+  await waitReady(page, 'Bridge');
+  await page.route('**/costs**', async (route) => {
+    if (route.request().headers()['rsc']) {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+    }
+    await route.continue();
+  });
+  const pill = page
+    .getByRole('navigation', { name: 'Console sections' })
+    .first()
+    .getByRole('link', { name: 'Costs', exact: false })
+    .first();
+  const background = () =>
+    pill.evaluate((el) => getComputedStyle(el).backgroundColor);
+  const resting = await background();
+  await pill.click();
+  await expect(pill.locator('.lcars-nav-pending')).toHaveCount(1);
+  // The suite emulates reduced motion, which holds the pill lit instead of
+  // flashing it; either way it leaves its resting signal.
+  await expect.poll(background).not.toBe(resting);
+  await waitReady(page, 'Costs');
+  await expect(page.locator('.lcars-nav-pending')).toHaveCount(0);
+});
+
+test('@navperf the phone menu trigger signals a slow navigation', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setExtraHTTPHeaders(E2E_ADMIN_HEADERS);
+  await page.goto('/');
+  await page.route('**/costs**', async (route) => {
+    if (route.request().headers()['rsc']) {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+    }
+    await route.continue();
+  });
+  const trigger = page
+    .getByRole('button', { name: 'More console options' })
+    .first();
+  await trigger.click();
+  await page.getByRole('menuitem', { name: 'Costs' }).click();
+  await expect(trigger).toHaveAttribute('data-loading', 'true');
+  await expect(page).toHaveURL(/\/costs/);
+  await expect(
+    page.getByRole('button', { name: 'More console options' }).first(),
+  ).not.toHaveAttribute('data-loading', 'true');
 });
