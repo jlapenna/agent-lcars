@@ -18,6 +18,10 @@ import { z } from 'zod';
 import { isControlPlaneRepository } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import {
+  graphqlActorSchema,
+  normalizeGraphqlActorLogin,
+} from './graphql-actor';
+import {
   grantForPrincipal,
   jobAutomationPrincipalForGrants,
   resolvePrincipal,
@@ -204,7 +208,7 @@ async function reviews(
       },
       signal: AbortSignal.timeout(10_000),
       body: JSON.stringify({
-        query: `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid reviews(last:100){pageInfo{hasPreviousPage} nodes{state body authorAssociation author{login} commit{oid}}} reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:1){nodes{authorAssociation author{login}}}}}}}}`,
+        query: `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid reviews(last:100){pageInfo{hasPreviousPage} nodes{state body authorAssociation author{__typename login} commit{oid}}} reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:1){nodes{authorAssociation author{__typename login}}}}}}}}`,
         variables: { owner, name, number },
       }),
     },
@@ -224,7 +228,7 @@ async function reviews(
                   state: z.string(),
                   body: z.string().nullable().optional(),
                   authorAssociation: z.string().nullable().optional(),
-                  author: z.object({ login: z.string() }).nullable(),
+                  author: graphqlActorSchema.nullable(),
                   commit: z.object({ oid: sha }).nullable(),
                 }),
               ),
@@ -240,10 +244,7 @@ async function reviews(
                         z
                           .object({
                             authorAssociation: z.string().nullable().optional(),
-                            author: z
-                              .object({ login: z.string() })
-                              .nullable()
-                              .optional(),
+                            author: graphqlActorSchema.nullable().optional(),
                           })
                           .nullable(),
                       ),
@@ -267,31 +268,31 @@ async function reviews(
     (
       review,
     ): review is typeof review & {
-      author: { login: string };
+      author: NonNullable<typeof review.author>;
       commit: { oid: string };
     } => review.author !== null && review.commit !== null,
   );
   const latestVerdict = new Map<string, 'blocked' | 'clear'>();
   for (const review of usableReviews) {
     if (review.commit.oid !== head) continue;
-    if (
-      !isTrustedDeliveryReviewer(review.author.login, review.authorAssociation)
-    )
+    const login = normalizeGraphqlActorLogin(review.author);
+    if (!login || !isTrustedDeliveryReviewer(login, review.authorAssociation))
       continue;
+    const authorKey = login.toLowerCase();
     if (review.state === 'CHANGES_REQUESTED') {
-      latestVerdict.set(review.author.login, 'blocked');
+      latestVerdict.set(authorKey, 'blocked');
     } else if (review.state === 'APPROVED' || review.state === 'DISMISSED') {
-      latestVerdict.set(review.author.login, 'clear');
+      latestVerdict.set(authorKey, 'clear');
     } else if (
       review.state === 'COMMENTED' &&
-      review.author.login.toLowerCase() === 'agent-lcars[bot]'
+      authorKey === 'agent-lcars[bot]'
     ) {
       if (hasReviewLineMarker(review.body, '<!-- lcars-review:block -->')) {
-        latestVerdict.set(review.author.login, 'blocked');
+        latestVerdict.set(authorKey, 'blocked');
       } else if (
         hasReviewLineMarker(review.body, '<!-- lcars-review:pass -->')
       ) {
-        latestVerdict.set(review.author.login, 'clear');
+        latestVerdict.set(authorKey, 'clear');
       }
     }
   }
@@ -302,7 +303,7 @@ async function reviews(
       const firstComment = thread.comments?.nodes[0];
       if (firstComment === undefined || firstComment === null) return true;
       return isTrustedDeliveryReviewer(
-        firstComment.author?.login,
+        normalizeGraphqlActorLogin(firstComment.author),
         firstComment.authorAssociation,
       );
     }),

@@ -116,7 +116,7 @@ describe('refreshGithubAnchorProjection', () => {
                 url: 'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-42',
                 createdAt: '2026-08-31T12:00:00.000Z',
                 updatedAt: '2026-08-31T12:01:00.000Z',
-                author: { login: 'agent-lcars[bot]' },
+                author: { __typename: 'Bot', login: 'agent-lcars' },
               },
             ],
           },
@@ -139,9 +139,46 @@ describe('refreshGithubAnchorProjection', () => {
       },
     });
     expect(graphql).toHaveBeenCalledWith(
-      expect.stringContaining('... on Issue { body comments(last: 1)'),
+      expect.stringContaining(
+        '... on Issue { body comments(last: 1) { nodes { body url createdAt updatedAt author { __typename login } } } }',
+      ),
       { owner: 'jlapenna', name: 'agent-lcars' },
     );
+  });
+
+  it('omits lastComment.author cleanly when a GraphQL comment author is null (ghost/deleted account)', async () => {
+    const issue: GithubAnchorProjection = {
+      ...projection(),
+      kind: 'issue',
+    };
+    const graphql = vi.fn().mockResolvedValue({
+      repository: {
+        i42: {
+          body: 'Issue body',
+          comments: {
+            nodes: [
+              {
+                body: 'Ghost comment',
+                url: 'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-43',
+                createdAt: '2026-08-31T12:05:00.000Z',
+                author: null,
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const [enriched] = await enrichGithubAnchorProjections(
+      anchor.repo,
+      [issue],
+      { graphql },
+    );
+    expect(enriched?.lastComment).toEqual({
+      body: 'Ghost comment',
+      url: 'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-43',
+      createdAt: '2026-08-31T12:05:00.000Z',
+    });
   });
 
   it('uses partial GraphQL data when GitHub forbids one check-run node (sprinkles#5628)', async () => {

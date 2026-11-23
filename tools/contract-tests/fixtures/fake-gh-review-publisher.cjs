@@ -70,14 +70,48 @@ const base = `repos/${state.repo}`;
 
 if (route === 'graphql') {
   const entry = pull(fields.pr);
+  const author = entry.author ?? { __typename: 'User', login: 'jlapenna' };
+  const defaultCommitAuthor =
+    author.__typename === 'Bot' ? `${author.login}[bot]` : author.login;
+  const commits = entry.commits ?? [
+    {
+      oid: entry.head,
+      authorLogin: defaultCommitAuthor,
+      signature:
+        author.__typename === 'Bot'
+          ? { isValid: true, wasSignedByGitHub: true }
+          : null,
+    },
+  ];
   respond({
     data: {
       repository: {
         pullRequest: {
           state: 'OPEN',
+          isDraft: entry.isDraft ?? false,
           baseRefName: 'main',
+          headRefName: entry.headRefName ?? `pr-${entry.number}`,
           headRefOid: entry.head,
           baseRef: { target: { oid: entry.baseOid } },
+          author,
+          commits: {
+            totalCount: entry.commitsTotalCount ?? commits.length,
+            nodes: commits.map((c) => ({
+              commit: {
+                oid: c.oid,
+                author: {
+                  user: c.authorLogin ? { login: c.authorLogin } : null,
+                },
+                signature:
+                  c.signature !== undefined
+                    ? c.signature
+                    : author.__typename === 'Bot' &&
+                        c.authorLogin === defaultCommitAuthor
+                      ? { isValid: true, wasSignedByGitHub: true }
+                      : null,
+              },
+            })),
+          },
           potentialMergeCommit: entry.candidate && {
             oid: entry.candidate.oid,
             parents: { nodes: entry.candidate.parents.map((oid) => ({ oid })) },
