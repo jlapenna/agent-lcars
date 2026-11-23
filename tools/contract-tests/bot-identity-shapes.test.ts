@@ -66,6 +66,9 @@ const repoRoot = path.resolve(
 const workflowsDir = path.join(repoRoot, '.github/workflows');
 
 const GRAPHQL_AUTHOR_SIGNAL_RE = /--json\s+[^\n]*\bauthor\b|\.author\.login\b/;
+const REST_COMMITS_API_RE =
+  /\bgh\s+api\b[^\n]*repos\/[^\n]*\/commits(?:\?|"|'|\s|$)/;
+const GRAPHQL_SOURCE_RE = /--json\b|\bgraphql\b/;
 const REST_COMPARISON_SIGNAL_RE = /AGENT_BOT_LOGINS|AGENT_FLEET_LOGIN|\[bot\]/;
 // Either the documented sed one-liner, or evidence (anywhere in the window)
 // that both shapes' literal substrings are being handled together - covers
@@ -138,6 +141,20 @@ function findViolations(filePath: string, rawContents: string): Violation[] {
     const windowStart = Math.max(0, index - WINDOW_LINES_BEFORE);
     const windowEnd = Math.min(lines.length, index + WINDOW_LINES_AFTER + 1);
     const window = lines.slice(windowStart, windowEnd).join('\n');
+    const precedingWindow = lines.slice(windowStart, index + 1).join('\n');
+
+    // GitHub REST commit endpoints (`repos/.../commits`, `repos/.../pulls/.../commits`)
+    // expose the linked account as `.author.login` in REST `{slug}[bot]` format
+    // (unlike REST pulls/issues which use `.user.login`). Exempt `.author.login`
+    // only when a REST commits call precedes it and no GraphQL/`--json` source
+    // appears in the preceding window.
+    if (
+      !/--json\s+[^\n]*\bauthor\b/.test(line) &&
+      REST_COMMITS_API_RE.test(precedingWindow) &&
+      !GRAPHQL_SOURCE_RE.test(precedingWindow)
+    ) {
+      return;
+    }
 
     const comparesAgainstRestShape = REST_COMPARISON_SIGNAL_RE.test(window);
     if (!comparesAgainstRestShape) return; // Not compared to a REST-shaped value - safe per the doc.
@@ -258,6 +275,31 @@ describe('bot-identity shape contract (heuristic)', () => {
       const violations = findViolations('fixture.yml', fixture);
 
       expect(violations).toEqual([]);
+    });
+
+    it('allows REST commit objects (.author.login from repos/.../commits) without GraphQL normalization', () => {
+      const fixture = [
+        '      - name: Verify Renovate commit authors via REST',
+        '        run: |',
+        '          if [[ "$pr_user" == "renovate[bot]" ]]; then',
+        '            pr_commits=$(gh api --paginate --slurp "repos/$REPO/pulls/$pr/commits?per_page=100")',
+        '            jq -e --arg author "$pr_user" \'all(.[][]; .author.login == $author)\' <<< "$pr_commits"',
+        '          fi',
+      ].join('\n');
+
+      expect(findViolations('fixture.yml', fixture)).toEqual([]);
+    });
+
+    it('still flags .author.login when a --json or graphql query appears alongside a REST commits call', () => {
+      const fixture = [
+        '      - name: Mixed GraphQL and REST commits in same window',
+        '        run: |',
+        '          gh pr view "$pr" --json author >/tmp/pr.json',
+        '          pr_commits=$(gh api "repos/$REPO/pulls/$pr/commits?per_page=100")',
+        '          jq -e \'.author.login == "renovate[bot]"\' /tmp/pr.json',
+      ].join('\n');
+
+      expect(findViolations('fixture.yml', fixture).length).toBeGreaterThan(0);
     });
   });
 });

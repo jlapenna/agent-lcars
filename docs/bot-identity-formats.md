@@ -3,11 +3,11 @@
 GitHub represents the same App installation in three surface formats. Agent LCARS uses
 the REST format as its canonical comparison value.
 
-| API surface                               | Format                            | Example                                       |
-| ----------------------------------------- | --------------------------------- | --------------------------------------------- |
-| REST, Actions event payloads, Octokit     | `{app-slug}[bot]`                 | `agent-lcars[bot]`                            |
-| Raw GraphQL `Actor { __typename login }`  | `__typename: "Bot"`, `{app-slug}` | `{ __typename: "Bot", login: "agent-lcars" }` |
-| `gh pr`/`gh issue` `--json` author fields | `app/{app-slug}`                  | `app/agent-lcars`                             |
+| API surface                                                                    | Format                            | Example                                       |
+| ------------------------------------------------------------------------------ | --------------------------------- | --------------------------------------------- |
+| REST (`pulls`/`issues` `.user.login`, `commits` `.author.login`), Actions, SDK | `{app-slug}[bot]`                 | `agent-lcars[bot]`                            |
+| Raw GraphQL `Actor { __typename login }`                                       | `__typename: "Bot"`, `{app-slug}` | `{ __typename: "Bot", login: "agent-lcars" }` |
+| `gh pr`/`gh issue` `--json` author fields                                      | `app/{app-slug}`                  | `app/agent-lcars`                             |
 
 ## Rule
 

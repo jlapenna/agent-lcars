@@ -28,6 +28,7 @@ import {
 import {
   detectPullRequestAuthorPipeline,
   isAutomatedReviewExcludedAuthor,
+  isUnattendedDependencyBotPullRequest,
   parseAttemptClaimRunId,
   selectCrossModelReviewer,
   UNIFIED_REVIEW_COMMAND,
@@ -428,12 +429,19 @@ function interpretPullRequestEvent(
       return ignore('fork-pull-request');
     }
     if (
-      !requiresReview &&
-      (isAutomatedReviewExcludedAuthor(pullRequest.user.login) ||
-        labels.some(
-          (item) =>
-            item.name === 'status:needs-human' || item.name === 'bot:renovate',
-        ))
+      isUnattendedDependencyBotPullRequest({
+        userLogin: pullRequest.user.login,
+        headRef: pullRequest.head?.ref,
+        action,
+        senderLogin: sender.login,
+      }) ||
+      (!requiresReview &&
+        (isAutomatedReviewExcludedAuthor(pullRequest.user.login) ||
+          labels.some(
+            (item) =>
+              item.name === 'status:needs-human' ||
+              item.name === 'bot:renovate',
+          )))
     ) {
       return ignore('excluded-review-author');
     }
