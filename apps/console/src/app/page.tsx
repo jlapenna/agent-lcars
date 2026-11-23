@@ -232,6 +232,7 @@ async function IndexBody({
   stoppedCursor?: string;
   multiRepo: boolean;
 }) {
+  const activityRead = getCachedAgentActivity();
   const [
     {
       data: { items: rawItems },
@@ -254,9 +255,11 @@ async function IndexBody({
     tokenRateSnapshot,
   ] = await Promise.all([
     getCachedQueueItems(),
-    getCachedAgentActivity(),
+    activityRead,
     getCliSessions({ exhaustive: true }),
-    getRunnerSessionsByRunId(),
+    activityRead.then(({ data }) =>
+      getRunnerSessionsByRunId([...data.liveRuns, ...data.recentRuns]),
+    ),
     getParkedWork(repoFilterKey, stoppedCursor, view),
     getNativeInboxEvidence(async () => {
       const context = await workContext();

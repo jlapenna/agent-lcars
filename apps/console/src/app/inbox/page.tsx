@@ -60,6 +60,7 @@ async function InboxBody({
   watchedRepos: WatchedRepo[];
 }) {
   const snapshotStartedAt = new Date().toISOString();
+  const activityRead = getCachedAgentActivity();
   const [
     {
       data: { items },
@@ -70,8 +71,10 @@ async function InboxBody({
     nativeCards,
   ] = await Promise.all([
     getCachedQueueItems(),
-    getCachedAgentActivity(),
-    getRunnerSessionsByRunId(),
+    activityRead,
+    activityRead.then(({ data }) =>
+      getRunnerSessionsByRunId([...data.liveRuns, ...data.recentRuns]),
+    ),
     workContext().then((context) =>
       getNativeInboxCards(
         context.runtime.store,

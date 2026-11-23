@@ -49,10 +49,13 @@ export async function loadNotificationSnapshotFor(
   ctx: Pick<Awaited<ReturnType<typeof workContext>>, 'runtime' | 'principal'>,
 ): Promise<InboxNotificationSnapshot> {
   const nativeReadStartedAt = Date.now();
+  const activityRead = getCachedAgentActivity();
   const [queue, activity, sessions, native, snoozes] = await Promise.all([
     getCachedQueueItems(),
-    getCachedAgentActivity(),
-    getRunnerSessionsByRunId(),
+    activityRead,
+    activityRead.then(({ data }) =>
+      getRunnerSessionsByRunId([...data.liveRuns, ...data.recentRuns]),
+    ),
     getNativeInboxCards(ctx.runtime.store, ctx.principal),
     getDecisionSnoozeStore().read(userId),
   ]);

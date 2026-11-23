@@ -4,17 +4,8 @@ import { logger } from '@agent-lcars/logging';
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
-  listSessionDocs,
+  listSessionDocsByRunIds,
 } from '@agent-lcars/telemetry/server';
-import { isE2eTesting } from '@agent-lcars/util-server';
-import { cacheLife } from 'next/cache';
-
-/** Mirrors cli-sessions.ts's ACTIVE_WINDOW_HOURS: a runner session only
- * matters while there's a live/recent broker run to join it to (In Flight
- * budget gauges, Recent Outcomes diagnosis) - the telemetry collection
- * itself keeps every doc until its own TTL, so an unbounded query would grow
- * forever as the fleet runs. */
-const ACTIVE_WINDOW_HOURS = 24;
 
 export interface RunnerSessionsResult {
   /** Keyed by the authoritative broker Run id (`AgentRun.id`) via
@@ -29,48 +20,37 @@ export interface RunnerSessionsResult {
 }
 
 /**
- * Fetches recently-active `source: 'issue-agent'` session docs so live and
- * finished broker Runs can be joined to their session telemetry -
- * turn/cost budget gauges on in-flight runs, run-status diagnosis on
- * finished ones (see run-classification.ts). Degrades to an empty map
- * rather than throwing, matching `getCliSessions`'s defensive pattern: every
- * caller must render exactly what it did before this telemetry existed,
- * since runner sessions may not be flowing yet (the shipper this joins to
- * is a separate, concurrently-developed piece) or the store may be
- * unreachable (PRD user story 16).
+ * Fetches the `source: 'issue-agent'` session docs of exactly the runs a page
+ * renders, so live and finished broker Runs can be joined to their session
+ * telemetry - turn/cost budget gauges on in-flight runs, run-status
+ * diagnosis on finished ones (see run-classification.ts). Reads by run id:
+ * the activity window holds hundreds of sessions a day, while a page renders
+ * a few dozen runs.
+ *
+ * A run can hold several sessions (one per provider session, subagents
+ * included). Until the writer links them, the join keeps the one with the
+ * latest activity, which is deterministic and is the session still moving.
+ *
+ * Degrades to an empty map rather than throwing, matching `getCliSessions`'s
+ * defensive pattern: every caller must render exactly what it did before
+ * this telemetry existed (PRD user story 16).
  */
-async function listRunnerSessions(): Promise<IssueAgentSessionDoc[]> {
-  const activeSince = new Date(
-    Date.now() - ACTIVE_WINDOW_HOURS * 60 * 60 * 1000,
-  ).toISOString();
-  const firestore = await getAgentTelemetryReaderFirestore();
-  const docs = await listSessionDocs(firestore, { activeSince });
-  return docs.filter(
-    (doc): doc is IssueAgentSessionDoc =>
-      doc.source === 'issue-agent' && Boolean(doc.runId),
-  );
-}
-
-/** The broker runs this joins to come from the 30 s dashboard cache, so a
- * fresher telemetry read buys nothing; the window is ~800 full session
- * documents (several MB) that Bridge and Agents would otherwise re-read on
- * every navigation. Same lifetime and E2E bypass as `dashboard-data.ts`. */
-const RUNNER_SESSIONS_CACHE_LIFE = { stale: 30, revalidate: 30, expire: 60 };
-
-async function listCachedRunnerSessions(): Promise<IssueAgentSessionDoc[]> {
-  'use cache';
-  cacheLife(RUNNER_SESSIONS_CACHE_LIFE);
-  return listRunnerSessions();
-}
-
-export async function getRunnerSessionsByRunId(): Promise<RunnerSessionsResult> {
+export async function getRunnerSessionsByRunId(
+  runs: Iterable<{ id: string | number }>,
+): Promise<RunnerSessionsResult> {
   try {
-    const docs = await (isE2eTesting()
-      ? listRunnerSessions()
-      : listCachedRunnerSessions());
+    const firestore = await getAgentTelemetryReaderFirestore();
+    const docs = await listSessionDocsByRunIds(
+      firestore,
+      Array.from(runs, (run) => String(run.id)),
+    );
     const sessionsByRunId = new Map<string, IssueAgentSessionDoc>();
     for (const doc of docs) {
-      if (doc.runId) sessionsByRunId.set(doc.runId, doc);
+      if (doc.source !== 'issue-agent' || !doc.runId) continue;
+      const held = sessionsByRunId.get(doc.runId);
+      if (held === undefined || doc.lastActivityAt > held.lastActivityAt) {
+        sessionsByRunId.set(doc.runId, doc);
+      }
     }
     return { sessionsByRunId, warnings: [] };
   } catch (error) {
