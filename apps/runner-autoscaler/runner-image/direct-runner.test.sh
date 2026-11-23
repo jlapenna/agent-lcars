@@ -2782,6 +2782,29 @@ unset FAKE_CODEX_EVENTS_FILE
 [ "$rc" -ne 0 ] || fail "codex usage limit trailing noise: expected failure"
 jq -e '.outcome == "provider-limit" and (.message | startswith("Provider quota or usage limit reached.")) and (.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC).")) and ((.message | length) <= 16384)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "codex usage limit trailing noise: quota classification or UTC reset lost behind trailing errors ($(tail -n1 "$COMPLETE_LOG" | head -c 400))"
+# Codex reports each retry as a top-level `error` event. A dated retry hint in
+# a reconnect notice (even one whose error text spans lines) is not the
+# terminal quota event's reset: a reset-less `usage_limit_reached` keeps the
+# bounded probe, so nothing is stamped `(UTC)`.
+reconnect_events="$tmp/codex-reconnect-events.jsonl"
+python3 - "$reconnect_events" <<'PYRECONNECT'
+import json
+import sys
+
+hint = "You\u2019ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 24th, 2026 6:48 AM."
+lines = [
+    json.dumps({"type": "error", "message": f"Reconnecting... 2/5 (stream error: {hint})"}),
+    json.dumps({"type": "error", "message": f"Reconnecting... 3/5 (stream error:\n{hint})"}),
+    json.dumps({"type": "turn.failed", "error": {"message": "You\u2019ve hit your usage limit (usage_limit_reached). Upgrade to Pro or try again later."}}),
+]
+open(sys.argv[1], "w", encoding="utf-8").write("\n".join(lines) + "\n")
+PYRECONNECT
+export FAKE_CODEX_EVENTS_FILE="$reconnect_events"
+run_scenario codex-usage-limit-reconnect-hint codex
+unset FAKE_CODEX_EVENTS_FILE
+[ "$rc" -ne 0 ] || fail "codex reconnect hint: expected failure"
+jq -e '.outcome == "provider-limit" and (.message | contains("usage_limit_reached")) and (.message | contains("Reconnecting... 3/5 (stream error: You")) and ((.message | contains("(UTC)")) | not)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex reconnect hint: a retry notice supplied the quota reset ($(tail -n1 "$COMPLETE_LOG" | head -c 600))"
 export FAKE_CODEX_STDERR_LIMIT_PROSE=1
 run_scenario codex-stderr-limit-prose codex
 unset FAKE_CODEX_STDERR_LIMIT_PROSE FAKE_GH_NO_MATCH

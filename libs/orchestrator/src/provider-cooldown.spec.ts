@@ -97,6 +97,11 @@ describe('provider quota holds', () => {
       '2026-11-09T01:00:00.000Z',
       '2026-11-11T06:48:00.000Z',
     ],
+    [
+      `${CODEX_FAILURE_PREFIX}Reconnecting... 2/5 (stream error: try again at Nov 14th, 2026 6:48 AM (UTC).)\nYou've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (UTC).`,
+      '2026-11-09T01:00:00.000Z',
+      '2026-11-11T06:48:00.000Z',
+    ],
   ])(
     'uses a runner-captured Codex CLI UTC reset (%s)',
     (message, updatedAt, expiresAt) => {
@@ -163,6 +168,10 @@ describe('provider quota holds', () => {
     [
       'mixed zoned and zone-less events',
       `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (UTC).\nYou've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM.`,
+    ],
+    [
+      'only quoted by a retry notice before a reset-less quota event',
+      `${CODEX_FAILURE_PREFIX}Reconnecting... 2/5 (You've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (UTC).)\nReconnecting... 3/5 (try again at Nov 12th, 2026 6:48 AM.)\nYou've hit your usage limit (usage_limit_reached). Upgrade to Pro or try again later.`,
     ],
   ])(
     'falls back to a bounded probe when Codex reset is %s',

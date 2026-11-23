@@ -18,6 +18,7 @@ const MONTHS = [
 ];
 const CODEX_PROVIDER_FAILURE_PREFIX =
   'Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: ';
+const CODEX_RETRY_NOTICE_PREFIX = 'Reconnecting... ';
 const CODEX_RESET_PATTERN =
   /\b[Tt]ry again at (?:([A-Z][a-z]{2}) (\d{1,2})(?:st|nd|rd|th)?, (\d{4}) )?(\d{1,2}):(\d{2}) (AM|PM)( \(UTC\))?(?=\.(?:\s|$)|\s|$)/gu;
 
@@ -61,10 +62,17 @@ function claudeReset(message: string, now: number): number | undefined {
 /** Only a runner-captured CLI failure event or stderr quota banner with a
  * runner-pinned `(UTC)` full calendar date supplies a longer Codex hold; an
  * assistant final message alone (`LAST_MESSAGE_FILE`) never carries the
- * retained-failure envelope and stays on the 15-minute probe. */
+ * retained-failure envelope and stays on the 15-minute probe. The runner
+ * retains one line per event; Codex's retry notices
+ * (`Reconnecting... N/M (<err>)`) are transient diagnostics, so a retry hint
+ * quoted there never supplies the reset. */
 function codexReset(message: string, now: number): number | undefined {
   if (!message.startsWith(CODEX_PROVIDER_FAILURE_PREFIX)) return undefined;
-  const events = message.slice(CODEX_PROVIDER_FAILURE_PREFIX.length);
+  const events = message
+    .slice(CODEX_PROVIDER_FAILURE_PREFIX.length)
+    .split('\n')
+    .filter((line) => !line.startsWith(CODEX_RETRY_NOTICE_PREFIX))
+    .join('\n');
   let reset: number | undefined;
   for (const match of events.matchAll(CODEX_RESET_PATTERN)) {
     if (

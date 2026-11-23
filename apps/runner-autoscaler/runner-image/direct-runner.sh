@@ -1134,11 +1134,14 @@ CURLCFG
         # an id quoted in tool output or assistant text.
         jq -er 'select(.type == "thread.started") | .thread_id | select(type == "string" and test("^[A-Za-z0-9_-]+$"))' \
           <<<"$codex_event" >> "$CODEX_THREAD_FILE" 2>/dev/null || true
+        # One line per event, so a reset can only be read from the event
+        # that reported it.
         jq -r '
           if .type == "error" and (.message | type) == "string" then .message
           elif .type == "turn.failed" and (.error.message | type) == "string" then .error.message
           else empty
           end
+          | gsub("[\r\n]+"; " ")
         ' <<<"$codex_event" >> "$CODEX_FAILURE_MESSAGES" 2>/dev/null || true
       done
     round_exit=${PIPESTATUS[0]}
@@ -1719,7 +1722,10 @@ is_provider_limit_failure() {
 annotate_codex_limit_utc() {
   local text="$1" line out='' sep=''
   while IFS= read -r line || [ -n "$line" ]; do
-    if is_provider_limit_failure "$line"; then
+    # Codex reports each retry as a top-level `error` event
+    # ("Reconnecting... N/M (<err>)"). A retry hint there is not the terminal
+    # quota event's reset, so it is never stamped as one.
+    if [[ "$line" != "Reconnecting... "* ]] && is_provider_limit_failure "$line"; then
       line="$(printf '%s\n' "$line" | sed -E \
         's/([Tt]ry again at )((Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{1,2}(st|nd|rd|th)?, [0-9]{4} [0-9]{1,2}:[0-9]{2} (AM|PM))(\.([[:space:]]|$)|$)/\1\2 (UTC)\6/g')"
       if [[ "${CODEX_ROUND_UTC_DATE:-}" =~ ^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\ [1-9][0-9]?,\ [0-9]{4}$ ]]; then
