@@ -2,10 +2,13 @@
 
 ## Production design
 
-Repositories own `.lcars/jobs/<name>/job.yaml` and `recipe.yaml`. A job is a
+Repositories own `.lcars/jobs/<name>/job.yaml` paired with either `recipe.yaml`
+(executed by Goose) or `prompt.md` (executed by a native coding/report harness:
+`claude`, `codex`, `opencode` or `agy`). A job is a
 bounded, unattended operation with explicit inputs and a verifiable result.
 Interactive skills, continuously running services and arbitrary agent sessions
-remain their existing kinds of capability. Goose executes recipes; LCARS owns
+remain their existing kinds of capability. Goose executes recipes and native
+harnesses execute `prompt.md` jobs; LCARS owns
 admission, scheduling, identity, cancellation, durable outcomes and visibility.
 
 This design replaces the development SQLite controller. There is one execution
@@ -25,10 +28,19 @@ permission to keep scheduling cached content. Existing admitted runs retain thei
 immutable source, input, profile and baseline snapshot.
 
 Version 1 supports manual invocation and five-field cron with an explicit IANA
-timezone, one attempt, one active occurrence and overlap=skip. UTC occurrence
+timezone, `maxAttempts` of `1` (terminal on worker loss) or `2` (one automatic
+retry on a placed worker loss), one active occurrence and overlap=skip. UTC occurrence
 identity distinguishes repeated DST minutes; nonexistent local minutes do not
 run. The existing five-minute maintenance tick admits at most the latest due
 minute in its five-minute window; older occurrences are never backfilled.
+Unvetoed manual-only jobs (`triggers.manual: true` with no `triggers.schedule`)
+may be invoked directly by an authorized principal without enabling a schedule;
+an explicit disable still records a sticky veto until re-enabled.
+Native harness jobs (`execution.harness` with `execution.prompt: ./prompt.md`,
+optional `fallbackHarnesses`, timeout up to `80m`, and `result.contract` of
+`report-v1` or `deliverable-v1`) mint standard Work items on the requested
+pipeline with `jobOccurrence` fencing and stage `report.md` from the settled
+run's full message on physical retirement.
 
 Jobs activate on merge to the default branch. Every maintenance tick refreshes
 the catalogs of all control-plane repositories

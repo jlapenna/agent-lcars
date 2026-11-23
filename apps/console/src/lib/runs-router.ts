@@ -751,6 +751,13 @@ export const runsRouter = os.router({
         message: 'run has corrupted generation',
       });
     }
+    const parsedTimeout = Number(run.params?.['timeoutMinutes']);
+    const timeoutMinutes =
+      Number.isInteger(parsedTimeout) &&
+      parsedTimeout >= 1 &&
+      parsedTimeout <= 80
+        ? parsedTimeout
+        : undefined;
     const shared = {
       ...(run.issue === undefined ? {} : { issue: run.issue }),
       pipeline: run.pipeline,
@@ -759,6 +766,7 @@ export const runsRouter = os.router({
       generation,
       intentId: run.runId,
       ...(resume === undefined ? {} : { resume }),
+      ...(timeoutMinutes === undefined ? {} : { timeoutMinutes }),
     };
 
     if (!isWorkAnchor(run.task)) {
@@ -1285,7 +1293,7 @@ export const runsRouter = os.router({
     const target = anchorTarget(run, task);
 
     let profile: JobProfile | undefined;
-    if (run.pipeline === 'goose') {
+    if (run.pipeline === 'goose' || Boolean(run.params?.['jobOccurrence'])) {
       const jobs = repositoryJobs({
         store: context.store,
         orchestrator: context.orchestrator,

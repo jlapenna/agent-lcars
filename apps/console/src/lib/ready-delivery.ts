@@ -403,7 +403,9 @@ export function deliveryCorrectionAuthorized(
     grantForPrincipal(payload.data.origin.principal) ??
     resolvePrincipal(payload.data.origin.principal);
   if (
-    grant?.scopes.includes('work.operator') === true &&
+    (grant?.scopes.includes('work.operator') === true ||
+      (grant?.scopes.includes('work.cron') === true &&
+        Boolean(run.params?.['jobOccurrence']))) &&
     grant.pipelines.includes(
       run.pipeline as 'claude' | 'codex' | 'opencode' | 'agy',
     )

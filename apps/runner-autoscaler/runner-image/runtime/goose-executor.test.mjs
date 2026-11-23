@@ -398,6 +398,68 @@ test('settleGooseFailure logs cause, persists Codex auth before completing, and 
     'Goose exited 1: Rate limit exceeded',
     'Work API HTTP 500',
   ]);
+
+  // Recipe deadline timeout settles as agent-timeout even though controller aborted.
+  const timeoutPayloads = [];
+  assert.deepEqual(
+    await settleGooseFailure(new Error('Goose cancelled'), {
+      aborted: true,
+      timedOut: true,
+      timeoutMinutes: '30m',
+      complete: async (payload) => timeoutPayloads.push(payload),
+      logError: () => {
+        /* captured elsewhere */
+      },
+    }),
+    { settled: true, outcome: 'agent-timeout' },
+  );
+  assert.deepEqual(timeoutPayloads, [
+    {
+      outcome: 'agent-timeout',
+      outcomeReference: null,
+      message: 'Goose recipe timed out after 30m',
+    },
+  ]);
+
+  // Ordinary recipe/result failures settle as agent-failed with sanitized messages.
+  const agentFailures = [];
+  for (const err of [
+    new Error('Goose exited 1: Server error'),
+    new SyntaxError('Unexpected token "secret-output" in JSON'),
+    Object.assign(new Error('ENOENT: /tmp/secret'), { code: 'ENOENT' }),
+  ]) {
+    const res = await settleGooseFailure(err, {
+      aborted: false,
+      complete: async (payload) => agentFailures.push(payload),
+      logError: () => {
+        /* captured elsewhere */
+      },
+    });
+    assert.deepEqual(res, { settled: true, outcome: 'agent-failed' });
+  }
+  assert.deepEqual(
+    agentFailures.map((p) => p.message),
+    [
+      'Goose exited 1: Server error',
+      'Goose returned invalid JSON result',
+      'Declared Goose result file was not written',
+    ],
+  );
+
+  // Pre-execution bootstrap errors stay runner-failed via direct-runner exit trap.
+  assert.deepEqual(
+    await settleGooseFailure(new Error('Invalid recipe source revision'), {
+      aborted: false,
+      executionStarted: false,
+      complete: async () => {
+        throw new Error('must not complete as agent-failed');
+      },
+      logError: () => {
+        /* captured elsewhere */
+      },
+    }),
+    { settled: false },
+  );
 });
 
 test('declared file preserves failed grades and nested fields instead of model copies', async () => {

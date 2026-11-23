@@ -96,7 +96,15 @@ export function currentFallbackPipelines(
     );
   }
   const grant = grantForPrincipal(policy.principal, grants);
-  if (grant === undefined || !grant.scopes.includes('work.operator')) return [];
+  if (
+    grant === undefined ||
+    (!grant.scopes.includes('work.operator') &&
+      !(
+        grant.scopes.includes('work.cron') &&
+        Boolean(run.params?.['jobOccurrence'])
+      ))
+  )
+    return [];
   return grant.pipelines.filter((pipeline) =>
     policy.allowedPipelines.includes(pipeline),
   );

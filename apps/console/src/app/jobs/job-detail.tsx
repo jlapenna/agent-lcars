@@ -91,6 +91,17 @@ export function JobDetail({
     latest && (!occurrence || latest.createdAt >= occurrence.createdAt)
       ? latest
       : occurrence;
+  const manualOnlyReady = Boolean(
+    definition?.job.triggers.manual &&
+    !definition.job.triggers.schedule &&
+    !job.vetoedBy &&
+    !job.error,
+  );
+  const canRunManually = Boolean(
+    definition?.job.triggers.manual &&
+    !job.error &&
+    (job.enabled || manualOnlyReady),
+  );
   return (
     <section className={styles.detail} aria-labelledby="job-detail-title">
       <Button className={styles.back} variant="light" onClick={back}>
@@ -127,7 +138,7 @@ export function JobDetail({
           ) : null}
           {definition?.job.triggers.manual && !run ? (
             <Button
-              disabled={busy || !job.enabled || Boolean(job.error)}
+              disabled={busy || !canRunManually}
               onClick={() => setRun(true)}
             >
               Run now
@@ -140,7 +151,9 @@ export function JobDetail({
               ? `Disabled by ${job.vetoedBy}. Repository changes do not re-enable it; review and enable it to resume.`
               : job.error
                 ? 'This job activates again after a successful source refresh.'
-                : 'Its execution profile does not admit automatic activation. Review and enable it before it can run.'}
+                : manualOnlyReady
+                  ? 'Manual-only job. Authorized operators can run it on demand without enabling a schedule.'
+                  : 'Its execution profile does not admit automatic activation. Review and enable it before it can run.'}
           </p>
         ) : null}
       </header>
@@ -235,8 +248,7 @@ export function JobDetail({
               type="submit"
               loading={busy}
               disabled={
-                !job.enabled ||
-                Boolean(job.error) ||
+                !canRunManually ||
                 !profiles?.includes(profile ?? definition.job.execution.profile)
               }
             >
@@ -343,7 +355,9 @@ export function JobDetail({
                 <pre>{JSON.stringify(definition.job, null, 2)}</pre>
               </details>
               <details open>
-                <summary>Recipe</summary>
+                <summary>
+                  {'harness' in definition.job.execution ? 'Prompt' : 'Recipe'}
+                </summary>
                 <pre>{definition.recipeText}</pre>
               </details>
               {!job.enabled ? (

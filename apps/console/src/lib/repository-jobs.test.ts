@@ -1,18 +1,26 @@
-import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import {
+  externalizeRunMessage,
+  MemoryStore,
+  Orchestrator,
+} from '@agent-lcars/orchestrator';
 import { workSpecSchema } from '@agent-lcars/work';
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { describe, expect, it, vi } from 'vitest';
-import { stringify } from 'yaml';
+import { parse as parseYaml, stringify } from 'yaml';
 
 import { GcsCodexAuthStore } from './codex-auth-store';
 import { releaseCodexCredentialLease } from './codex-credential-operations';
 import {
+  gooseJobExecutionSchema,
+  harnessJobExecutionSchema,
   jobDueAt,
   jobKey,
   type JobProfile,
   jobProfileSchema,
   parseJobDefinition,
-  repositoryJobSchema,
 } from './repository-job-definition';
 import { validateJobResult } from './repository-job-result';
 import {
@@ -24,6 +32,7 @@ import {
 } from './repository-job-store';
 import { RepositoryJobs } from './repository-jobs';
 import { ConditionalCodexBucket } from './testing/codex-auth-bucket';
+import { parseWorkGrants } from './work-grants';
 
 class TestStore implements JobStore {
   jobs = new Map<string, CatalogJob>();
@@ -733,10 +742,28 @@ describe('recipe invocation parameters', () => {
   });
 });
 
-it('bounds recipe timeouts below the executor Pod deadline', () => {
-  const timeout = repositoryJobSchema.shape.execution.shape.timeout;
-  expect(timeout.safeParse('45m').success).toBe(true);
-  expect(timeout.safeParse('46m').success).toBe(false);
+it('bounds recipe and harness timeouts and maxAttempts within Pod deadlines', () => {
+  expect(gooseJobExecutionSchema.shape.timeout.safeParse('45m').success).toBe(
+    true,
+  );
+  expect(gooseJobExecutionSchema.shape.timeout.safeParse('46m').success).toBe(
+    false,
+  );
+  expect(gooseJobExecutionSchema.shape.maxAttempts.safeParse(1).success).toBe(
+    true,
+  );
+  expect(gooseJobExecutionSchema.shape.maxAttempts.safeParse(2).success).toBe(
+    true,
+  );
+  expect(gooseJobExecutionSchema.shape.maxAttempts.safeParse(3).success).toBe(
+    false,
+  );
+  expect(harnessJobExecutionSchema.shape.timeout.safeParse('80m').success).toBe(
+    true,
+  );
+  expect(harnessJobExecutionSchema.shape.timeout.safeParse('81m').success).toBe(
+    false,
+  );
 });
 
 it('pins an explicitly authorized manual profile without changing the manifest or schedule', async () => {
@@ -1244,5 +1271,294 @@ describe('provider-limit fallback', () => {
       fallbackOf: original.id,
       profile: { name: 'audit-claude', providerAuth: 'claude' },
     });
+  });
+});
+
+describe('operational extensions: maxAttempts, manual-only, native harness and apphosting', () => {
+  it('retries a maxAttempts=2 job once on worker loss and reconciles the highest generation after all claims retire', async () => {
+    const f = fixture();
+    f.definition.job.execution.maxAttempts = 2;
+    const occurrence = await f.jobs.admit(
+      f.id,
+      'retry-once',
+      'user:joe',
+      'manual',
+      f.definition.digest,
+    );
+    const r1 = (await f.native.listRuns({ workId: occurrence.workId }))[0]!;
+    await f.native.enqueueRun({
+      runId: r1.runId,
+      now: '2026-10-27T06:00:00.000Z',
+    });
+    await f.native.claimQueuedRun({
+      pipelines: ['goose'],
+      now: '2026-10-27T06:00:00.000Z',
+      claimedBy: 'executor',
+      claimedBySubject: 'executor@example.iam.gserviceaccount.com',
+      tokenHash: '1'.repeat(64),
+    });
+    // First loss mints r2 automatically; r1 is not yet retired in this simulated lease expiry.
+    f.setTime('2026-10-27T08:30:00.000Z');
+    const firstSweep = await f.orchestrator.sweepExpired();
+    expect(firstSweep.retried).toHaveLength(1);
+    const runsAfterFirstLoss = await f.native.listRuns({
+      workId: occurrence.workId,
+    });
+    expect(runsAfterFirstLoss.map((r) => [r.runId, r.state])).toEqual([
+      [`work:${occurrence.workId}/r1`, 'lost'],
+      [`work:${occurrence.workId}/r2`, 'pending'],
+    ]);
+    const r2 = runsAfterFirstLoss[1]!;
+    await f.native.enqueueRun({
+      runId: r2.runId,
+      now: '2026-10-27T08:30:00.000Z',
+    });
+    await f.native.claimQueuedRun({
+      pipelines: ['goose'],
+      now: '2026-10-27T08:31:00.000Z',
+      claimedBy: 'executor',
+      claimedBySubject: 'executor@example.iam.gserviceaccount.com',
+      tokenHash: '2'.repeat(64),
+    });
+    const artifact = validateJobResult(f.definition, {
+      report: 'Recovered on attempt 2',
+      complete: true,
+      data: { count: 9 },
+    });
+    await f.jobs.stage(occurrence, artifact);
+    await f.orchestrator.report(
+      r2.runId,
+      { ok: true, ref: `job-result:${artifact.digest}` },
+      '2'.repeat(64),
+    );
+    await f.orchestrator.executorExited(r2.runId, {
+      subject: 'executor@example.iam.gserviceaccount.com',
+      runner: 'executor',
+      claimFingerprint: '2'.repeat(64),
+    });
+    // r1 is still unretired (within backstop), so occupancy holds.
+    await f.jobs.reconcile(f.store.jobs.get(f.id)!);
+    expect(f.store.jobs.get(f.id)!.active).toBe(occurrence.id);
+    // Retire r1 and return runs in reverse order to prove generation ordering.
+    await f.orchestrator.executorExited(r1.runId, {
+      subject: 'executor@example.iam.gserviceaccount.com',
+      runner: 'executor',
+      claimFingerprint: '1'.repeat(64),
+    });
+    vi.spyOn(f.native, 'listRuns').mockResolvedValueOnce(
+      [...(await f.native.listRuns({ workId: occurrence.workId }))].reverse(),
+    );
+    await f.jobs.reconcile(f.store.jobs.get(f.id)!);
+    expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
+    expect(f.store.jobs.get(f.id)!.baseline?.occurrence).toBe(occurrence.id);
+    expect((await f.store.readOccurrence(occurrence.id))?.successful).toBe(
+      true,
+    );
+  });
+
+  it('admits unvetoed manual-only jobs without enabling a schedule, while honoring vetoes', async () => {
+    const f = fixture([
+      {
+        key: 'note',
+        description: 'Optional note',
+        input_type: 'string',
+        requirement: 'optional',
+        default: 'default-note',
+      },
+    ]);
+    // fixture with parameters omits triggers.schedule (manual-only).
+    const job = f.store.jobs.get(f.id)!;
+    job.enabled = false;
+    job.vetoedBy = null;
+    const admitted = await f.jobs.invoke(
+      'octo/repo',
+      'audit',
+      'manual-only-1',
+      'user:joe',
+    );
+    expect(admitted.skipped).toBe(false);
+    expect(f.store.jobs.get(f.id)!.active).toBe(admitted.id);
+
+    // An explicit operator disable sets vetoedBy and blocks manual-only invocation.
+    const fVeto = fixture([
+      {
+        key: 'note',
+        description: 'Optional note',
+        input_type: 'string',
+        requirement: 'optional',
+        default: 'default-note',
+      },
+    ]);
+    fVeto.store.jobs.get(fVeto.id)!.enabled = false;
+    await fVeto.jobs.enable(
+      fVeto.id,
+      fVeto.definition.digest,
+      'user:joe',
+      false,
+    );
+    await expect(
+      fVeto.jobs.invoke('octo/repo', 'audit', 'vetoed-1', 'user:joe'),
+    ).rejects.toThrow('Job disabled');
+  });
+
+  it('mints and reconciles a native harness report-v1 job with full run message and baseline carry-forward', async () => {
+    const allocation = { cpu: 2, memory: '6Gi', storage: '24Gi' };
+    const definition = parseJobDefinition(
+      'jlapenna/homelab',
+      'b'.repeat(40),
+      'onduty-daily',
+      stringify({
+        version: 1,
+        description: 'Daily Homelab duty report',
+        triggers: {
+          manual: true,
+          schedule: { cron: '0 15 * * *', timezone: 'UTC' },
+        },
+        execution: {
+          harness: 'opencode',
+          fallbackHarnesses: ['claude'],
+          prompt: './prompt.md',
+          profile: 'repository',
+          timeout: '60m',
+          maxAttempts: 2,
+          resources: { requests: { ...allocation }, limits: { ...allocation } },
+        },
+        inputs: { focus: 'fleet' },
+        parameters: [
+          {
+            key: 'window',
+            description: 'Lookback window',
+            input_type: 'string',
+            requirement: 'optional',
+            default: '24h',
+          },
+        ],
+        concurrency: { maxRuns: 1, overlap: 'skip' },
+        state: { previousSuccessfulResult: true },
+        result: { contract: 'report-v1', requiredArtifacts: ['report.md'] },
+      }),
+      'Inspect {{ focus }} over {{ window }}.\nPrior report:\n{{ baseline }}\n',
+    );
+    const store = new TestStore();
+    const native = new MemoryStore();
+    let at = new Date('2026-10-27T15:00:00.000Z');
+    const orchestrator = new Orchestrator(native, {
+      now: () => at.toISOString(),
+    });
+    const jobs = new RepositoryJobs({
+      store,
+      profiles: () => [],
+      granted: (_principal, _repo, pipeline) =>
+        ['goose', 'opencode', 'claude'].includes(pipeline ?? 'goose'),
+      automationPrincipal: () => 'svc:job-scheduler',
+      now: () => at,
+      runtime: {
+        store: native,
+        orchestrator,
+        drain: async () => ({ dispatched: [], reported: [], failed: [] }),
+      },
+    });
+    const id = jobKey('jlapenna/homelab', 'onduty-daily');
+    store.jobs.set(id, {
+      id,
+      repository: 'jlapenna/homelab',
+      name: 'onduty-daily',
+      definition,
+      enabled: true,
+      enabledBy: 'svc:job-scheduler',
+      activationFloor: '2026-10-26T00:00:00.000Z',
+      refreshedAt: at.toISOString(),
+    });
+    const first = await jobs.admit(
+      id,
+      '2026-10-27T15:00:00.000Z',
+      'svc:job-scheduler',
+      'schedule',
+      definition.digest,
+    );
+    const task = (await native.readTask({ workId: first.workId }))!.task;
+    const spec = workSpecSchema.parse(task.work['spec']);
+    expect(spec.pipeline).toBe('opencode');
+    expect(spec.deliverable).toBe('report');
+    expect(spec.fallbackPipelines).toEqual(['claude']);
+    expect(spec.description).toContain('Inspect fleet over 24h.');
+    expect(spec.description).toContain('Prior report:\nnone');
+
+    const run = (await native.listRuns({ workId: first.workId }))[0]!;
+    expect(run.params).toMatchObject({
+      mode: 'implement',
+      jobOccurrence: first.id,
+      maxAttempts: '2',
+    });
+    const largeReport = `# Daily Duty\n\n${'Healthy host check.\n'.repeat(2000)}`;
+    await orchestrator.report(
+      run.runId,
+      await externalizeRunMessage(native, run.runId, {
+        ok: true,
+        summary: 'report',
+        message: largeReport,
+      }),
+    );
+    await jobs.reconcile(store.jobs.get(id)!);
+    expect(store.jobs.get(id)!.baseline?.occurrence).toBe(first.id);
+    const settledFirst = (await store.readOccurrence(first.id))!;
+    expect(settledFirst.successful).toBe(true);
+    expect(settledFirst.artifact?.artifacts['report.md']).toBe(largeReport);
+
+    at = new Date('2026-10-28T15:00:00.000Z');
+    store.jobs.get(id)!.refreshedAt = at.toISOString();
+    const second = await jobs.admit(
+      id,
+      '2026-10-28T15:00:00.000Z',
+      'svc:job-scheduler',
+      'schedule',
+      definition.digest,
+    );
+    expect(second.baselineOccurrence).toBe(first.id);
+    const secondTask = (await native.readTask({ workId: second.workId }))!.task;
+    expect(workSpecSchema.parse(secondTask.work['spec']).description).toContain(
+      '# Daily Duty',
+    );
+
+    // A parked report-v1 run must settle unsuccessful and preserve the prior baseline.
+    const secondRun = (await native.listRuns({ workId: second.workId }))[0]!;
+    await orchestrator.report(secondRun.runId, {
+      ok: true,
+      summary: 'park',
+      message: 'Blocked waiting on operator input',
+    });
+    await jobs.reconcile(store.jobs.get(id)!);
+    expect((await store.readOccurrence(second.id))?.successful).toBe(false);
+    expect(store.jobs.get(id)!.baseline?.occurrence).toBe(first.id);
+  });
+
+  it('validates apphosting.yaml work grants and job profiles', () => {
+    const apphostingPath = existsSync(join(process.cwd(), 'apphosting.yaml'))
+      ? join(process.cwd(), 'apphosting.yaml')
+      : join(process.cwd(), 'apps/console/apphosting.yaml');
+    const apphosting = parseYaml(readFileSync(apphostingPath, 'utf8')) as {
+      env: { variable: string; value?: string }[];
+    };
+    const grantsRaw = apphosting.env.find(
+      (entry) => entry.variable === 'AGENT_LCARS_WORK_GRANTS',
+    )?.value;
+    const profilesRaw = apphosting.env.find(
+      (entry) => entry.variable === 'AGENT_LCARS_JOB_PROFILES',
+    )?.value;
+    const grants = parseWorkGrants(grantsRaw);
+    const scheduler = grants.find((g) => g.principal === 'svc:job-scheduler')!;
+    expect(scheduler.pipelines).toEqual(
+      expect.arrayContaining(['claude', 'codex', 'opencode', 'agy', 'goose']),
+    );
+    const memberAutomation = grants.find(
+      (g) => g.principal === 'workflow:member-automation',
+    )!;
+    expect(memberAutomation.pipelines).toContain('goose');
+    const profiles = (JSON.parse(profilesRaw!) as unknown[]).map((p) =>
+      jobProfileSchema.parse(p),
+    );
+    expect(profiles.map((p) => p.name)).toEqual(
+      expect.arrayContaining(['sprinkles-jobs', 'sync-padd-jobs']),
+    );
   });
 });

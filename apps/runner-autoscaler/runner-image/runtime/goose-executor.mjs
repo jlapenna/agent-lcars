@@ -239,37 +239,59 @@ export function classifyGooseProviderFailure(error) {
   return undefined;
 }
 
+function sanitizeGooseFailureMessage(error) {
+  if (!(error instanceof Error)) return 'Goose recipe failed';
+  if (error instanceof SyntaxError) return 'Goose returned invalid JSON result';
+  if (error.code === 'ENOENT')
+    return 'Declared Goose result file was not written';
+  return error.message;
+}
+
 export async function settleGooseFailure(
   error,
-  { aborted, codexAuth, complete, logError = console.error },
+  {
+    aborted,
+    timedOut = false,
+    timeoutMinutes,
+    executionStarted = true,
+    codexAuth,
+    complete,
+    logError = console.error,
+  },
 ) {
+  if ((aborted && !timedOut) || (!timedOut && !executionStarted)) {
+    logError(sanitizeGooseFailureMessage(error));
+    return { settled: false };
+  }
   const providerOutcome =
-    !aborted &&
+    !timedOut &&
     error instanceof Error &&
     (error.providerOutcome === 'provider-limit' ||
       error.providerOutcome === 'provider-capacity')
       ? error.providerOutcome
       : undefined;
-  if (!providerOutcome) {
-    logError(error instanceof Error ? error.message : 'Goose recipe failed');
-    return { settled: false };
-  }
-  logError(error.message);
+  const outcome = timedOut
+    ? 'agent-timeout'
+    : (providerOutcome ?? 'agent-failed');
+  const message = timedOut
+    ? `Goose recipe timed out after ${timeoutMinutes ?? 'configured budget'}`
+    : sanitizeGooseFailureMessage(error);
+  logError(message);
   try {
     if (codexAuth && !codexAuth.persistenceAttempted) {
       await codexAuth.persist();
     }
     await complete({
-      outcome: providerOutcome,
+      outcome,
       outcomeReference: null,
-      message: error.message,
+      message,
     });
-    return { settled: true, outcome: providerOutcome };
+    return { settled: true, outcome };
   } catch (settlementError) {
     logError(
       settlementError instanceof Error
         ? settlementError.message
-        : 'Goose provider failure settlement failed',
+        : 'Goose failure settlement failed',
     );
     return { settled: false };
   }

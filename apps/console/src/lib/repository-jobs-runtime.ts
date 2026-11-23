@@ -53,14 +53,17 @@ export function repositoryJobs(runtime: OrchestratorRouteDeps): RepositoryJobs {
         )
         .parse(JSON.parse(process.env['AGENT_LCARS_JOB_PROFILES'] ?? '[]')),
     automationPrincipal: jobAutomationPrincipal,
-    granted: (principal, repo) => {
+    granted: (principal, repo, pipeline = 'goose') => {
       const grant = grantForPrincipal(principal);
       return (
         grant !== undefined &&
         (grant.scopes.includes('work.operator') ||
           principal === jobAutomationPrincipal()) &&
         workForbiddenReason(grant, { pipeline: 'goose', target: { repo } }) ===
-          undefined
+          undefined &&
+        (pipeline === 'goose' ||
+          workForbiddenReason(grant, { pipeline, target: { repo } }) ===
+            undefined)
       );
     },
   });
