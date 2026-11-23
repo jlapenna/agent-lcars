@@ -753,7 +753,7 @@ describe('CliSessionRow live view link', () => {
       'https://herdr.example.test/?pane=t36&view=chat',
     );
     expect(link.getAttribute('target')).toBe('_blank');
-    // Same actions group, so it stacks with the primary action on a phone.
+    // Same actions group: the two sit side by side, on a phone too.
     expect(link.parentElement).toBe(
       screen.getByTestId('cli-session-link').parentElement,
     );
