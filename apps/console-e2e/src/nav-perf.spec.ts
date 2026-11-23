@@ -140,3 +140,57 @@ test('@navperf rail navigation keeps the frame and skips skeletons', async ({
   expect(chromeRemounts).toBe(0);
   expect(skeletons).toBe(0);
 });
+
+/**
+ * A hard load streams each page's content in exactly once. If hydration
+ * client-renders a boundary whose streamed HTML is still pending, the same
+ * panel is briefly live and also parked in React's hidden `S:` segment, which
+ * breaks every strict locator on the page. CPU throttling widens that window.
+ */
+test('@navperf hard loads never show streamed content twice', async ({
+  page,
+}) => {
+  test.setTimeout(300_000);
+  await page.setExtraHTTPHeaders(E2E_ADMIN_HEADERS);
+  await page.addInitScript(() => {
+    const w = window as unknown as { __doubled: string[] };
+    w.__doubled = [];
+    const headings = (root: ParentNode) =>
+      [...root.querySelectorAll('h1, h2')].map((h) => h.textContent ?? '');
+    new MutationObserver(() => {
+      for (const segment of document.querySelectorAll(
+        'div[hidden][id^="S:"]',
+      )) {
+        const live = new Set(
+          [...document.querySelectorAll('h1, h2')]
+            // A page fallback repeats the title by design; only real
+            // content counts.
+            .filter(
+              (h) =>
+                !h.closest('div[hidden]') &&
+                !h.closest('[data-streaming-fallback]'),
+            )
+            .map((h) => h.textContent ?? ''),
+        );
+        for (const text of headings(segment)) {
+          if (text && live.has(text)) w.__doubled.push(`${segment.id}:${text}`);
+        }
+      }
+    }).observe(document, { childList: true, subtree: true });
+  });
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+  const doubled: string[] = [];
+  for (const label of LOOP) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await page.goto(PATHS[label]);
+      await waitReady(page, label);
+      doubled.push(
+        ...(await page.evaluate(
+          () => (window as unknown as { __doubled: string[] }).__doubled,
+        )),
+      );
+    }
+  }
+  expect([...new Set(doubled)]).toEqual([]);
+});

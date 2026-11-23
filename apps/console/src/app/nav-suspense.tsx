@@ -3,6 +3,7 @@
 import {
   type ReactNode,
   Suspense,
+  useMemo,
   useState,
   useSyncExternalStore,
 } from 'react';
@@ -26,6 +27,11 @@ const subscribeNever = () => unsubscribe;
  * The choice is fixed per instance at mount: it renders the boundary while
  * hydrating (matching the server markup) and never switches afterwards, so a
  * later re-render cannot remount its children.
+ *
+ * The snapshot flips to `false` right after hydration, which re-renders this
+ * component once. The boundary element is memoized so that re-render bails out
+ * before reaching a boundary still waiting on streamed HTML; an update there
+ * would make React client-render it and briefly show the content twice.
  */
 export function NavSuspense({
   fallback,
@@ -40,9 +46,9 @@ export function NavSuspense({
     () => true,
   );
   const [streamed] = useState(hydrating);
-  return streamed ? (
-    <Suspense fallback={fallback}>{children}</Suspense>
-  ) : (
-    children
+  const boundary = useMemo(
+    () => <Suspense fallback={fallback}>{children}</Suspense>,
+    [fallback, children],
   );
+  return streamed ? boundary : children;
 }
