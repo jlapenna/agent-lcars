@@ -86,6 +86,9 @@ Decisions the prototype already carries:
 - Sessions renders its newest ~200 sessions (whole issue groups, each
   capped at its 50 newest with the rest counted) and links **Show all** to
   the full window. Group headings always count the issue's real total.
+- Costs' by-issue disclosure carries the next 85 issues and ends with
+  **Show all**, which reopens it holding every issue. A hidden row still
+  ships in the page, so a disclosure is not a free place to put hundreds.
 - The data-warnings band says "All sources reporting" only when every read
   the page made completed.
 - Panels the first drawing lacked are drawn in its language: Agents' fleet

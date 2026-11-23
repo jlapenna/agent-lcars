@@ -51,6 +51,7 @@ interface PageProps {
     repo?: string;
     agent?: string;
     q?: string;
+    ledger?: string;
   }>;
 }
 
@@ -146,9 +147,11 @@ function CostsToolbar({
 async function CostsBody({
   query,
   watchedRepos,
+  showAllIssues,
 }: {
   query: SessionArchiveQuery;
   watchedRepos: ReturnType<typeof getWatchedRepos>;
+  showAllIssues: boolean;
 }) {
   const [
     { ledger, warnings: archiveWarnings, spend, spendByRepository },
@@ -175,7 +178,11 @@ async function CostsBody({
       {spendByRepository && <SpendByRepository spend={spendByRepository} />}
       {spend && <SpendBreakdowns spend={spend} budget={budget} />}
       {hasLedgerData ? (
-        <LedgerTables ledger={ledger} />
+        <LedgerTables
+          ledger={ledger}
+          showAllIssues={showAllIssues}
+          showAllIssuesHref={archiveHref(query, '/costs', { ledger: 'all' })}
+        />
       ) : (
         <Text
           size="sm"
@@ -190,7 +197,11 @@ async function CostsBody({
   );
 }
 
-function archiveHref(query: SessionArchiveQuery, path: string): string {
+function archiveHref(
+  query: SessionArchiveQuery,
+  path: string,
+  extra: Record<string, string> = {},
+): string {
   const params = new URLSearchParams();
   if (query.days !== DEFAULT_ARCHIVE_DAYS) {
     params.set('days', archiveDaysParam(query.days));
@@ -202,6 +213,7 @@ function archiveHref(query: SessionArchiveQuery, path: string): string {
   if (query.repo) params.set('repo', repoKey(query.repo));
   if (query.agent) params.set('agent', query.agent);
   if (query.q) params.set('q', query.q);
+  for (const [key, value] of Object.entries(extra)) params.set(key, value);
   const queryString = params.toString();
   return queryString ? `${path}?${queryString}` : path;
 }
@@ -222,13 +234,22 @@ function archiveHref(query: SessionArchiveQuery, path: string): string {
 interface CostsViewProps {
   query: SessionArchiveQuery;
   watchedRepos: ReturnType<typeof getWatchedRepos>;
+  showAllIssues: boolean;
   mobileNavigationHrefs: { sessions: string; costs: string };
 }
 
-function CostsViewContent({ query, watchedRepos }: CostsViewProps) {
+function CostsViewContent({
+  query,
+  watchedRepos,
+  showAllIssues,
+}: CostsViewProps) {
   return (
     <NavSuspense fallback={<PageLoading rows={6} header={false} />}>
-      <CostsBody query={query} watchedRepos={watchedRepos} />
+      <CostsBody
+        query={query}
+        watchedRepos={watchedRepos}
+        showAllIssues={showAllIssues}
+      />
     </NavSuspense>
   );
 }
@@ -283,6 +304,7 @@ async function CostsPageShell({ searchParams }: PageProps) {
     <CostsPageView
       query={query}
       watchedRepos={watchedRepos}
+      showAllIssues={params.ledger === 'all'}
       mobileNavigationHrefs={mobileNavigationHrefs}
     />
   );
