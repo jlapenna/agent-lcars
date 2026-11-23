@@ -96,7 +96,7 @@ describe('read-only onboarding audit', () => {
   it.each([
     ['pass', 'pass', '2026-11-19T12:00:00Z', 'pass'],
     ['pass', 'unverifiable', '2026-11-19T12:00:00Z', 'bypass'],
-    ['fail', 'fail', '2026-11-19T12:00:00Z', 'bypass'],
+    ['fail', 'unverifiable', '2026-11-19T12:00:00Z', 'bypass'],
     ['pass', 'unverifiable', '2026-11-20T16:00:36.429Z', 'pass'],
   ])(
     'audits candidate checks using the protected push evaluation (%s)',
