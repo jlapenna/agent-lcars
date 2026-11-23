@@ -8,7 +8,7 @@ import {
   Orchestrator,
   type ScheduleStore,
 } from '@agent-lcars/orchestrator';
-import { required } from '@agent-lcars/util-server';
+import { isE2eTesting, required } from '@agent-lcars/util-server';
 
 import { codexAuthStore } from '@/lib/codex-auth-store';
 import { recoverCodexCredentialOperations } from '@/lib/codex-credential-operations';
@@ -26,6 +26,10 @@ import { providerFallbackAuthority } from '@/lib/work-provider-fallback';
 import { reconcileFleetTriage } from './fleet-triage-work';
 import { executeSummaries } from './inbox-summary-work';
 import { observeJobCredentials } from './job-secrets-runtime';
+import {
+  reconcileMergedPullRequestConflicts,
+  reconcilePullRequestRemediation,
+} from './pr-remediation';
 import { observeRepositoryAgents } from './repository-agents-runtime';
 import { maintainRepositoryJobs } from './repository-jobs-runtime';
 
@@ -111,6 +115,37 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
     orchestrator,
     reconcileIssueTriage: (anchor, deleted) =>
       reconcileFleetTriage({ store, orchestrator }, anchor, deleted),
+    ...(isE2eTesting()
+      ? {}
+      : {
+          reconcilePullRequestRemediation: (anchor, options) => {
+            const runtime = createOrchestratorRuntime();
+            const github = orchestratorGithubRuntimeDeps(process.env);
+            return reconcilePullRequestRemediation(
+              {
+                store,
+                orchestrator,
+                drain: runtime.drain,
+                ...github,
+              },
+              anchor,
+              options,
+            );
+          },
+          reconcileMergedPullRequestConflicts: (input) => {
+            const runtime = createOrchestratorRuntime();
+            const github = orchestratorGithubRuntimeDeps(process.env);
+            return reconcileMergedPullRequestConflicts(
+              {
+                store,
+                orchestrator,
+                drain: runtime.drain,
+                ...github,
+              },
+              input,
+            );
+          },
+        }),
     executeRepositoryJobs: async (deadline) => {
       await maintainRepositoryJobs(deadline, createOrchestratorRuntime());
     },

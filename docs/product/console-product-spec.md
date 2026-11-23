@@ -381,7 +381,6 @@ the work that has stopped, and the work in flight.
   | ---- | -------------------- | ---------------- | ------------------------------------------------------ |
   | 0    | `needs-human`        | Human needed     | An agent parked with a question (`status:needs-human`) |
   | 0    | `review-requested`   | Review requested | A PR is awaiting the maintainer's review               |
-  | 0    | `merge-blocked`      | Merge blocked    | A PR is ready in principle but cannot merge            |
   | 1    | `ready-for-agent`    | Ready for agent  | Labeled `status:ready-for-agent` but not dispatched    |
   | 1    | `run-failed`         | Run failed       | The agent run failed                                   |
   | 1    | `silent-error`       | Silent error     | The run ended "successfully" without evidence          |

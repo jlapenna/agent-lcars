@@ -105,13 +105,15 @@ test.describe('populated dashboard', () => {
       'Run failed',
       'Review requested',
       'Silent error',
-      // #538: the mergeBlockedThreads fixture is the first e2e coverage of
-      // this badge's own color at all - every prior `merge-blocked` fixture
-      // carried an outstanding review request, which outranks it.
-      'Merge blocked',
     ]) {
       await expect(page.getByText(label).first()).toBeVisible();
     }
+    // Agent-owned merge blockers (unresolved review threads, behind branches,
+    // merge conflicts) stay out of the human Decision Inbox unless explicitly
+    // parked (`status:needs-human`).
+    await expect(
+      page.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.mergeBlockedThreads}`),
+    ).toHaveCount(0);
     await expect(
       page.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.readyForAgent}`),
     ).toBeVisible();
@@ -157,16 +159,18 @@ test.describe('populated dashboard', () => {
       .click();
     await expect(page.getByText(/Base branch has moved/).first()).toBeVisible();
 
-    // #538: a PR blocked (mergeStateStatus BLOCKED) by unresolved review
-    // threads, not by anything CI or reviewDecision would show - the
-    // "Merge blocked" badge alone doesn't say why; the thread count does.
-    await page
-      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.mergeBlockedThreads}`)
-      .getByRole('link')
-      .click();
+    // A PR blocked only by unresolved review threads stays out of the human
+    // Inbox, while still surfacing its thread count on its task detail page.
+    await expect(
+      page.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.mergeBlockedThreads}`),
+    ).toHaveCount(0);
+    await page.goto(
+      `/task/supersprinklesracing/sprinkles/${E2E_ITEM_NUMBERS.mergeBlockedThreads}`,
+    );
     await expect(
       page.getByText('3 unresolved review threads').first(),
     ).toBeVisible();
+    await page.goto('/inbox');
 
     // Claimed work retains its native status-comment preview, but the retired
     // GitHub-comment-derived live resume command is not rendered.
@@ -652,7 +656,7 @@ test.describe('responsive decision inbox', () => {
 
     await page.keyboard.press('Enter');
     const choices = page.getByRole('menuitem');
-    await expect(choices).toHaveCount(12);
+    await expect(choices).toHaveCount(11);
     await expect(
       page.getByRole('menuitem', { name: 'Pending decisions' }),
     ).toHaveAttribute('aria-current', 'true');

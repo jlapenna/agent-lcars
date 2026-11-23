@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   fitsWorkParamText,
   formatQuickTaskMarker,
+  isDispatchPipeline,
   parseTerminalQuickTaskBody,
   quickTaskDigest as sharedQuickTaskDigest,
   WORK_PARAM_TEXT_TOO_LARGE,
@@ -26,6 +27,7 @@ import { admitGithubWork } from './github-work-admission';
 import { recordOperatorComment } from './operator-comment-observability';
 import { describeRefusedOperatorToken } from './operator-token-check';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
+import { selectPullRequestRemediation } from './pr-review-routing';
 import { type Pipeline } from './primary-action';
 import {
   agentIntegration,
@@ -410,6 +412,7 @@ async function dispatchReplyToUnlabeledTask(
     assignedPipeline: Pipeline;
     currentLabels: string[];
     task: Task;
+    isPullRequest?: boolean;
     /** Absent on Retry dispatch, which has no operator token. */
     operator?: CommentActor;
   },
@@ -445,10 +448,22 @@ async function dispatchReplyToUnlabeledTask(
     }
     return { dispatched: false, dispatchWarning: 'provider-handoff-requested' };
   }
+  const prFallback = input.isPullRequest
+    ? selectPullRequestRemediation({
+        preferredPipeline: input.assignedPipeline,
+        supportedPipelines: supportedAgentPipelines(input.repo),
+      }).fallbackPipelines
+    : undefined;
   const outcome = await admitGithubWork(runtime, {
     anchor: { repo: repoKey(input.repo), issue: input.issueNumber },
     requestId: `console-reply:${randomUUID()}`,
     expectedEffectivePipeline: input.assignedPipeline,
+    ...(prFallback?.length
+      ? {
+          remediationFallback: true,
+          fallbackPipelines: prFallback,
+        }
+      : {}),
     params: {
       mode: 'reply',
       reply: input.body,
@@ -572,6 +587,7 @@ async function dispatchPostedReply(
           assignedPipeline,
           currentLabels,
           task: existingTask.task,
+          isPullRequest: Boolean(issue.pull_request),
           ...(operator === undefined ? {} : { operator }),
         });
         handedBackToAgent = handedOff.dispatched;
@@ -607,10 +623,22 @@ async function dispatchPostedReply(
           existingTask.task.providerRouting?.acceptedGeneration?.pipeline ??
           work.spec.pipeline;
         if (effective !== assignedPipeline) return { dispatched: false };
+        const prFallback = issue.pull_request
+          ? selectPullRequestRemediation({
+              preferredPipeline: assignedPipeline,
+              supportedPipelines: supportedAgentPipelines(repo),
+            }).fallbackPipelines
+          : undefined;
         const outcome = await admitGithubWork(runtime, {
           anchor: taskId,
           requestId: `console-reply:${randomUUID()}`,
           expectedEffectivePipeline: assignedPipeline,
+          ...(prFallback?.length
+            ? {
+                remediationFallback: true,
+                fallbackPipelines: prFallback,
+              }
+            : {}),
           params: {
             mode: 'reply',
             reply: body,
@@ -1026,10 +1054,29 @@ export async function retriggerIssue(
   // GitHub round trip (see the "reuses the task's durable Work payload
   // without re-reading GitHub" test below). `params.crossRepo` was fixed
   // at the run's original admission and is not re-derived here.
+  const projection = await store.readGithubAnchorProjection(taskId);
+  const effectivePipeline =
+    existingTask.task.providerRouting?.acceptedGeneration?.pipeline ??
+    existingWork.spec.pipeline;
+  const prFallback =
+    projection?.kind === 'pr'
+      ? selectPullRequestRemediation({
+          ...(isDispatchPipeline(effectivePipeline)
+            ? { preferredPipeline: effectivePipeline }
+            : {}),
+          supportedPipelines: supportedAgentPipelines(repo),
+        }).fallbackPipelines
+      : undefined;
   const outcome = await admitGithubWork(runtime, {
     anchor: taskId,
     requestId: `console-retry:${randomUUID()}`,
     followEffectivePipeline: true,
+    ...(prFallback?.length
+      ? {
+          remediationFallback: true,
+          fallbackPipelines: prFallback,
+        }
+      : {}),
     params: { mode: 'implement' },
     work: existingWork,
   });
