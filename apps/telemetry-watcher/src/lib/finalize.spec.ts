@@ -184,6 +184,102 @@ describe('finalizeSidecar', () => {
     });
   });
 
+  it('ships Claude subagent transcripts as distinct ended child sessions without overwriting the parent transcript', async () => {
+    const { store, upserts } = createFakeStore();
+    const { uploadTranscript, uploads } = createFakeUploader();
+    const parentId = '99929eb3-a69d-45aa-a3fa-2c2d34b0f151';
+    const agentId = 'a070d6e9a0f980508';
+    const childSessionId = `${parentId}-agent-${agentId}`;
+    const parentContent = ISSUE_AGENT_TRANSCRIPT(
+      parentId,
+      '2026-11-15T10:00:00.000Z',
+    );
+    const childContent = [
+      JSON.stringify({
+        isSidechain: true,
+        type: 'user',
+        uuid: 'sub-u1',
+        timestamp: '2026-11-15T10:01:00.000Z',
+        sessionId: parentId,
+        agentId,
+        cwd: '/home/runner/work/members/members',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Inspect security guardrails' }],
+        },
+      }),
+      JSON.stringify({
+        isSidechain: true,
+        type: 'assistant',
+        uuid: 'sub-a1',
+        timestamp: '2026-11-15T10:01:05.000Z',
+        sessionId: parentId,
+        agentId,
+        message: {
+          id: 'msg-sub-a1',
+          model: 'claude-opus-5-5',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Done' }],
+          usage: {
+            input_tokens: 20,
+            output_tokens: 40,
+            cache_creation_input_tokens: 500,
+            cache_read_input_tokens: 2000,
+          },
+        },
+      }),
+    ].join('\n');
+    const parentFile = `/home/runner/.claude/projects/proj/${parentId}.jsonl`;
+    const childFile = `/home/runner/.claude/projects/proj/${parentId}/subagents/agent-${agentId}.jsonl`;
+    const files = {
+      [parentFile]: parentContent,
+      [childFile]: childContent,
+    };
+
+    await finalizeSidecar({
+      config: baseConfig({
+        runId: '77',
+        intentId: 'jlapenna/agent-lcars#3400/r1',
+        issueNumber: 3400,
+        transcriptsBucket: 'agent-lcars-session-transcripts',
+      }),
+      store,
+      discover: (rootPath: string) =>
+        Object.keys(files).filter((f) => f.startsWith(rootPath)),
+      readFile: (p: string) => files[p as keyof typeof files],
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+      uploadTranscript,
+    });
+
+    expect(uploads.map((u) => u.object)).toEqual([
+      `runs/77/claude-code/${parentId}.jsonl`,
+      `runs/77/claude-code/${childSessionId}.jsonl`,
+    ]);
+    expect(upserts.map((doc) => doc.sessionId)).toEqual([
+      parentId,
+      childSessionId,
+    ]);
+    expect(upserts[1]).toMatchObject({
+      sessionId: childSessionId,
+      source: 'issue-agent',
+      liveness: 'ended',
+      agent: 'claude-code',
+      model: 'claude-opus-5-5',
+      turns: 1,
+      runId: '77',
+      intentId: 'jlapenna/agent-lcars#3400/r1',
+      issueNumber: 3400,
+      tokens: {
+        inputTokens: 20,
+        outputTokens: 40,
+        cacheCreationTokens: 500,
+        cacheReadTokens: 2000,
+      },
+      transcriptGcsUri: `gs://agent-lcars-session-transcripts/runs/77/claude-code/${childSessionId}.jsonl`,
+    });
+  });
+
   it('archives a Codex transcript under the codex/ prefix, not claude-code/ (Bug 1, #645)', async () => {
     const { store, upserts } = createFakeStore();
     const { uploadTranscript, uploads } = createFakeUploader();

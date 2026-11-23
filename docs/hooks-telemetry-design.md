@@ -354,10 +354,13 @@ them:
 - **Stdin to a temp file first.** The launcher copies stdin to `mktemp`
   before doing anything else and deletes it on exit, so a slow or failing
   client never leaves the runtime blocked on a pipe.
-- **Skip what is not a session.** Claude and OpenCode payloads with
-  `agent_id` remain parent-owned. A Codex child is collected only when its
-  first rollout metadata matches `agent_id` and the hook's parent
-  `session_id`/fork relationship,
+- **Skip what is not a session.** OpenCode payloads and mid-turn Claude
+  `PostToolUse` payloads with `agent_id` remain parent-owned. Claude Code
+  `SubagentStop` collects a verified `<parentSessionId>/subagents/agent-<agentId>.jsonl`
+  child transcript under `<parentSessionId>-agent-<agentId>` when every record
+  is sidechain-marked and matches the parent and child IDs. A Codex child is
+  collected only when its first rollout metadata matches `agent_id` and the
+  hook's parent `session_id`/fork relationship,
   `agent_transcript_path` or an exact-ID rollout lookup supplies the child
   transcript, and an explicit child-thread boundary excludes inherited history, and matching
   thread usage is present. Its own suffix uses the normal publication guards;
@@ -445,6 +448,13 @@ them:
       {
         "hooks": [
           { "type": "command", "command": "lcars hook claude", "timeout": 5 }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "lcars hook claude", "async": true }
         ]
       }
     ],

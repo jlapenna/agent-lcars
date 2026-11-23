@@ -602,6 +602,119 @@ describe('lcars hook claude', () => {
     expect(d.runFlusher).toHaveBeenCalledOnce();
     expect(spooledEvents(home).map((e) => e.kind)).toEqual(['stop']);
   });
+
+  it('collects Claude SubagentStop from its verified subagents/agent-*.jsonl transcript while skipping mid-turn child hooks', async () => {
+    const home = tempHome();
+    const parentId = '99929eb3-a69d-45aa-a3fa-2c2d34b0f151';
+    const agentId = 'a070d6e9a0f980508';
+    const childSessionId = `${parentId}-agent-${agentId}`;
+    const projectDir = path.join(home, '.claude/projects/proj');
+    const parentTranscript = path.join(projectDir, `${parentId}.jsonl`);
+    const childTranscript = path.join(
+      projectDir,
+      parentId,
+      'subagents',
+      `agent-${agentId}.jsonl`,
+    );
+    fs.mkdirSync(path.dirname(childTranscript), { recursive: true });
+    fs.writeFileSync(parentTranscript, '');
+    fs.writeFileSync(
+      childTranscript,
+      [
+        JSON.stringify({
+          type: 'user',
+          sessionId: parentId,
+          agentId,
+          isSidechain: true,
+          uuid: 'sub-u1',
+          timestamp: '2026-11-15T10:00:00.000Z',
+          cwd: '/home/dev/project',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'Check caller assumptions' }],
+          },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          sessionId: parentId,
+          agentId,
+          isSidechain: true,
+          uuid: 'sub-a1',
+          timestamp: '2026-11-15T10:00:03.000Z',
+          message: {
+            id: 'msg-sub-1',
+            model: 'claude-sonnet-5-5',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Verified.' }],
+            usage: {
+              input_tokens: 15,
+              output_tokens: 30,
+              cache_creation_input_tokens: 400,
+              cache_read_input_tokens: 1200,
+            },
+          },
+        }),
+      ].join('\n'),
+    );
+
+    // Mid-turn PostToolUse inside a subagent stays skipped to avoid per-tool hook churn.
+    const midTurn = deps(
+      home,
+      payload('PostToolUse', {
+        session_id: parentId,
+        agent_id: agentId,
+        transcript_path: parentTranscript,
+      }),
+    );
+    expect((await executeHookCommand(['claude'], midTurn)).action).toBe(
+      'skipped-subagent',
+    );
+    expect(spooledEvents(home)).toEqual([]);
+
+    // SubagentStop collects the verified child session under its distinct ID,
+    // including when Claude supplies parent transcript_path without agent_transcript_path.
+    const stop = deps(
+      home,
+      payload('SubagentStop', {
+        session_id: parentId,
+        agent_id: agentId,
+        transcript_path: parentTranscript,
+      }),
+    );
+    expect((await executeHookCommand(['claude'], stop)).action).toBe('spooled');
+    const [event] = spooledEvents(home);
+    expect(event).toMatchObject({
+      sessionId: childSessionId,
+      kind: 'stop',
+      agent: 'claude-code',
+      summary: {
+        sessionId: childSessionId,
+        model: 'claude-sonnet-5-5',
+        turns: 1,
+        tokens: {
+          inputTokens: 15,
+          outputTokens: 30,
+          cacheCreationTokens: 400,
+          cacheReadTokens: 1200,
+        },
+      },
+    });
+
+    // Pointing agent_transcript_path at the parent transcript fails closed.
+    const unverified = deps(
+      home,
+      payload('SubagentStop', {
+        session_id: parentId,
+        agent_id: agentId,
+        transcript_path: parentTranscript,
+        agent_transcript_path: parentTranscript,
+      }),
+    );
+    expect(await executeHookCommand(['claude'], unverified)).toEqual({
+      action: 'skipped-subagent',
+      detail: 'unverified child transcript',
+    });
+  });
 });
 
 describe('lcars hook codex', () => {

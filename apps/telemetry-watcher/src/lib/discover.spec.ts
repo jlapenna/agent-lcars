@@ -61,6 +61,28 @@ describe('discoverTranscriptFiles', () => {
       [],
     );
   });
+
+  it('discovers Claude subagent transcripts under <sessionId>/subagents/agent-*.jsonl while ignoring tool-results', () => {
+    const project = path.join(root, '-home-jlapenna-p-agent-lcars');
+    const sessionId = '99929eb3-a69d-45aa-a3fa-2c2d34b0f151';
+    const subagentsDir = path.join(project, sessionId, 'subagents');
+    const toolResultsDir = path.join(project, sessionId, 'tool-results');
+    fs.mkdirSync(subagentsDir, { recursive: true });
+    fs.mkdirSync(toolResultsDir, { recursive: true });
+    const parentFile = path.join(project, `${sessionId}.jsonl`);
+    const subagentFile = path.join(
+      subagentsDir,
+      'agent-a070d6e9a0f980508.jsonl',
+    );
+    fs.writeFileSync(parentFile, '');
+    fs.writeFileSync(subagentFile, '');
+    fs.writeFileSync(path.join(subagentsDir, 'notes.jsonl'), '');
+    fs.writeFileSync(path.join(toolResultsDir, 'toolu_01.jsonl'), '');
+
+    const files = discoverTranscriptFiles(root, ['*']);
+
+    expect(files.sort()).toEqual([parentFile, subagentFile].sort());
+  });
 });
 
 describe('discoverAcrossRoots', () => {
