@@ -150,8 +150,15 @@ else:
 PY
 mkdir -p "$baked/agents/shared/skills"
 cp -R "$repo_root/agents/shared/skills/." "$baked/agents/shared/skills/"
-bash "$repo_root/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" \
-  "$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+# Review dispatch only requires the packaged procedure files to be present.
+# Packaging the real locked dependency is prepare-dispatch.test.sh's and the
+# image build's job; a fixture keeps this harness runnable without the
+# third_party/anthropic-plugins submodule.
+review_package="$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+mkdir -p "$review_package"
+for review_file in README.md upstream.md LICENSE revision; do
+  printf 'fixture %s\n' "$review_file" > "$review_package/$review_file"
+done
 
 BAKED_RUNTIME_HELPERS_DIR="$baked/runtime"
 BAKED_PREPARE_DISPATCH="$baked/runtime/prepare-dispatch.sh"
