@@ -64,6 +64,7 @@ type ReadoutsState =
 const LOADING: ReadoutsState = { status: 'loading' };
 let readoutsState: ReadoutsState = LOADING;
 let inFlight: Promise<void> | undefined;
+let fetchedAt = Number.NEGATIVE_INFINITY;
 let timer: ReturnType<typeof setInterval> | undefined;
 let subscribers = 0;
 const readoutListeners = new Set<() => void>();
@@ -77,6 +78,7 @@ export function refreshShellReadouts(): Promise<void> {
   inFlight ??= fetch(READOUTS_URL, { cache: 'no-store' })
     .then(async (response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      fetchedAt = Date.now();
       setReadouts({
         status: 'ready',
         readouts: (await response.json()) as ShellReadouts,
@@ -96,7 +98,12 @@ export function refreshShellReadouts(): Promise<void> {
 function subscribeReadouts(listener: () => void) {
   readoutListeners.add(listener);
   if (++subscribers === 1) {
-    void refreshShellReadouts();
+    // A client navigation unmounts the old page's frame before mounting the
+    // new one, so the count passes through zero on every route change. Only
+    // figures older than one refresh period are worth a new request.
+    if (Date.now() - fetchedAt >= READOUTS_REFRESH_MS) {
+      void refreshShellReadouts();
+    }
     timer = setInterval(() => void refreshShellReadouts(), READOUTS_REFRESH_MS);
   }
   return () => {
@@ -147,6 +154,7 @@ export function useShellIdentity(): ShellIdentity | undefined {
 export function resetShellStateForTests() {
   readoutsState = LOADING;
   inFlight = undefined;
+  fetchedAt = Number.NEGATIVE_INFINITY;
   liveState = undefined;
 }
 
