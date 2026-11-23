@@ -272,6 +272,7 @@ async function SessionsBody({
             <Anchor
               href={displayHref(query, { view, filters, showAll: true })}
               size="sm"
+              className="sessions-show-all"
               data-testid="sessions-show-all"
             >
               Show all {rows.length} sessions ({hiddenSessions} more)
