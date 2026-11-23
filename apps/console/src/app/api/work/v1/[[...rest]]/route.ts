@@ -122,6 +122,12 @@ async function handle(request: Request): Promise<Response> {
         : {
             loadIssueLifecycle: runtime.loadIssueLifecycle,
           }),
+      ...(runtime.reconcilePullRequestRemediation === undefined
+        ? {}
+        : {
+            reconcilePullRequestRemediation:
+              runtime.reconcilePullRequestRemediation,
+          }),
       // #1799: `complete` (the only run-token route that mutates the
       // outbox) drains it after a settled report, same as every other
       // mutating route -- reached through the same `runtime` this handler

@@ -16,30 +16,13 @@ mkdir -p "$baked/runtime"
 cp -R "$here/." "$baked/runtime/"
 mkdir -p "$baked/agents/shared/skills"
 cp -R "$repo_root/agents/shared/skills/." "$baked/agents/shared/skills/"
-bash "$repo_root/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" \
-  "$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+# Review dispatch requires only the packaged procedure files to be present;
+# packages/anthropic-code-review/package-review.test.sh covers packaging.
 review_package="$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
-cmp "$repo_root/third_party/anthropic-plugins/plugins/code-review/commands/code-review.md" "$review_package/upstream.md"
-cmp "$repo_root/third_party/anthropic-plugins/plugins/code-review/LICENSE" "$review_package/LICENSE"
-[ "$(cat "$review_package/revision")" = "$(git -C "$repo_root" rev-parse :third_party/anthropic-plugins)" ]
-
-grep -Fq "$(cat "$review_package/revision")" "$review_package/README.md"
-
-# A valid source checkout at a different locked revision must never package.
-# Give the production packager an isolated parent index, keeping the real
-# dependency checkout and its index untouched.
-lock_fixture="$tmp/lock-fixture"
-mkdir -p "$lock_fixture/apps/runner-autoscaler/runner-image" "$lock_fixture/third_party"
-cp "$repo_root/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" "$lock_fixture/apps/runner-autoscaler/runner-image/"
-ln -s "$repo_root/third_party/anthropic-plugins" "$lock_fixture/third_party/anthropic-plugins"
-git init --quiet "$lock_fixture"
-git -C "$lock_fixture" update-index --add --cacheinfo \
-  160000,1111111111111111111111111111111111111111,third_party/anthropic-plugins
-if bash "$lock_fixture/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" "$tmp/mismatched-package" > "$tmp/lock-error" 2>&1; then
-  echo 'review dependency: packaging accepted a checkout that differs from the lock' >&2
-  exit 1
-fi
-grep -Fq 'not at its locked revision' "$tmp/lock-error"
+mkdir -p "$review_package"
+for review_file in README.md upstream.md LICENSE revision; do
+  printf 'fixture %s\n' "$review_file" > "$review_package/$review_file"
+done
 
 fail() {
   echo "$1" >&2

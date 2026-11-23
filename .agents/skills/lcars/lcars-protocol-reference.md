@@ -19,7 +19,9 @@ enough.
   `OWNER` or `MEMBER` requests mode `review`, routed by
   `apps/console/src/lib/pr-review-routing.ts` to an opposite model with quota
   `fallbackPipelines` (the authoring model last) under principal
-  `svc:github-pr-review`. Label routing validates the full
+  `svc:github-pr-review`. Automatic conflict and review-feedback remediation
+  (`apps/console/src/lib/pr-remediation.ts`) admits `implement` runs with the
+  same quota fallback under `svc:github-pr-remediation`. Label routing validates the full
   delivered anchor label snapshot against the canonical pipeline registry;
   multiple choices within the triggering namespace produce an actionable
   `routing-label-conflict` refusal before admission. Missing/inconsistent

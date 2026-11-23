@@ -5,7 +5,6 @@ import { PIPELINES } from '@agent-lcars/work';
 import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor } from '@mantine/core';
 import { redirect } from 'next/navigation';
-import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 import { consoleLandingPath } from '@/lib/console-access';
@@ -88,6 +87,7 @@ import { formatRelativeTime } from './format';
 import { inboxCardAgent, inboxCardMetadata } from './inbox-card';
 import { LiveDashboard } from './live-dashboard';
 import { MergedLastDay } from './merged-last-day';
+import { NavSuspense } from './nav-suspense';
 import {
   ActiveDispatchesPanel,
   CliSessionsPanel,
@@ -232,6 +232,7 @@ async function IndexBody({
   stoppedCursor?: string;
   multiRepo: boolean;
 }) {
+  const activityRead = getCachedAgentActivity();
   const [
     {
       data: { items: rawItems },
@@ -254,9 +255,11 @@ async function IndexBody({
     tokenRateSnapshot,
   ] = await Promise.all([
     getCachedQueueItems(),
-    getCachedAgentActivity(),
+    activityRead,
     getCliSessions({ exhaustive: true }),
-    getRunnerSessionsByRunId(),
+    activityRead.then(({ data }) =>
+      getRunnerSessionsByRunId([...data.liveRuns, ...data.recentRuns]),
+    ),
     getParkedWork(repoFilterKey, stoppedCursor, view),
     getNativeInboxEvidence(async () => {
       const context = await workContext();
@@ -645,7 +648,7 @@ function IndexViewContent({
   return (
     <>
       <LiveDashboard />
-      <Suspense
+      <NavSuspense
         key={`${repoFilterKey ?? ''}:${view.agent ?? ''}:${view.window ?? ''}:${view.q ?? ''}:${stoppedCursor ?? ''}`}
         fallback={<PageLoading rows={6} header={false} />}
       >
@@ -657,7 +660,7 @@ function IndexViewContent({
           stoppedCursor={stoppedCursor}
           multiRepo={multiRepo}
         />
-      </Suspense>
+      </NavSuspense>
     </>
   );
 }
@@ -745,7 +748,7 @@ async function IndexShell({ searchParams }: PageProps) {
 // separately, so the header never waits on those (see #160).
 export default function Index({ searchParams }: PageProps) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="deck"
@@ -756,6 +759,6 @@ export default function Index({ searchParams }: PageProps) {
       }
     >
       <IndexShell searchParams={searchParams} />
-    </Suspense>
+    </NavSuspense>
   );
 }

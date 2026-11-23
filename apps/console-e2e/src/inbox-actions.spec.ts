@@ -638,6 +638,9 @@ test.describe('Inbox authorized action journeys', () => {
           await configure(request, configuration);
           await updateDashboardAnchor({
             issue: number,
+            // A behind PR with no review request is agent remediation work;
+            // a human reaches its rebase control only after an agent parks it.
+            labels: action === 'rebase' ? ['status:needs-human'] : [],
             mergeableState,
             requestedReviewerLogins: requestedReviewers,
           });

@@ -1,7 +1,6 @@
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import { Code, Stack, Text } from '@mantine/core';
 import { notFound } from 'next/navigation';
-import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -13,9 +12,11 @@ import type { SessionTranscriptResult } from '../../../lib/session-transcript';
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
 import { repoScopedConsoleHrefs } from '../../console-hrefs';
 import { DetailWorkspace } from '../../detail-workspace';
+import { NavSuspense } from '../../nav-suspense';
 import { OpsPanel } from '../../ops-primitives';
 import { NavPageLoading } from '../../page-loading';
 import { withConsolePageShell } from '../../with-console-page-shell';
+import { PaginatedTranscriptView } from './paginated-transcript-view';
 import { SessionHeader } from './session-header';
 import { TranscriptTimelineView } from './transcript-timeline-view';
 
@@ -43,7 +44,8 @@ export function ArchivedSessionTranscript({
       pending: 'Transcript archival enabled; waiting for the session to end.',
       failed:
         'Transcript unavailable (archive upload failed; the watcher will retry).',
-      'too-large': 'Transcript unavailable (exceeds the 5 MiB archive limit).',
+      'too-large':
+        'Transcript unavailable (exceeded historical archive size limit).',
       expired: 'Transcript unavailable (archive retention expired).',
       unsupported:
         'Transcript unavailable (provider does not support console transcripts).',
@@ -90,6 +92,18 @@ export function ArchivedSessionTranscript({
 
   if (!transcript) {
     return null;
+  }
+
+  if (transcript.nextCursor) {
+    return (
+      <PaginatedTranscriptView
+        key={`${doc.sessionId}:${transcript.snapshotId ?? transcript.nextCursor}`}
+        sessionId={doc.sessionId}
+        initialEvents={transcript.events}
+        initialNextCursor={transcript.nextCursor}
+        initialWarning={transcript.warning}
+      />
+    );
   }
 
   return (
@@ -252,7 +266,7 @@ async function SessionDetailPageContent({ params }: PageProps) {
 // than blocking the whole route on the GitHub/Firestore reads.
 export default function SessionDetailPage({ params }: PageProps) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="sessions"
@@ -263,6 +277,6 @@ export default function SessionDetailPage({ params }: PageProps) {
       }
     >
       <SessionDetailPageContent params={params} />
-    </Suspense>
+    </NavSuspense>
   );
 }

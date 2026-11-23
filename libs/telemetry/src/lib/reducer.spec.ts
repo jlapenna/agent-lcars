@@ -2,7 +2,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 
-import { reduceTranscript, reduceTranscripts } from './reducer';
+import {
+  claudeSubagentSessionId,
+  isClaudeSubagentSessionId,
+  parseClaudeSubagentPath,
+  reduceTranscript,
+  reduceTranscriptLines,
+  reduceTranscripts,
+} from './reducer';
 
 function readFixture(name: string): string {
   return fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
@@ -569,5 +576,138 @@ describe('failed Claude publication evidence', () => {
     )[0];
     expect(summary.deliverables.qualifiedPRs).toBeUndefined();
     expect(summary.deliverables.prNumbers).toEqual([42]);
+  });
+});
+
+describe('standalone Claude subagent transcripts', () => {
+  const parentId = '99929eb3-a69d-45aa-a3fa-2c2d34b0f151';
+  const agentId = 'a070d6e9a0f980508';
+  const filePath = `/home/runner/.claude/projects/-workspace/${parentId}/subagents/agent-${agentId}.jsonl`;
+
+  it('derives a collision-free child sessionId and reduces subagent turns, model, title, and token usage across real auxiliary lines', () => {
+    const expectedId = `${parentId}--subagent--${agentId}`;
+    expect(parseClaudeSubagentPath(filePath)).toEqual({
+      parentSessionId: parentId,
+      agentId,
+      sessionId: expectedId,
+    });
+    expect(isClaudeSubagentSessionId(expectedId)).toBe(true);
+    expect(isClaudeSubagentSessionId(parentId)).toBe(false);
+    expect(claudeSubagentSessionId(parentId, parentId)).toBeUndefined();
+    expect(claudeSubagentSessionId('../bad', agentId)).toBeUndefined();
+
+    const lines = [
+      // Real Claude Code 2.1.x auxiliary lines omit `isSidechain` (and
+      // `fork-context-ref` uses `parentSessionId` without `sessionId`).
+      JSON.stringify({
+        type: 'queue-operation',
+        operation: 'dequeue',
+      }),
+      JSON.stringify({
+        type: 'fork-context-ref',
+        parentSessionId: parentId,
+        agentId,
+      }),
+      JSON.stringify({
+        type: 'api-request',
+        sessionId: parentId,
+        agentId,
+        timestamp: '2026-11-15T09:59:59.000Z',
+      }),
+      JSON.stringify({
+        type: 'user',
+        sessionId: parentId,
+        agentId,
+        isSidechain: true,
+        uuid: 'u-sub-1',
+        timestamp: '2026-11-15T10:00:00.000Z',
+        cwd: '/workspace/repo',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Review changed logic in auth.ts' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: parentId,
+        agentId,
+        isSidechain: true,
+        uuid: 'a-sub-1',
+        timestamp: '2026-11-15T10:00:05.000Z',
+        message: {
+          id: 'msg-sub-1',
+          model: 'claude-opus-5-5',
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 't1', name: 'Read' }],
+          usage: {
+            input_tokens: 2,
+            output_tokens: 209,
+            cache_creation_input_tokens: 2160,
+            cache_read_input_tokens: 6008,
+          },
+        },
+      }),
+    ];
+
+    const summaries = reduceTranscriptLines(lines, { filePath });
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({
+      sessionId: expectedId,
+      agent: 'claude-code',
+      model: 'claude-opus-5-5',
+      turns: 1,
+      title: 'Review changed logic in auth.ts',
+      titleSource: 'inferred',
+      toolCallCounts: { Read: 1 },
+      tokens: {
+        inputTokens: 2,
+        outputTokens: 209,
+        cacheCreationTokens: 2160,
+        cacheReadTokens: 6008,
+      },
+    });
+  });
+
+  it.each([
+    [
+      'mismatched parent sessionId',
+      { sessionId: 'other-parent', agentId, isSidechain: true },
+    ],
+    [
+      'mismatched agentId',
+      { sessionId: parentId, agentId: 'other-agent', isSidechain: true },
+    ],
+    [
+      'non-sidechain record',
+      { sessionId: parentId, agentId, isSidechain: false },
+    ],
+    [
+      'sidechain record missing agentId',
+      { sessionId: parentId, isSidechain: true },
+    ],
+    [
+      'auxiliary-only file with no sidechain turn',
+      { sessionId: parentId, agentId },
+    ],
+  ])('fails closed on %s inside a subagent file', (_case, overrides) => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      uuid: 'a-bad',
+      timestamp: '2026-11-15T10:00:05.000Z',
+      ...overrides,
+      message: {
+        id: 'msg-bad',
+        model: 'claude-sonnet-5-5',
+        role: 'assistant',
+        content: [],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      },
+    });
+    expect(reduceTranscriptLines([line], { filePath })).toEqual([]);
   });
 });

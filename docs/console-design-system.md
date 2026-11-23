@@ -205,6 +205,13 @@ to the shared slot, never a list of route names. Tablet widths use compact
 utilities while retaining the full rail. Local item actions stay in the body
 or the existing overflow menu.
 
+A client navigation keeps the current page on screen until the destination is
+ready; it never swaps in a skeleton or a generic frame (`NavSuspense`, no root
+`loading.tsx`). The wait belongs to the control that started it. A rail pill
+flashes between full and resting signal once the navigation outlasts 120 ms,
+and holds full signal under reduced motion. The phone utility menu's trigger
+shows its loading state. Hard loads still stream page skeletons.
+
 The required E2E lane consumes `mobile-header-every-page.spec.ts`, which checks
 actual control bounds, elbow clearance, body inset, and document overflow
 across destinations and detail views at phone, tablet, and desktop widths.

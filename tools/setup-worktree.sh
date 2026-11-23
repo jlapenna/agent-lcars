@@ -18,16 +18,9 @@ fi
 # it would also mean a worktree made by a bare `git worktree add` (which never
 # runs this script) silently loses the remote cache.
 
-echo "==> Initializing locked Git dependencies"
-# Submodule init normally registers its URL in the shared repository config.
-# Keep registration local so deinitializing one checkout cannot unregister a
-# sibling's live dependency or hide that sibling's dirty submodule state.
+# Per-worktree Git configuration keeps the agent identity below scoped to this
+# checkout.
 git config extensions.worktreeConfig true
-review_dependency='third_party/anthropic-plugins'
-git config --worktree "submodule.$review_dependency.url" \
-  "$(git config --file .gitmodules --get "submodule.$review_dependency.url")"
-git config --worktree "submodule.$review_dependency.active" true
-git submodule update --init --depth 1 -- third_party/anthropic-plugins
 
 echo "==> Installing dependencies"
 pnpm install --frozen-lockfile

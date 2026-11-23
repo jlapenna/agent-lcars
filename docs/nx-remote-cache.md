@@ -61,7 +61,7 @@ which would punish a laptop off the VPN.
 
 The token is resolved from two sources, in order:
 
-1. **The encrypted age secret store** (`secrets-get`, named key
+1. **The encrypted age secret store** (`secrets get`, named key
    `NX_CACHE_TOKEN_SPARK` — the name predates the L2 host's rename to
    `picard` and is tracked for a follow-up rename in `homegit`, the repo
    that owns the secret store). Covers the maintainer's home directory on

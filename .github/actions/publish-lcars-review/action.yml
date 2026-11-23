@@ -1,5 +1,5 @@
 name: Publish LCARS review
-description: Reconcile LCARS reviews on open default-branch PR merge candidates.
+description: Reconcile LCARS reviews on open default-branch PR heads and merge candidates.
 inputs:
   client-id:
     description: Agent LCARS App client ID
@@ -17,7 +17,7 @@ runs:
         client-id: ${{ inputs.client-id }}
         private-key: ${{ inputs.private-key }}
         permission-checks: write
-    - name: Publish merge-candidate checks
+    - name: Publish review checks
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}

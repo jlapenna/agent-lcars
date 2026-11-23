@@ -41,7 +41,7 @@ if ! node --input-type=module - "$result" "$status" <<'JS'
 import {readFileSync, statSync} from 'node:fs';
 const [file, status] = process.argv.slice(2);
 const result = JSON.parse(readFileSync(file, 'utf8'));
-if (!statSync(file).isFile() || typeof result.report !== 'string' || typeof result.complete !== 'boolean' || !result.data || Array.isArray(result.data) || result.data.exit !== Number(status) || (Number(status) !== 0 && result.complete)) {
+if (!statSync(file).isFile() || typeof result.report !== 'string' || typeof result.complete !== 'boolean' || !result.data || Array.isArray(result.data) || result.data.exit !== Number(status) || ((Number(status) === 2 || Boolean(result.data.partial)) && result.complete)) {
   throw new Error('Evaluator did not produce a valid report matching its exit status');
 }
 JS

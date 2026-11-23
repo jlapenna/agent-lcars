@@ -257,7 +257,10 @@ const workflow = parse(
   jobs: Record<string, Job>;
 };
 
-describe('publish-workstation-cli.yml', () => {
+// These run the real publish step against a fake `gh`, some of them twice.
+// Beside the rest of the contract suite one has passed the default five
+// seconds.
+describe('publish-workstation-cli.yml', { timeout: 30_000 }, () => {
   const FAKE_GH = path.resolve(
     'tools/contract-tests/fixtures/fake-gh-release.cjs',
   );

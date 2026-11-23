@@ -1,4 +1,5 @@
 import { logger } from '@agent-lcars/logging';
+import { parseDocument } from 'yaml';
 
 import { FIRESTORE_DOCUMENT_MAX_BYTES } from './firestore-document-size';
 import type { DispatchTokenProvider } from './github-app-tokens';
@@ -59,9 +60,6 @@ export async function refreshJobCatalog(
         enabled: false,
       };
       try {
-        const recipe = entries.find(
-          (entry) => entry.path === `${jobName}/recipe.yaml`,
-        );
         const blob = async (
           entry: typeof manifest | undefined,
         ): Promise<string> => {
@@ -76,12 +74,27 @@ export async function refreshJobCatalog(
             throw new Error('Job files must be bounded regular blobs');
           return (await source.readBlob(entry.sha)).toString('utf8');
         };
+        const manifestText = await blob(manifest);
+        const manifestDoc = parseDocument(manifestText, { uniqueKeys: true });
+        const manifestExecution =
+          manifestDoc.errors.length === 0
+            ? (
+                manifestDoc.toJS({ maxAliasCount: 0 }) as {
+                  execution?: { prompt?: unknown };
+                } | null
+              )?.execution
+            : undefined;
+        const companionPath =
+          manifestExecution?.prompt === './prompt.md'
+            ? `${jobName}/prompt.md`
+            : `${jobName}/recipe.yaml`;
+        const companion = entries.find((entry) => entry.path === companionPath);
         row.definition = parseJobDefinition(
           repository,
           source.revision,
           jobName,
-          await blob(manifest),
-          await blob(recipe),
+          manifestText,
+          await blob(companion),
         );
       } catch (error) {
         row.error =

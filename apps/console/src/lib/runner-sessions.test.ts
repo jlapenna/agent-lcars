@@ -2,14 +2,14 @@ import type {
   CliSessionDoc,
   IssueAgentSessionDoc,
 } from '@agent-lcars/telemetry';
-import { listSessionDocs } from '@agent-lcars/telemetry/server';
+import { listSessionDocsByRunIds } from '@agent-lcars/telemetry/server';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getRunnerSessionsByRunId } from './runner-sessions';
 
 vi.mock('@agent-lcars/telemetry/server', () => ({
   getAgentTelemetryReaderFirestore: vi.fn(),
-  listSessionDocs: vi.fn(),
+  listSessionDocsByRunIds: vi.fn(),
 }));
 
 const minutesAgo = (minutes: number) =>
@@ -59,16 +59,20 @@ function makeCliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
   };
 }
 
+const runs = (...ids: string[]) => ids.map((id) => ({ id }));
+
 describe('getRunnerSessionsByRunId', () => {
   afterEach(() => vi.resetAllMocks());
 
   it('keys issue-agent docs by runId', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([
+    (listSessionDocsByRunIds as Mock).mockResolvedValue([
       makeIssueAgentDoc({ sessionId: 's1', runId: '111' }),
       makeIssueAgentDoc({ sessionId: 's2', runId: '222' }),
     ]);
 
-    const { sessionsByRunId, warnings } = await getRunnerSessionsByRunId();
+    const { sessionsByRunId, warnings } = await getRunnerSessionsByRunId(
+      runs('111', '222'),
+    );
 
     expect(warnings).toEqual([]);
     expect(sessionsByRunId.get('111')?.sessionId).toBe('s1');
@@ -76,38 +80,60 @@ describe('getRunnerSessionsByRunId', () => {
     expect(sessionsByRunId.size).toBe(2);
   });
 
+  it('reads only the rendered runs, by id', async () => {
+    (listSessionDocsByRunIds as Mock).mockResolvedValue([]);
+
+    await getRunnerSessionsByRunId([{ id: 'a/b#1/r1' }, { id: 42 }]);
+
+    expect(listSessionDocsByRunIds).toHaveBeenCalledWith(undefined, [
+      'a/b#1/r1',
+      '42',
+    ]);
+  });
+
+  it('keeps the most recently active of several sessions for one run', async () => {
+    (listSessionDocsByRunIds as Mock).mockResolvedValue([
+      makeIssueAgentDoc({
+        sessionId: 'newest',
+        runId: '7',
+        lastActivityAt: '2026-11-22T16:59:17.056Z',
+      }),
+      makeIssueAgentDoc({
+        sessionId: 'oldest',
+        runId: '7',
+        lastActivityAt: '2026-11-22T16:55:33.816Z',
+      }),
+      makeIssueAgentDoc({
+        sessionId: 'middle',
+        runId: '7',
+        lastActivityAt: '2026-11-22T16:57:39.054Z',
+      }),
+    ]);
+
+    const { sessionsByRunId } = await getRunnerSessionsByRunId(runs('7'));
+
+    expect(sessionsByRunId.get('7')?.sessionId).toBe('newest');
+  });
+
   it('drops cli-source docs and issue-agent docs with no runId', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([
+    (listSessionDocsByRunIds as Mock).mockResolvedValue([
       makeCliDoc(),
       makeIssueAgentDoc({ sessionId: 'no-run-id', runId: undefined }),
       makeIssueAgentDoc({ sessionId: 'has-run-id', runId: '999' }),
     ]);
 
-    const { sessionsByRunId } = await getRunnerSessionsByRunId();
+    const { sessionsByRunId } = await getRunnerSessionsByRunId(runs('999'));
 
     expect(sessionsByRunId.size).toBe(1);
     expect(sessionsByRunId.get('999')?.sessionId).toBe('has-run-id');
   });
 
-  it('passes a ~24h activeSince cutoff to the store', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([]);
-
-    await getRunnerSessionsByRunId();
-
-    expect(listSessionDocs).toHaveBeenCalledWith(
-      undefined,
-      expect.objectContaining({ activeSince: expect.any(String) }),
-    );
-    const { activeSince } = (listSessionDocs as Mock).mock.calls[0][1];
-    const cutoffAgeHours =
-      (Date.now() - new Date(activeSince).getTime()) / (60 * 60 * 1000);
-    expect(cutoffAgeHours).toBeCloseTo(24, 1);
-  });
-
   it('degrades to an empty map with a warning when the store fails, rather than throwing', async () => {
-    (listSessionDocs as Mock).mockRejectedValue(new Error('boom'));
+    (listSessionDocsByRunIds as Mock).mockRejectedValue(new Error('boom'));
 
-    const { sessionsByRunId, warnings } = await getRunnerSessionsByRunId();
+    const { sessionsByRunId, warnings } = await getRunnerSessionsByRunId(
+      runs('1'),
+    );
 
     expect(sessionsByRunId.size).toBe(0);
     expect(warnings).toHaveLength(1);

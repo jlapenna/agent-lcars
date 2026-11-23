@@ -631,7 +631,12 @@ export RUNTIME_ENV="$RUNNER_TEMP/runtime-env"
 # activeDeadlineSeconds (queue_kubernetes.go) is the hard backstop: budget
 # plus up to 40 minutes of image pull, bootstrap, credential wait and
 # finalization. A provider default above the budget could never fire first.
-export BUDGET_MINUTES=80
+BRIEF_TIMEOUT_MINUTES="$(jq -r '.timeoutMinutes // empty' <<<"$brief")"
+if [[ "$BRIEF_TIMEOUT_MINUTES" =~ ^[1-9][0-9]*$ ]] && [ "$BRIEF_TIMEOUT_MINUTES" -le 80 ]; then
+  export BUDGET_MINUTES="$BRIEF_TIMEOUT_MINUTES"
+else
+  export BUDGET_MINUTES=80
+fi
 PROVIDER_TIMEOUT_SECONDS=$((BUDGET_MINUTES * 60))
 export AGENT="$AGENT_NAME"
 
@@ -742,7 +747,7 @@ if [ "$MODE" = "review" ]; then
 Review the routed pull request in the JSON brief at \$AGENT_DISPATCH_CONTEXT.
 Read AGENTS.md, then the shared protocol at \$AGENT_PROTOCOL_PATH, and
 the Anthropic review procedure at \$AGENT_REVIEW_PATH, in that order.
-Complete its independent reviewer and finding-validation passes before
+Complete its applicable review tier and finding-validation steps before
 submitting your verdict. It adapts the pinned upstream command to this
 provider and LCARS's review deliverable; follow its publication instructions.
 
@@ -1049,7 +1054,7 @@ CURLCFG
     echo "FATAL: restored Codex authentication failed its SHA-256 check" >&2
     exit 1
   fi
-  codex login status
+  TZ=UTC codex login status
 
   # Native work items sub-project 9 (resumable conversations, plan 3): a
   # requested resume must restore Codex's own thread, exactly as the
@@ -1109,14 +1114,22 @@ CURLCFG
   CODEX_LAST_MESSAGE_FILE="$RUNNER_TEMP/codex-last-message.txt"
   CODEX_DEADLINE=$(($(monotonic_seconds) + CODEX_TIMEOUT_SECONDS))
   CODEX_THREAD_FILE="$CODEX_RUNTIME_DIR/thread-id"
+  CODEX_ROUND_UTC_DATE=''
   run_codex_round() {
-    local prompt="$1" remaining round_exit
+    local prompt="$1" remaining round_exit round_start_utc_date round_end_utc_date
     shift
+    CODEX_ROUND_UTC_DATE=''
     remaining=$((CODEX_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
+    # Codex formats usage-limit resets in chrono::Local without a zone label,
+    # omitting the calendar date when the reset falls on the same local day.
+    # Pin IANA TZ=UTC (never POSIX UTC0, which breaks Node Intl/Python/Go zone
+    # lookups in worker tool subprocesses) and retain the UTC date only when
+    # the round does not cross UTC midnight.
+    round_start_utc_date="$(LC_ALL=C TZ=UTC date '+%b %-d, %Y')"
     tee -a "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
     CODEX_STDERR_TEE_PID=$!
-    timeout --signal=TERM --kill-after=30s "${remaining}s" \
+    TZ=UTC timeout --signal=TERM --kill-after=30s "${remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" codex exec "$@" "${CODEX_HOOK_ARGS[@]}" --json --dangerously-bypass-approvals-and-sandbox \
       --output-last-message "$CODEX_LAST_MESSAGE_FILE" \
       "$prompt" 2> "$CODEX_STDERR_PIPE" |
@@ -1126,16 +1139,23 @@ CURLCFG
         # an id quoted in tool output or assistant text.
         jq -er 'select(.type == "thread.started") | .thread_id | select(type == "string" and test("^[A-Za-z0-9_-]+$"))' \
           <<<"$codex_event" >> "$CODEX_THREAD_FILE" 2>/dev/null || true
+        # One line per event, so a reset can only be read from the event
+        # that reported it.
         jq -r '
           if .type == "error" and (.message | type) == "string" then .message
           elif .type == "turn.failed" and (.error.message | type) == "string" then .error.message
           else empty
           end
+          | gsub("[\r\n]+"; " ")
         ' <<<"$codex_event" >> "$CODEX_FAILURE_MESSAGES" 2>/dev/null || true
       done
     round_exit=${PIPESTATUS[0]}
     wait "$CODEX_STDERR_TEE_PID" || true
     CODEX_STDERR_TEE_PID=''
+    round_end_utc_date="$(LC_ALL=C TZ=UTC date '+%b %-d, %Y')"
+    if [ "$round_start_utc_date" = "$round_end_utc_date" ]; then
+      CODEX_ROUND_UTC_DATE="$round_start_utc_date"
+    fi
     return "$round_exit"
   }
   set +e
@@ -1184,7 +1204,7 @@ CURLCFG
   # re-reported as a capacity stop.
   if [ -z "$CODEX_AUTH_FAILURE" ] && [ -s "$CODEX_FAILURE_MESSAGES" ]; then
     PROVIDER_FAILURE_FILE="$RUNNER_TEMP/provider-failures.txt"
-    tail -c 16384 "$CODEX_FAILURE_MESSAGES" > "$PROVIDER_FAILURE_FILE"
+    tail -c 65536 "$CODEX_FAILURE_MESSAGES" > "$PROVIDER_FAILURE_FILE"
   elif [ -z "$CODEX_AUTH_FAILURE" ] && [ "$AGENT_EXIT" -ne 0 ]; then
     # An exhausted account can stop Codex before it emits any JSON event: the
     # CLI prints its own banner on stderr ("You’ve hit your usage limit. Visit
@@ -1655,7 +1675,7 @@ if [ "$PIPELINE" = agy ] && [ "$AGENT_EXIT" -ne 0 ] && [ -z "${PROVIDER_FAILURE_
     PROVIDER_FAILURE_FILE="$AGY_FAILURE_EVENTS"
   fi
 fi
-PROVIDER_FAILURES="$(tail -c 16384 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
+RAW_PROVIDER_FAILURES="$(tail -c 65536 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
 # A report's message is its deliverable: send it whole, or refuse it when it
 # is blank or past the completion bound (never a truncated tail).
 if [ "$OUTCOME" = report ]; then
@@ -1700,20 +1720,111 @@ is_provider_limit_failure() {
     [[ "$text" == *"ResourceExhausted"* ]] ||
     [[ "$text" == *"RESOURCE_EXHAUSTED"* ]]
 }
+annotate_codex_limit_utc() {
+  local text="$1" line out='' sep=''
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Codex reports each retry as a top-level `error` event
+    # ("Reconnecting... N/M (<err>)"). A retry hint there is not the terminal
+    # quota event's reset, so it is never stamped as one.
+    if [[ "$line" != "Reconnecting... "* ]] && is_provider_limit_failure "$line"; then
+      line="$(printf '%s\n' "$line" | sed -E \
+        's/([Tt]ry again at )((Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{1,2}(st|nd|rd|th)?, [0-9]{4} [0-9]{1,2}:[0-9]{2} (AM|PM))(\.([[:space:]]|$)|$)/\1\2 (UTC)\6/g')"
+      if [[ "${CODEX_ROUND_UTC_DATE:-}" =~ ^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\ [1-9][0-9]?,\ [0-9]{4}$ ]]; then
+        line="$(printf '%s\n' "$line" | sed -E \
+          "s/([Tt]ry again at )([0-9]{1,2}:[0-9]{2} (AM|PM))(\\.([[:space:]]|$)|$)/\\1${CODEX_ROUND_UTC_DATE} \\2 (UTC)\\4/g")"
+      fi
+    fi
+    out="${out}${sep}${line}"
+    sep=$'\n'
+  done <<<"$text"
+  printf '%s' "$out"
+}
+byte_length() {
+  local LC_ALL=C
+  printf '%s' "${#1}"
+}
+byte_prefix() {
+  local LC_ALL=C
+  printf '%s' "${1:0:$2}"
+}
+# Trim $1 to at most $2 bytes for completion-message display, dropping a
+# leading partial line only when the byte immediately preceding the cut was not
+# a newline (never deleting a complete line at the slice boundary).
+trim_tail_complete_lines() {
+  local LC_ALL=C
+  local text="$1" max_bytes="$2" total cut prev slice
+  total=${#text}
+  if [ "$total" -le "$max_bytes" ]; then
+    printf '%s' "$text"
+    return 0
+  fi
+  cut=$((total - max_bytes))
+  prev="${text:cut-1:1}"
+  slice="${text:cut}"
+  if [ "$prev" != $'\n' ] && [[ "$slice" == *$'\n'* ]]; then
+    slice="${slice#*$'\n'}"
+  fi
+  printf '%s' "$slice"
+}
+format_provider_limit_failures() {
+  local raw="$1" annotated trimmed annotated_bytes trimmed_bytes dropped line kept_limits='' sep='' tail_budget tail_part
+  annotated="$raw"
+  if [ "$PIPELINE" = codex ]; then
+    annotated="$(annotate_codex_limit_utc "$annotated")"
+  fi
+  trimmed="$(trim_tail_complete_lines "$annotated" 16000)"
+  annotated_bytes="$(byte_length "$annotated")"
+  if [ "$annotated_bytes" -le 16000 ]; then
+    printf '%s' "$trimmed"
+    return 0
+  fi
+  trimmed_bytes="$(byte_length "$trimmed")"
+  dropped="$(byte_prefix "$annotated" "$((annotated_bytes - trimmed_bytes))")"
+  if ! is_provider_limit_failure "$dropped"; then
+    printf '%s' "$trimmed"
+    return 0
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    if is_provider_limit_failure "$line"; then
+      kept_limits="${kept_limits}${sep}${line}"
+      sep=$'\n'
+    fi
+  done <<<"$dropped"
+  kept_limits="$(trim_tail_complete_lines "$kept_limits" 8000)"
+  tail_budget=$((15999 - $(byte_length "$kept_limits")))
+  tail_part="$(trim_tail_complete_lines "$annotated" "$tail_budget")"
+  if [ -n "$tail_part" ]; then
+    printf '%s\n%s' "$kept_limits" "$tail_part"
+  else
+    printf '%s' "$kept_limits"
+  fi
+}
 if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed || "$OUTCOME" = report ]]; then
   if is_provider_limit_message "$AGENT_MESSAGE" ||
-    is_provider_limit_failure "$PROVIDER_FAILURES"; then
+    is_provider_limit_failure "$RAW_PROVIDER_FAILURES"; then
     OUTCOME=provider-limit
-    if [ -z "$AGENT_MESSAGE" ] && [ -n "$PROVIDER_FAILURES" ]; then
+    # Only structured CLI failure events or captured CLI stderr banners carry
+    # runner-verified provider evidence: classify on the untrimmed capture so
+    # trailing noise or a tail boundary never hides a quota record, and let CLI
+    # evidence always win over LAST_MESSAGE_FILE.
+    if is_provider_limit_failure "$RAW_PROVIDER_FAILURES"; then
+      PROVIDER_FAILURES="$(format_provider_limit_failures "$RAW_PROVIDER_FAILURES")"
       AGENT_MESSAGE="Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: $PROVIDER_FAILURES"
-      AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"
     fi
-  elif [[ "$PROVIDER_FAILURES" == *"model is at capacity"* ]]; then
+    AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"
+  elif [[ "$RAW_PROVIDER_FAILURES" == *"model is at capacity"* ]]; then
     # Distinct from the weekly quota window: the control plane holds this
     # provider for one bounded probe instead of a reported reset, and only an
     # already-authorized fallback policy may create a cross-provider successor.
     OUTCOME=provider-capacity
     if [[ "$AGENT_MESSAGE" != *'model is at capacity'* ]]; then
+      PROVIDER_FAILURES="$(trim_tail_complete_lines "$RAW_PROVIDER_FAILURES" 16000)"
+      if [[ "$PROVIDER_FAILURES" != *"model is at capacity"* ]]; then
+        capacity_line="$(grep -F -m 1 'model is at capacity' <<<"$RAW_PROVIDER_FAILURES" || true)"
+        capacity_line="$(trim_tail_complete_lines "$capacity_line" 4000)"
+        capacity_tail="$(trim_tail_complete_lines "$RAW_PROVIDER_FAILURES" 11999)"
+        PROVIDER_FAILURES="${capacity_line}${capacity_tail:+$'\n'$capacity_tail}"
+      fi
       AGENT_MESSAGE="Selected model is at capacity. The provider stopped this round before its final message; retained provider failure events: $PROVIDER_FAILURES"
     fi
     AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"

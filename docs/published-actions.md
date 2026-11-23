@@ -39,23 +39,44 @@ owner without repositories intentionally selects that owner's installation.
 
 Call `publish-lcars-review` only from trusted default-branch workflow code.
 Run the permissionless `LCARS review event` PR/review notifier on GitHub’s
-`ubuntu-slim` runner. Subscribe it to PR opening, reopening, synchronization, editing and closure, and to review submission, editing and dismissal. Reconcile on its completion,
+`ubuntu-slim` runner. Subscribe it to PR opening, reopening, synchronization, editing, draft transitions (`ready_for_review`, `converted_to_draft`), and closure, and to review submission, editing and dismissal. Reconcile on its completion,
 default-branch pushes, manual dispatch, and an hourly backstop. The publisher
 needs `contents: read`, `pull-requests: read`, and `checks: read` on the
 workflow token. Pass the App client ID and private key through its declared
 inputs. All triggers for the trusted publisher must use one repository-wide
 concurrency group with `cancel-in-progress: false`. Use the repository’s
-runner and credential environment for that trusted job. Require
-`LCARS review (merge candidate)` from Agent LCARS App 4457090 and require
-review-thread resolution in the target repository. The shared agent protocol
+runner and credential environment for that trusted job.
+
+The publisher writes one verdict to two commits as Agent LCARS App 4457090:
+`LCARS review` on the pull request head and `LCARS review (merge candidate)`
+on GitHub's test merge commit. **Require `LCARS review` with integration
+4457090**, and require review-thread resolution in the target repository
+either way. Do not require the merge-candidate context: GitHub's auto-merge
+counts a check on the test merge commit, but a ruleset evaluating the update
+of the default branch does not find it there, so every merge needs the
+administrator bypass and an actor without one cannot merge (#3473). The head
+check does not wait for a test merge commit, so a blocking rereview revokes it
+on a pull request GitHub cannot merge yet. Pull requests that share a head
+commit share its check, which passes only when each has its own passing
+review. After a retarget onto the default branch the head keeps its earlier
+verdict until the next reconciliation, which the notifier's `edited` event
+starts. The shared agent protocol
 owns reviewer behavior. Enabling this check also needs a working LCARS
 review dispatch path for that repository. Stage the workflow first and verify
 that a deployed reviewer produced a review and the App published a successful check.
 Before switching enforcement or replacing its publisher, verify each affected
-open PR has a successful check from App 4457090 on its current GitHub test merge commit. The publisher accepts
-the deployed reviewer’s existing attempt and verdict markers. A maintainer can request a fresh review with `/review`. In member
-repositories, request review again after pushes and reopenings, and request it
-explicitly for Renovate and Dependabot PRs. After changing the target branch,
+open PR has a successful `LCARS review` check from App 4457090 on its current head. The publisher accepts
+the deployed reviewer’s existing attempt and verdict markers. Non-draft Renovate
+and Dependabot PRs whose commits are all GitHub-signed by the bot (excluding LCARS's
+qualification-gated `renovate/runner-cli-runtimes`,
+`renovate/major-runner-cli-runtimes`, `renovate/anthropic-review-workflow`, and
+`renovate/major-anthropic-review-workflow` branches) automatically receive a passing
+verdict unless an `agent-lcars[bot]` review at that head requested changes. Pushing a
+non-bot fix commit to an open Renovate/Dependabot PR dispatches review automatically
+where automatic `synchronize` review is enabled; if non-bot or amended commits were
+pushed while the PR was still a draft, request review with `/review` after marking it
+ready. A maintainer can request a fresh review on any PR with `/review`. In member
+repositories, request review again after pushes and reopenings. After changing the target branch,
 request a review with `/review` if none is running. Wait for the controller’s completion comment linking a review submitted after the switch, then request the next review with `/review`. The publisher checks the controller’s completion comment and the later attempt number on this PR. That later run starts after the old comparison’s review has finished. For fleet-managed auto-merge callers,
 include `--ci-workflow lcars-review-event.yml` alongside the existing CI workflow
 inputs on every scaffold refresh. Before adding the App-bound check, remove

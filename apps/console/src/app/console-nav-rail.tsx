@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import Link, { useLinkStatus } from 'next/link';
 
 import { archiveDaysParam, DEFAULT_ARCHIVE_DAYS } from '@/lib/archive-window';
 import type { SessionArchiveQuery } from '@/lib/session-archive';
@@ -43,6 +43,18 @@ function navHref(
   if (archiveQuery.q) params.set('q', archiveQuery.q);
   const queryString = params.toString();
   return queryString ? `${item.href}?${queryString}` : item.href;
+}
+
+/**
+ * Client navigations keep the current page on screen until the next one is
+ * ready (see NavSuspense), so the clicked pill signals the wait instead. The
+ * CSS delays the signal so a fast navigation shows nothing.
+ */
+function PendingSignal() {
+  const { pending } = useLinkStatus();
+  return pending ? (
+    <span className="lcars-nav-pending" aria-hidden="true" />
+  ) : null;
 }
 
 /** Per-destination counts beside the rail position: decisions waiting,
@@ -100,6 +112,7 @@ export function ConsoleNavRail({
             {counts[item.key] !== undefined ? ` · ${counts[item.key]}` : ''}
           </small>
           <span className="lcars-nav-label">{item.label}</span>
+          <PendingSignal />
         </Link>
       ))}
     </nav>

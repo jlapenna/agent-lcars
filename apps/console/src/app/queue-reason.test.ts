@@ -56,11 +56,11 @@ describe('queueReasonFor', () => {
 });
 
 describe('mergeBlockedReason', () => {
-  it('names the unresolved review-thread count when that is the reason (#538)', () => {
+  it('names the unresolved review-thread count when present (#538)', () => {
     expect(
       mergeBlockedReason(
         makeItem({
-          actionTypes: ['merge-blocked'],
+          actionTypes: ['review-requested'],
           unresolvedReviewThreadCount: 3,
         }),
       ),
@@ -71,20 +71,20 @@ describe('mergeBlockedReason', () => {
     expect(
       mergeBlockedReason(
         makeItem({
-          actionTypes: ['merge-blocked'],
+          actionTypes: ['needs-human'],
           unresolvedReviewThreadCount: 1,
         }),
       ),
     ).toBe('1 unresolved review thread');
   });
 
-  it('is undefined when merge-blocked came from a behind base, not threads', () => {
+  it('is undefined when no unresolved review threads exist', () => {
     expect(
-      mergeBlockedReason(makeItem({ actionTypes: ['merge-blocked'] })),
+      mergeBlockedReason(makeItem({ actionTypes: ['review-requested'] })),
     ).toBeUndefined();
   });
 
-  it('is undefined for an item with no merge-blocked reason at all', () => {
+  it('is undefined for an item with no unresolved thread count at all', () => {
     expect(mergeBlockedReason(makeItem())).toBeUndefined();
   });
 });

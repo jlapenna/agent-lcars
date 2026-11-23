@@ -96,7 +96,8 @@ class MemoryJobStore implements JobStore {
 function github(
   sources: Record<
     string,
-    Record<string, { manifest: string; recipe: string }> | undefined
+    | Record<string, { manifest: string; recipe?: string; prompt?: string }>
+    | undefined
   >,
   requested: string[] = [],
 ) {
@@ -129,16 +130,26 @@ function github(
     if (path === 'git/trees/jobs?recursive=1')
       return tree(
         Object.entries(jobs ?? {}).flatMap(([name, files]) =>
-          (['manifest', 'recipe'] as const).map((kind) => {
+          (['manifest', 'recipe', 'prompt'] as const).flatMap((kind) => {
+            const content = files[kind];
+            if (content === undefined) return [];
             const sha = `${repository}:${name}:${kind}:${blobs.size}`;
-            blobs.set(sha, files[kind]);
-            return {
-              path: `${name}/${kind === 'manifest' ? 'job' : 'recipe'}.yaml`,
-              mode: '100644',
-              type: 'blob',
-              sha: encodeURIComponent(sha),
-              size: Buffer.byteLength(files[kind]),
-            };
+            blobs.set(sha, content);
+            const filename =
+              kind === 'manifest'
+                ? 'job.yaml'
+                : kind === 'recipe'
+                  ? 'recipe.yaml'
+                  : 'prompt.md';
+            return [
+              {
+                path: `${name}/${filename}`,
+                mode: '100644',
+                type: 'blob',
+                sha: encodeURIComponent(sha),
+                size: Buffer.byteLength(content),
+              },
+            ];
           }),
         ),
       );
@@ -207,6 +218,61 @@ it('discovers jobs in a repository nobody installed and activates them on first 
     'owner/empty',
     'owner/jobs',
   ]);
+});
+
+it('discovers and activates a native harness job with prompt.md', async () => {
+  const store = new MemoryJobStore();
+  vi.stubGlobal(
+    'fetch',
+    github({
+      'owner/jobs': {
+        duty: {
+          manifest: stringify({
+            version: 1,
+            description: 'Daily duty report',
+            triggers: {
+              manual: true,
+              schedule: { cron: '0 15 * * *', timezone: 'UTC' },
+            },
+            execution: {
+              harness: 'opencode',
+              fallbackHarnesses: ['claude'],
+              prompt: './prompt.md',
+              profile: 'repository',
+              timeout: '60m',
+              maxAttempts: 2,
+              resources: {
+                requests: { ...allocation },
+                limits: { ...allocation },
+              },
+            },
+            inputs: {},
+            concurrency: { maxRuns: 1, overlap: 'skip' },
+            state: { previousSuccessfulResult: false },
+            result: {
+              contract: 'report-v1',
+              requiredArtifacts: ['report.md'],
+            },
+          }),
+          prompt: '# Daily Duty\n\nAudit cluster health.\n',
+        },
+      },
+    }),
+  );
+  await refreshJobCatalog(
+    store,
+    'owner/jobs',
+    tokens(),
+    new Date('2026-10-27T12:00:00.000Z'),
+    automation(store),
+  );
+  const job = store.rows.get(jobKey('owner/jobs', 'duty'));
+  expect(job).toMatchObject({
+    enabled: true,
+    enabledBy: 'svc:scheduler',
+    error: undefined,
+  });
+  expect(job?.definition?.recipeText).toContain('# Daily Duty');
 });
 
 it('re-activates a changed definition at a new floor but honors a sticky operator veto', async () => {

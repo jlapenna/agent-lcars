@@ -28,6 +28,7 @@ import {
 import {
   detectPullRequestAuthorPipeline,
   isAutomatedReviewExcludedAuthor,
+  isUnattendedDependencyBotPullRequest,
   parseAttemptClaimRunId,
   selectCrossModelReviewer,
   UNIFIED_REVIEW_COMMAND,
@@ -137,6 +138,10 @@ const pullRequestAnchorSchema = labelAnchorSchema.extend({
     .object({
       ref: z.string().min(1).optional(),
       sha: z.string().min(1).optional(),
+      repo: z
+        .object({ full_name: z.string().min(1).optional() })
+        .nullable()
+        .optional(),
     })
     .optional(),
 });
@@ -395,36 +400,52 @@ function interpretPullRequestEvent(
   const repoIgnore = checkRepository(repository.full_name);
   if (repoIgnore) return repoIgnore;
 
+  const isForkPullRequest =
+    pullRequest.head?.repo !== undefined &&
+    (pullRequest.head.repo === null ||
+      (pullRequest.head.repo.full_name !== undefined &&
+        pullRequest.head.repo.full_name.toLowerCase() !==
+          repository.full_name.toLowerCase()));
+
   const requiresReview =
     repository.full_name.toLowerCase() === 'jlapenna/agent-lcars';
+  const labels = pullRequest.labels ?? [];
+  const hasExplicitReviewLabel = labels.some(
+    (item) =>
+      REVIEW_LABELS.has(item.name) || item.name === UNIFIED_REVIEW_LABEL,
+  );
   if (
     action === 'opened' ||
     action === 'ready_for_review' ||
-    (requiresReview && (action === 'synchronize' || action === 'reopened'))
+    ((requiresReview || hasExplicitReviewLabel) &&
+      (action === 'synchronize' || action === 'reopened'))
   ) {
     if (pullRequest.state !== 'open') return ignore('anchor-closed');
     if (pullRequest.draft === true) return ignore('draft-pull-request');
     if (pullRequest.draft !== false || pullRequest.user === undefined) {
       return ignore('unhandled-action');
     }
-    const labels = pullRequest.labels ?? [];
+    if (isForkPullRequest) {
+      return ignore('fork-pull-request');
+    }
     if (
-      !requiresReview &&
-      (isAutomatedReviewExcludedAuthor(pullRequest.user.login) ||
-        labels.some(
-          (item) =>
-            item.name === 'status:needs-human' || item.name === 'bot:renovate',
-        ))
+      isUnattendedDependencyBotPullRequest({
+        userLogin: pullRequest.user.login,
+        headRef: pullRequest.head?.ref,
+        action,
+        senderLogin: sender.login,
+      }) ||
+      (!requiresReview &&
+        (isAutomatedReviewExcludedAuthor(pullRequest.user.login) ||
+          labels.some(
+            (item) =>
+              item.name === 'status:needs-human' ||
+              item.name === 'bot:renovate',
+          )))
     ) {
       return ignore('excluded-review-author');
     }
-    if (
-      !requiresReview &&
-      labels.some(
-        (item) =>
-          REVIEW_LABELS.has(item.name) || item.name === UNIFIED_REVIEW_LABEL,
-      )
-    ) {
+    if (action === 'opened' && !requiresReview && hasExplicitReviewLabel) {
       return ignore('explicit-review-label-present');
     }
     return buildReviewRequestDecision({
@@ -445,6 +466,7 @@ function interpretPullRequestEvent(
 
   if (action !== 'labeled') return ignore('unhandled-action');
   if (pullRequest.state !== 'open') return ignore('anchor-closed');
+  if (isForkPullRequest) return ignore('fork-pull-request');
 
   if (!label) return ignore('no-trigger-label');
   const labelName = label.name;

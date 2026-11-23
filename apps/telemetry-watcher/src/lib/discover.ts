@@ -1,13 +1,47 @@
-import { type WatchRootConfig } from '@agent-lcars/telemetry';
+import {
+  claudeSubagentSessionId,
+  isSafeIdentifier,
+  type WatchRootConfig,
+} from '@agent-lcars/telemetry';
 import * as fs from 'fs';
 import * as path from 'path';
 
 import { isAllowedProjectDir } from './allowlist';
 
+const CLAUDE_SUBAGENT_FILENAME_RE =
+  /^agent-([A-Za-z0-9][A-Za-z0-9._-]*)\.jsonl$/;
+
+function discoverClaudeSubagents(
+  projectDir: string,
+  parentSessionId: string,
+): string[] {
+  if (!isSafeIdentifier(parentSessionId)) {
+    return [];
+  }
+  const subagentsDir = path.join(projectDir, parentSessionId, 'subagents');
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(subagentsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const match = CLAUDE_SUBAGENT_FILENAME_RE.exec(entry.name);
+    if (match && claudeSubagentSessionId(parentSessionId, match[1])) {
+      files.push(path.join(subagentsDir, entry.name));
+    }
+  }
+  return files;
+}
+
 /**
  * Lists every `*.jsonl` transcript file under allowlisted project dirs in
- * `claudeProjectsDir` (normally `~/.claude/projects`). Fails soft: a missing
- * root dir or an unreadable project dir yields fewer files, never a throw.
+ * `claudeProjectsDir` (normally `~/.claude/projects`), including Claude Code
+ * `Agent` subagent transcripts at `<projectDir>/<sessionId>/subagents/agent-*.jsonl`.
+ * Fails soft: a missing root dir or an unreadable project dir yields fewer
+ * files, never a throw.
  */
 export function discoverTranscriptFiles(
   claudeProjectsDir: string,
@@ -42,6 +76,10 @@ export function discoverTranscriptFiles(
     for (const transcriptEntry of transcriptEntries) {
       if (transcriptEntry.isFile() && transcriptEntry.name.endsWith('.jsonl')) {
         files.push(path.join(projectDir, transcriptEntry.name));
+      } else if (transcriptEntry.isDirectory()) {
+        files.push(
+          ...discoverClaudeSubagents(projectDir, transcriptEntry.name),
+        );
       }
     }
   }

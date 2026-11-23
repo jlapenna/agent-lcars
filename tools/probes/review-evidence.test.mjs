@@ -22,31 +22,28 @@ function completedReview() {
     receipt: {
       head,
       complete: true,
-      reviewers: ['guidance-a', 'guidance-b', 'bugs-a', 'bugs-b'].map(
-        (role) => ({ role, nativeSessionId: 'native-' + role, complete: true }),
-      ),
+      reviewers: ['guardrails', 'bugs'].map((role) => ({
+        role,
+        nativeSessionId: 'native-' + role,
+        complete: true,
+      })),
       candidates: [],
       validators: [],
     },
     payload: {
       commit_id: head,
       event: 'COMMENT',
-      body: revision + '\n' + marker,
+      body: '<!-- lcars-review:pass -->\n' + revision + '\n' + marker,
       comments: [],
     },
     native: {
-      completedChildren: [
-        'native-guidance-a',
-        'native-guidance-b',
-        'native-bugs-a',
-        'native-bugs-b',
-      ],
+      completedChildren: ['native-guardrails', 'native-bugs'],
       errors: [],
     },
   };
 }
 
-test('a zero-finding review can pass with four observed completed native children', () => {
+test('a zero-finding review can pass with two observed completed native children', () => {
   assert.equal(evaluateReview(completedReview()).passed, true);
 });
 
@@ -56,15 +53,15 @@ test('CLI exit zero cannot turn the observed incomplete replay into a pass', () 
   assert.equal(evaluateReview(input).passed, false);
 });
 
-test('a model-authored four-pass receipt is insufficient without native completion evidence', () => {
+test('a model-authored two-pass receipt is insufficient without native completion evidence', () => {
   const input = completedReview();
   input.native.completedChildren = [];
   assert.equal(evaluateReview(input).passed, false);
 });
 
-test('a missing fourth pass cannot be replaced by a duplicate completed reviewer', () => {
+test('a missing second pass cannot be replaced by a duplicate completed reviewer', () => {
   const input = completedReview();
-  input.receipt.reviewers[3] = input.receipt.reviewers[0];
+  input.receipt.reviewers[1] = input.receipt.reviewers[0];
   assert.equal(evaluateReview(input).passed, false);
 });
 
@@ -77,7 +74,7 @@ test('every candidate requires an observed fresh validator, including rejected c
   input.receipt.validators = [
     {
       candidateId: 'candidate-1',
-      nativeSessionId: 'native-bugs-a',
+      nativeSessionId: 'native-bugs',
       decision: 'rejected',
       evidence: 'Checked the effective inherited configuration.',
     },
@@ -86,6 +83,25 @@ test('every candidate requires an observed fresh validator, including rejected c
   input.receipt.validators[0].nativeSessionId = 'native-validator';
   assert.equal(evaluateReview(input).passed, false);
   input.native.completedChildren.push('native-validator');
+  assert.equal(evaluateReview(input).passed, true);
+});
+
+test('a passing review cannot attach inline review comments that would block auto-merge', () => {
+  const input = completedReview();
+  input.payload.comments = [
+    { path: 'README.md', line: 3, body: 'Optional wording nit.' },
+  ];
+  const evaluation = evaluateReview(input);
+  assert.equal(evaluation.passed, false);
+  assert.ok(
+    evaluation.failures.includes('passing-review-must-not-open-inline-threads'),
+  );
+
+  // Blocking verdicts may carry inline comments for blocking defects.
+  input.payload.body = input.payload.body.replace(
+    '<!-- lcars-review:pass -->',
+    '<!-- lcars-review:block -->',
+  );
   assert.equal(evaluateReview(input).passed, true);
 });
 
@@ -106,7 +122,7 @@ test('a reviewer alias cannot masquerade as an independent validator', () => {
       evidence: 'Concrete source evidence.',
     },
   ];
-  input.native.canonicalIds = { '/native/alias': 'native-bugs-a' };
+  input.native.canonicalIds = { '/native/alias': 'native-bugs' };
   assert.equal(evaluateReview(input).passed, false);
 });
 

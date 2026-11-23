@@ -403,7 +403,7 @@ describe('apply mode', () => {
     const facts = await run({
       copyFrom: source,
       gh: fixture.gh,
-      privateKeyCommand: 'secrets-get key',
+      privateKeyCommand: 'secrets get key',
       runCommand: (command: string) => {
         commands.push(command);
         return PEM;
@@ -411,7 +411,7 @@ describe('apply mode', () => {
       skipInstallations: true,
       labelSync: () => ({ status: 0, changes: 3 }),
     });
-    expect(commands).toEqual(['secrets-get key']);
+    expect(commands).toEqual(['secrets get key']);
     const secretWrite = fixture.calls.find(
       (call) => call.args[0] === 'secret' && call.args[1] === 'set',
     );

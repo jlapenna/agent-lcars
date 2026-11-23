@@ -62,9 +62,15 @@ resource "github_repository_ruleset" "protect_main" {
       strict_required_status_checks_policy = false
       do_not_enforce_on_create             = false
 
+      # The head-scoped check the shared publisher writes as the Agent LCARS
+      # App, not `LCARS review (merge candidate)`: the ruleset evaluates
+      # required checks against the pull request head when `main` is updated,
+      # and does not find a check published on the test merge commit. While
+      # that context was required (#3446), every merge needed the
+      # administrator bypass and dependency PRs could not land (#3473).
       required_check {
-        context        = "LCARS review (merge candidate)"
-        integration_id = 4457090
+        context        = "LCARS review"
+        integration_id = 4457090 # Agent LCARS
       }
       required_check {
         context = "E2E"

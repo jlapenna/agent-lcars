@@ -1,10 +1,10 @@
 import { Button, Center, Stack, Text, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
-import { Suspense } from 'react';
 
 import { auth, signIn, signOut } from '../../auth';
 import { consoleLandingPath } from '../../lib/console-access';
 import { consoleDescription } from '../../lib/deployment';
+import { NavSuspense } from '../nav-suspense';
 import { PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 
@@ -98,8 +98,8 @@ export default function LoginPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   return (
-    <Suspense fallback={<PageLoading rows={2} />}>
+    <NavSuspense fallback={<PageLoading rows={2} />}>
       <LoginPageContent searchParams={searchParams} />
-    </Suspense>
+    </NavSuspense>
   );
 }

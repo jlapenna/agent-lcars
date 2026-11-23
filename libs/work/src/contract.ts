@@ -1242,6 +1242,9 @@ const runBriefSharedSchema = {
    *  cover every watched repository's owner, not just the anchor's own.
    *  Never present as `false`; absent means the option was not requested. */
   crossRepo: z.boolean().optional(),
+  /** Optional run-level execution timeout override (1..80 minutes) for
+   *  repository harness jobs (`execution.timeout`). */
+  timeoutMinutes: z.number().int().min(1).max(80).optional(),
 };
 
 /** Native Work preserves its existing top-level `id`/`spec` fields so an

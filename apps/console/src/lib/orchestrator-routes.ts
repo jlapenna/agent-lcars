@@ -6,6 +6,7 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
+  type GithubAnchor,
   isWorkAnchor,
   type Orchestrator,
   type OrchestratorStore,
@@ -59,6 +60,16 @@ export interface OrchestratorRouteDeps {
     anchor: TriageAnchor,
     deleted?: boolean,
   ) => Promise<void>;
+  reconcilePullRequestRemediation?: (
+    anchor: GithubAnchor,
+    options?: { afterRun?: Run },
+  ) => Promise<unknown>;
+  reconcileMergedPullRequestConflicts?: (input: {
+    repo: string;
+    baseRef: string;
+    mergedNumber: number;
+  }) => Promise<void>;
+  reconcileOpenPullRequestRemediations?: (deadline: number) => Promise<void>;
   executeRepositoryJobs?: (deadline: number) => Promise<void>;
   observeJobCredentials?: () => Promise<JobCredentialObservation>;
   /** Repository-owned agent catalog health; a failed read omits it. */
@@ -210,8 +221,15 @@ async function refreshGithubAnchorProjectionAfterAdmission(
 /** The pull requests a delivery names, for events that can change whether a
  * waiting delivery binding's PR merged, closed, moved or got feedback. */
 const deliveryPullRequestsSchema = z.object({
+  action: z.string().optional(),
   repository: z.object({ full_name: z.string().min(1) }),
-  pull_request: z.object({ number: z.number().int().positive() }).optional(),
+  pull_request: z
+    .object({
+      number: z.number().int().positive(),
+      merged: z.boolean().optional(),
+      base: z.object({ ref: z.string().min(1) }).optional(),
+    })
+    .optional(),
   check_run: z
     .object({
       pull_requests: z.array(z.object({ number: z.number().int().positive() })),
@@ -235,6 +253,17 @@ async function wakeDeliveryMonitors(
   const parsed = deliveryPullRequestsSchema.safeParse(input.payload);
   if (!parsed.success) return;
   const repo = parsed.data.repository.full_name;
+  // A merge into a base branch can make other waiting delivery PRs in the same
+  // repository conflict (`dirty`), so wake every waiting monitor in `repo`.
+  if (
+    input.event === 'pull_request' &&
+    parsed.data.action === 'closed' &&
+    parsed.data.pull_request?.merged === true
+  ) {
+    const woken = (await wakeDeliveryMonitor(deps, { repo })).length;
+    if (woken > 0) await deps.drain(Math.max(10, woken * 2));
+    return;
+  }
   const numbers = [
     ...(parsed.data.pull_request === undefined
       ? []
@@ -244,7 +273,90 @@ async function wakeDeliveryMonitors(
   let woken = 0;
   for (const number of new Set(numbers))
     woken += (await wakeDeliveryMonitor(deps, { repo, number })).length;
-  if (woken > 0) await deps.drain(woken);
+  if (woken > 0) await deps.drain(Math.max(10, woken * 2));
+}
+
+const prRemediationTriggerSchema = z.object({
+  action: z.string().optional(),
+  repository: z.object({ full_name: z.string().min(1) }),
+  pull_request: z.object({
+    number: z.number().int().positive(),
+    merged: z.boolean().optional(),
+    base: z.object({ ref: z.string().min(1) }).optional(),
+  }),
+});
+
+async function maybeReconcilePullRequestRemediation(
+  deps: OrchestratorRouteDeps,
+  input: { event: string; deliveryId: string; payload: unknown },
+  admittedNewRun: boolean,
+): Promise<void> {
+  if (
+    deps.reconcilePullRequestRemediation === undefined &&
+    deps.reconcileMergedPullRequestConflicts === undefined
+  ) {
+    return;
+  }
+  if (
+    ![
+      'pull_request',
+      'pull_request_review',
+      'pull_request_review_thread',
+    ].includes(input.event)
+  ) {
+    return;
+  }
+  const parsed = prRemediationTriggerSchema.safeParse(input.payload);
+  if (!parsed.success) return;
+  const repo = parsed.data.repository.full_name;
+  const pr = parsed.data.pull_request;
+  const action = parsed.data.action;
+
+  try {
+    if (
+      input.event === 'pull_request' &&
+      action === 'closed' &&
+      pr.merged === true &&
+      pr.base?.ref !== undefined
+    ) {
+      await deps.reconcileMergedPullRequestConflicts?.({
+        repo,
+        baseRef: pr.base.ref,
+        mergedNumber: pr.number,
+      });
+      return;
+    }
+
+    if (admittedNewRun) return;
+
+    const shouldInspectPr =
+      (input.event === 'pull_request_review' &&
+        (action === 'submitted' || action === 'edited')) ||
+      (input.event === 'pull_request_review_thread' &&
+        action === 'unresolved') ||
+      (input.event === 'pull_request' &&
+        [
+          'opened',
+          'reopened',
+          'ready_for_review',
+          'synchronize',
+          'unlabeled',
+          'labeled',
+        ].includes(action ?? ''));
+    if (shouldInspectPr) {
+      await deps.reconcilePullRequestRemediation?.({
+        repo,
+        issue: pr.number,
+      });
+    }
+  } catch (error) {
+    logger.warn(
+      'agent-lcars: automatic PR remediation check failed for %s/%s:',
+      input.event,
+      input.deliveryId,
+      error,
+    );
+  }
 }
 
 export async function handleWebhookDelivery(
@@ -265,14 +377,24 @@ export async function handleWebhookDelivery(
       );
     }
     const interpreted = interpretDelivery(input);
-    if (interpreted.kind === 'ignore')
-      return await handleIgnoredDelivery(deps, input, interpreted);
+    if (interpreted.kind === 'ignore') {
+      const ignored = await handleIgnoredDelivery(deps, input, interpreted);
+      await maybeReconcilePullRequestRemediation(deps, input, false);
+      return ignored;
+    }
     const result = await decideDelivery(deps, input, interpreted);
     // Every acknowledged outcome refreshes the anchor's projection exactly
     // once, after the durable decision; a rejected admission (500) is retried
     // by Cloud Tasks and refreshes on the retry that acknowledges it.
-    if (result.status === 200)
+    if (result.status === 200) {
       await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+      await maybeReconcilePullRequestRemediation(
+        deps,
+        input,
+        typeof result.body['runId'] === 'string' &&
+          result.body['duplicate'] !== true,
+      );
+    }
     return result;
   } catch (error) {
     if (error instanceof ProjectionRefreshError) throw error;
@@ -624,6 +746,21 @@ export async function handleReconcile(
     // ten-second claim request. Every choice rechecks the requesting grant;
     // the ordinary claim transaction still enforces the executor grant.
     const rerouted = await deps.orchestrator.rerouteQueued();
+    // Enqueue any missed open-PR remediations before the single outbox drain
+    // below so newly minted `dispatch-run` entries share `drained` and its
+    // failed-entry exclusion without a second drain pass.
+    if (deps.reconcileOpenPullRequestRemediations !== undefined) {
+      try {
+        await deps.reconcileOpenPullRequestRemediations(
+          Math.min(modelDeadline, Date.now() + 25_000),
+        );
+      } catch (error) {
+        logger.warn(
+          'agent-lcars: open PR remediation sweep failed during reconcile:',
+          error,
+        );
+      }
+    }
     // One drain owns the whole bounded maintenance pass so its failed-entry
     // exclusion remains effective across all 30 claims. The five-minute
     // ticker continues any larger backlog on its next pass.

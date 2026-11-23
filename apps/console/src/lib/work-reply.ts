@@ -16,7 +16,10 @@ import {
   type TaskId,
   taskKey,
 } from '@agent-lcars/orchestrator';
-import type { SessionDoc } from '@agent-lcars/telemetry';
+import {
+  isClaudeSubagentSessionId,
+  type SessionDoc,
+} from '@agent-lcars/telemetry';
 import {
   isSourceManagedWork,
   recipeWorkSpecSchema,
@@ -116,6 +119,9 @@ export function resumeUriFor(doc: SessionDoc): string | undefined {
   if (doc.source !== 'issue-agent' || doc.transcriptGcsUri === undefined) {
     return undefined;
   }
+  if (doc.agent === 'claude-code' && isClaudeSubagentSessionId(doc.sessionId)) {
+    return undefined;
+  }
   if (doc.agent === 'opencode') {
     return doc.resumeGcsUri;
   }
@@ -184,7 +190,11 @@ export async function requestReply(
   const task = await context.runtime.store.readTask(request.task);
   if (task === undefined)
     return { ok: false, code: 'NOT_FOUND', message: 'no such item' };
-  if (recipeWorkSpecSchema.safeParse(task.task.work['spec']).success)
+  const runs = await context.runtime.store.listRuns(request.task);
+  if (
+    recipeWorkSpecSchema.safeParse(task.task.work['spec']).success ||
+    runs.some((run) => Boolean(run.params?.['jobOccurrence']))
+  )
     return {
       ok: false,
       code: 'FORBIDDEN',
@@ -197,7 +207,6 @@ export async function requestReply(
       code: 'FORBIDDEN',
       message: 'Internal summary work does not accept coding replies',
     };
-  const runs = await context.runtime.store.listRuns(request.task);
   const state = deriveItemState(task.task, runs);
 
   const payload = workPayloadSchema.safeParse(task.task.work);

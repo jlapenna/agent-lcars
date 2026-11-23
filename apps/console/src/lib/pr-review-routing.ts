@@ -7,13 +7,25 @@ import {
 export const UNIFIED_REVIEW_LABEL = 'review';
 export const UNIFIED_REVIEW_COMMAND = '/review';
 
-const AUTOMATED_BOT_LOGINS = new Set([
+const DEPENDENCY_BOT_LOGINS = new Set([
   'renovate[bot]',
   'app/renovate',
   'dependabot[bot]',
   'app/dependabot',
+]);
+
+const AUTOMATED_BOT_LOGINS = new Set([
+  ...DEPENDENCY_BOT_LOGINS,
   'github-actions[bot]',
 ]);
+
+/**
+ * Renovate groups in `jlapenna/agent-lcars` whose updates change executable
+ * review/runtime pins and require explicit review + qualification once a
+ * maintainer marks their draft PR ready for review (`renovate.json`).
+ */
+const QUALIFICATION_REQUIRED_RENOVATE_REF_RE =
+  /^renovate\/(?:major-)?(?:runner-cli-runtimes|anthropic-review-workflow)$/iu;
 
 const ATTEMPT_CLAIM_RE = /<!--\s*attempt-claim:g\d+:([^\s>]+)\s*-->/gu;
 
@@ -37,6 +49,25 @@ export function isAutomatedReviewExcludedAuthor(
 ): boolean {
   if (!login) return false;
   return AUTOMATED_BOT_LOGINS.has(login.toLowerCase());
+}
+
+export function isUnattendedDependencyBotPullRequest(input: {
+  userLogin: string | undefined;
+  headRef?: string | undefined;
+  action?: string | undefined;
+  senderLogin?: string | undefined;
+}): boolean {
+  if (!input.userLogin) return false;
+  if (!DEPENDENCY_BOT_LOGINS.has(input.userLogin.toLowerCase())) return false;
+  if (
+    input.action !== 'ready_for_review' &&
+    input.senderLogin !== undefined &&
+    !DEPENDENCY_BOT_LOGINS.has(input.senderLogin.toLowerCase())
+  ) {
+    return false;
+  }
+  const normalizedRef = input.headRef ?? '';
+  return !QUALIFICATION_REQUIRED_RENOVATE_REF_RE.test(normalizedRef);
 }
 
 export interface PullRequestAuthorSignals {
@@ -243,4 +274,49 @@ export function selectCrossModelReviewer(input: {
     fallbackPipelines,
     crossModelOverride,
   };
+}
+
+export interface PullRequestRemediationSelection {
+  pipeline: AgentPipeline;
+  fallbackPipelines: AgentPipeline[];
+}
+
+const DEFAULT_REMEDIATION_ORDER: readonly AgentPipeline[] = [
+  'claude',
+  'codex',
+  'agy',
+];
+
+/**
+ * Selects the primary coding pipeline and ordered quota-fallback pipelines
+ * for remediating review comments or merge conflicts on a pull request.
+ * Prefers the authoring pipeline first, then falls back across the remaining
+ * supported coding providers so a single provider's quota limit never stalls
+ * PR remediation or loops a human in.
+ */
+export function selectPullRequestRemediation(input: {
+  authorPipeline?: AgentPipeline;
+  preferredPipeline?: AgentPipeline;
+  supportedPipelines?: readonly AgentPipeline[];
+}): PullRequestRemediationSelection {
+  const repoSupported = input.supportedPipelines ?? DISPATCH_PIPELINES;
+  const supportedSet = new Set<AgentPipeline>(
+    repoSupported.length > 0 ? repoSupported : DISPATCH_PIPELINES,
+  );
+  const candidates: AgentPipeline[] = [];
+  for (const candidate of [
+    input.preferredPipeline,
+    input.authorPipeline,
+    ...DEFAULT_REMEDIATION_ORDER,
+  ]) {
+    if (
+      candidate !== undefined &&
+      supportedSet.has(candidate) &&
+      !candidates.includes(candidate)
+    ) {
+      candidates.push(candidate);
+    }
+  }
+  const [pipeline = 'claude', ...fallbackPipelines] = candidates;
+  return { pipeline, fallbackPipelines };
 }

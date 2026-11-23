@@ -32,6 +32,7 @@ import {
 import {
   E2E_ANTIGRAVITY_SESSION_IDS,
   E2E_OPENCODE_SESSION_IDS,
+  E2E_PAGINATED_SESSION_ID,
 } from '../../../../lib/e2e-transcript-fixtures';
 
 const RUNNER_STATUS_COLLECTION = 'runner-status';
@@ -452,6 +453,14 @@ export async function POST(req: NextRequest) {
           renderable: true,
         });
       }
+      docs.push({
+        ...fixtureIssueAgentSession(),
+        sessionId: E2E_PAGINATED_SESSION_ID,
+        agent: 'claude-code',
+        title: `Paginated archive ${E2E_PAGINATED_SESSION_ID}`,
+        transcriptGcsUri: `gs://e2e-transcripts/${E2E_PAGINATED_SESSION_ID}.jsonl`,
+        renderable: true,
+      });
     }
     // Full-fixture writes, not a status update - nothing to clear. See
     // SessionWrite's doc comment (@agent-lcars/telemetry): upsertSession

@@ -13,7 +13,6 @@ export type ActionType =
   | 'run-failed'
   | 'review-requested'
   | 'post-deploy-action'
-  | 'merge-blocked'
   | 'silent-error'
   /** `status:blocked` - waiting on an external dependency or prerequisite.
    *  The label contract keeps it distinct from `needs-human`: nobody has a
@@ -88,7 +87,6 @@ export interface ActionItemsResult {
 const ACTION_PRIORITY: Record<ActionType, number> = {
   'needs-human': 0,
   'review-requested': 0,
-  'merge-blocked': 0,
   'ready-for-agent': 1,
   'run-failed': 1,
   'silent-error': 1,
@@ -183,17 +181,9 @@ export function actionItemFromGithubAnchorProjection(
     projection.draft !== true &&
     projection.requestedReviewerLogins?.includes(maintainerLogin());
   if (reviewRequested) actionTypes.push('review-requested');
-  const blockedByThreads =
-    projection.mergeableState === 'blocked' &&
-    (projection.unresolvedReviewThreadCount ?? 0) > 0;
-  if (
-    projection.kind === 'pr' &&
-    !reviewRequested &&
-    projection.draft !== true &&
-    (projection.mergeableState === 'behind' || blockedByThreads)
-  ) {
-    actionTypes.push('merge-blocked');
-  }
+  // Unresolved review threads, behind branches, and merge conflicts are agent
+  // remediation work, never a human Inbox decision unless an agent explicitly
+  // parks (`status:needs-human`).
   const failingChecks = (projection.checkRuns ?? []).filter(
     (check) => check.status === 'completed' && check.conclusion === 'failure',
   );
