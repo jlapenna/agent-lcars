@@ -15,6 +15,7 @@ export function RemainderDisclosure({
   total,
   noun,
   children,
+  open = false,
   'data-testid': testId,
 }: {
   shown: number;
@@ -23,6 +24,8 @@ export function RemainderDisclosure({
   noun: string;
   /** The rows after the first `shown`. */
   children: ReactNode;
+  /** Start expanded, e.g. when the reader asked for every row. */
+  open?: boolean;
   'data-testid'?: string;
 }) {
   if (total <= shown) return null;
@@ -30,6 +33,7 @@ export function RemainderDisclosure({
     <details
       className="lcars-disclosure remainder-disclosure"
       data-testid={testId}
+      open={open || undefined}
     >
       <summary className="lcars-disclosure__summary">
         Showing {shown} of {total} · show {total - shown} more {noun}
