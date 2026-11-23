@@ -121,8 +121,9 @@ read_verdict() {
   esac
 }
 
-# Verdicts read during this run, by pull request number, so the head pass
-# below does not read the same reviews again.
+# Verdicts read during this run, by pull request and head, so the head pass
+# below does not read the same reviews again. The head is part of the key: a
+# pull request can move to a new commit while this runs.
 declare -A verdict_state verdict_description
 declare -A candidate_heads
 while read -r pr head; do
@@ -156,8 +157,8 @@ for target in "${!candidate_heads[@]}"; do
       description="Awaiting GitHub merge candidate"
     else
       read_verdict
-      verdict_state[$pr]=$state
-      verdict_description[$pr]=$description
+      verdict_state[$pr:$head]=$state
+      verdict_description[$pr:$head]=$description
     fi
     selected_pr=$pr
     [[ "$state" == success ]] || break
@@ -184,9 +185,9 @@ while read -r _ head; do
   [[ -n "$matching" ]] || continue
   selected_pr=
   while read -r pr; do
-    if [[ -n ${verdict_state[$pr]:-} ]]; then
-      state=${verdict_state[$pr]}
-      description=${verdict_description[$pr]}
+    if [[ -n ${verdict_state[$pr:$head]:-} ]]; then
+      state=${verdict_state[$pr:$head]}
+      description=${verdict_description[$pr:$head]}
     else
       read_candidate
       # The pull request may have moved to another head or base since the scan.
