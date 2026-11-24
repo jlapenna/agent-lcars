@@ -12,8 +12,10 @@ import { getAuthoritativeQueueItems } from './authoritative-queue';
  * Task, Run, webhook anchors and autoscaler status) and take about 0.3 s
  * and 0.5 s uncached. They used to sit behind a 30 to 60 s cache, which made
  * every page show runs and queue state up to a minute old. React's `cache`
- * shares one read between the page, the frame's readouts and the inbox
- * badge within a request, so a render pays for each read once.
+ * shares one read between the page and its components within a render. The
+ * frame's readouts and inbox badge load in a separate request (a Route
+ * Handler, where `cache` does not share), so `loadShellReadouts` passes one
+ * activity read to the inbox snapshot explicitly.
  */
 
 /** Wall-clock time the underlying read ran. The header's "Data as of" label

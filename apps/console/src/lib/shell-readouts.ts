@@ -99,9 +99,12 @@ export async function loadShellReadouts(): Promise<ShellReadouts | undefined> {
   };
   if (!session.user.isAdmin) return base;
 
+  // This runs in a Route Handler, where `React.cache` does not share reads, so
+  // start the activity read once and hand it to the inbox snapshot.
+  const activityRead = getCachedAgentActivity();
   const [activity, snapshot, tokens, merges] = await Promise.all([
-    getCachedAgentActivity().catch(() => undefined),
-    loadInboxNotificationSnapshot().catch(() => undefined),
+    activityRead.catch(() => undefined),
+    loadInboxNotificationSnapshot(activityRead).catch(() => undefined),
     readRecentTokens().catch(() => ({}) as RecentTokens),
     // Counted from GitHub across the watched repositories, so merges no
     // recorded session referenced still count.
