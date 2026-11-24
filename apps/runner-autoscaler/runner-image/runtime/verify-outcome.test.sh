@@ -9,6 +9,12 @@ mkdir "$fixture_dir/bin"
 cat > "$fixture_dir/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$*" == "api repos/octo/example/pulls/42 --jq .user.login" ]]; then
+  printf '%s\n' author >> "$FIXTURE_DIR/calls"
+  [ "${FAIL_LOOKUP:-}" != author ] || { echo 'transient API error' >&2; exit 1; }
+  cat "$FIXTURE_DIR/author"
+  exit 0
+fi
 [[ "$*" == *"--paginate --slurp"* ]] || exit 12
 case "$*" in
   *'pulls?state=all'*) name=prs ;;
@@ -27,6 +33,7 @@ export VERIFIED_OUTCOME_FILE="$fixture_dir/verified.json" RUNTIME_ENV="$fixture_
 marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
 reset_fixture() {
   for name in prs comments reviews; do echo '[[]]' > "$fixture_dir/$name.json"; done
+  echo octocat > "$fixture_dir/author"
   : > "$fixture_dir/calls"
   : > "$RUNTIME_ENV"
   unset FAIL_LOOKUP
@@ -62,12 +69,44 @@ verify
 assert_json '.outcome == "park" and .outcomeReference.number == 12 and .outcomeReference.related[0].id == 99'
 # Matching reviews are accepted only in review mode.
 reset_fixture
-jq -cn --arg marker "$marker" '[[{id:100,user:{type:"Bot"},body:$marker,html_url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}]]' > "$fixture_dir/reviews.json"
+review_fixture() {
+  jq -cn --arg marker "$marker" --arg state "$1" '[[{id:100,state:$state,user:{type:"Bot",login:"agent-lcars[bot]"},body:$marker,html_url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}]]' > "$fixture_dir/reviews.json"
+}
+review_fixture APPROVED
 if verify; then echo 'accepted review in reply mode' >&2; exit 1; fi
 ! grep -Fxq reviews "$fixture_dir/calls"
+# The review state is the verdict: an approval, a change request, or either
+# one a later push dismissed.
+for state in APPROVED CHANGES_REQUESTED DISMISSED; do
+  reset_fixture
+  MODE=review
+  review_fixture "$state"
+  verify
+  assert_json '.outcome == "review" and .outcomeReference.url == "https://github.com/octo/example/pull/42#pullrequestreview-100"'
+done
+# A COMMENT is not a verdict, whatever its body says.
+reset_fixture
 MODE=review
+review_fixture COMMENTED
+if verify; then echo 'accepted a COMMENT review as a verdict' >&2; exit 1; fi
+[ ! -e "$VERIFIED_OUTCOME_FILE" ]
+grep -Fq 'NO_DELIVERABLE=1' "$RUNTIME_ENV"
+grep -Fq 'event is APPROVE or REQUEST_CHANGES' "$fixture_dir/output"
+# GitHub refuses both on the reviewer's own pull request, so a COMMENT stands there.
+reset_fixture
+MODE=review
+review_fixture COMMENTED
+echo 'agent-lcars[bot]' > "$fixture_dir/author"
 verify
-assert_json '.outcome == "review" and .outcomeReference.url == "https://github.com/octo/example/pull/42#pullrequestreview-100"'
+assert_json '.outcome == "review"'
+# A failed author lookup is a failed lookup, never a verdict or a missing one.
+reset_fixture
+MODE=review
+review_fixture APPROVED
+export FAIL_LOOKUP=author
+if verify; then echo 'accepted a review without reading the author' >&2; exit 1; fi
+grep -Fq 'FAILED lookup' "$fixture_dir/output"
+[ ! -s "$RUNTIME_ENV" ]
 # Verification failures neither invent evidence nor collapse into no-deliverable.
 reset_fixture
 export FAIL_LOOKUP=comments
