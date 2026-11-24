@@ -15,7 +15,7 @@ upstream-procedure updates arrive as draft PRs outside unattended auto-merge;
 the maintainer completing an update runs qualification before making it ready.
 
 Run this explicit, paid functional evaluation when qualifying runtime CLI
-updates, updating the `third_party/anthropic-plugins` submodule gitlink, or
+updates, updating the pinned `@anthropics/claude-plugins-official` review dependency, or
 changing how native child-session delegation or isolation works across
 harnesses. Maintainer-directed policy refinements inside the LCARS adapter
 (`README.md` review-tier thresholds, pass responsibilities, materiality filters,

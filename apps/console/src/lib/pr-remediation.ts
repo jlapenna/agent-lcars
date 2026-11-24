@@ -1407,10 +1407,7 @@ export async function reconcileOpenPullRequestRemediations(
     projection: (typeof projections)[number],
   ): boolean =>
     (projection.unresolvedReviewThreadCount ?? 0) > 0 ||
-    projection.mergeableState === 'dirty' ||
-    projection.failingChecks?.some((check) =>
-      check.name.startsWith('LCARS review'),
-    ) === true;
+    projection.mergeableState === 'dirty';
 
   const eligible = projections.filter((projection) => {
     if (
@@ -1442,7 +1439,7 @@ export async function reconcileOpenPullRequestRemediations(
       projection.reviewRequirement === 'required'
     );
   });
-  // Prioritize PRs with concrete thread, merge-conflict, or LCARS-review block
+  // Prioritize PRs with a concrete thread or merge-conflict
   // signals ahead of generic `reviewRequirement === 'required'`.
   eligible.sort(
     (left, right) =>
