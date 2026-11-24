@@ -30,6 +30,7 @@ export function summaryFromSessionDoc(doc: SessionDoc): SessionSummary {
     toolCallCounts: doc.toolCallCounts,
     tokens: doc.tokens,
     deliverables: doc.deliverables,
+    ...(doc.parentSessionId && { parentSessionId: doc.parentSessionId }),
     ...(doc.lastToolCall && { lastToolCall: doc.lastToolCall }),
     ...(doc.model && { model: doc.model }),
     ...(doc.resolvedModel && { resolvedModel: doc.resolvedModel }),

@@ -117,6 +117,9 @@ export function buildSessionDoc(
     sessionId: summary.sessionId,
     liveness,
     agent,
+    ...(summary.parentSessionId && {
+      parentSessionId: summary.parentSessionId,
+    }),
     startedAt: summary.startedAt,
     lastActivityAt: summary.lastActivityAt,
     ...(expireAt && { expireAt }),

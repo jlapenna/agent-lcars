@@ -331,6 +331,11 @@ export function parseSessionSummaryV1(
     actor && /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?$/u.test(actor)
       ? actor
       : undefined;
+  const parent = asString(record['parentSessionId']);
+  const parentSessionId =
+    parent && parent !== sessionId && isSafeIdentifier(parent)
+      ? parent
+      : undefined;
   const model = boundedString(record['model']);
   const resolvedModel = boundedString(record['resolvedModel']);
   const permissionMode = boundedString(record['permissionMode']);
@@ -353,6 +358,7 @@ export function parseSessionSummaryV1(
     ...(branch && { branch }),
     ...(herdrPaneId && { herdrPaneId }),
     ...(githubActor && { githubActor }),
+    ...(parentSessionId && { parentSessionId }),
     ...(model && { model }),
     ...(resolvedModel && { resolvedModel }),
     ...(permissionMode && { permissionMode }),
