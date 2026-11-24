@@ -455,8 +455,11 @@ the E2E command, selection rules, and any emergency opt-out; never hold a
 ready push or PR open only to run local E2E.
 
 For every ready, non-parked pull request you open, **do not request human
-review**. Fleet repositories require zero approving reviews for agent-authored
-PRs; a review request is friction, not a handoff. Publish new PRs as drafts: this lets you check interpreted links before a
+review**. A fleet repository's review gate is one approving review of the
+current head, and the LCARS review supplies it; a review request to a person
+is friction, not a handoff. The one pull request LCARS cannot approve is one
+its own GitHub identity opened, because GitHub lets no account approve its own
+pull request: that one merges after a maintainer approves it. Publish new PRs as drafts: this lets you check interpreted links before a
 ready-PR auto-merge backstop can arm them. After the check passes and either
 required review passes or the advertised native handoff below allows
 asynchronous GitHub review to remain pending, mark the draft ready, refresh the
