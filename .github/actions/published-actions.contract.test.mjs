@@ -27,13 +27,6 @@ const actionsDirectory = path.resolve('.github/actions');
 // `default` is asserted only when present here (multi-line defaults are
 // asserted by requiredness alone).
 const PUBLISHED = {
-  'publish-lcars-review': {
-    inputs: {
-      'client-id': { required: true },
-      'private-key': { required: true },
-    },
-    outputs: [],
-  },
   'setup-repo-checks': {
     inputs: {
       tool: { required: true },

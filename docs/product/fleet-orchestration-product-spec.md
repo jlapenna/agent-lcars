@@ -1019,7 +1019,7 @@ consumed by every dispatched run in every member repository.
   - Composite actions: `mint-agent-token`, `assert-repo-vars`,
     `merge-live-base`, `setup-nx-remote-cache`, `deploy-verify`, `oidc-post`,
     `control-flag`, and `setup-repo-checks`.
-  - Reusable workflows: `renovate-auto-approve`, `agent-automerge-reusable`,
+  - Reusable workflows: `agent-automerge-reusable`,
     `repo-validation`, and `codeql-reusable`.
   - The direct-runner image (`homelab-runner:jit-node24`). This repository
     owns its Dockerfile; GitHub Actions never publishes it. Homelab's
