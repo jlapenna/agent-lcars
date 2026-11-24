@@ -143,6 +143,10 @@
         {
           "serviceAccount": "claw-homelab-ops@agent-lcars.iam.gserviceaccount.com",
           "reason": "The homelab-ops claw zone executor credential (agent-lcars#3349; Homelab vault claw_zone_executor_key_json) is consumed only by the zone's QueueExecutor instance on the homelab controller, which runs outside GitHub Actions and has no OIDC identity to federate. Its Work grant admits work.executor for the zone's claw pipelines only, and it is never mounted into claw Job pods."
+        },
+        {
+          "serviceAccount": "github-actions-exporter@agent-lcars.iam.gserviceaccount.com",
+          "reason": "The GitHub Actions exporter's event subscriber credential (agent-lcars#3525; Homelab vault github_actions_exporter_key_json) is consumed only by the exporter container on the homelab controller, which runs outside GitHub Actions and has no OIDC identity to federate. It holds roles/pubsub.subscriber on the github-actions-exporter subscription and nothing else."
         }
       ]
     },
