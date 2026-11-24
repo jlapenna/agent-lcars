@@ -1245,6 +1245,17 @@ async function reconcilePullRequestRemediationOnce(
     return { action: 'rereviewed', outcome };
   }
 
+  // Every enrolled ruleset requires conversation resolution, so a thread
+  // remediation must not act on (an untrusted author's) still blocks the
+  // merge. Hand it to a human instead of leaving the PR blocked unseen.
+  const unresolvedThreadCount = snapshot.reviewThreads.nodes.filter(
+    (thread) => thread !== null && !thread.isResolved,
+  ).length;
+  if (unresolvedThreadCount > unresolvedThreadIds.length) {
+    await applyNeedsHumanLabel(deps, anchor);
+    return { action: 'ignored', reason: 'untrusted-threads' };
+  }
+
   return { action: 'ignored', reason: 'clean' };
 }
 
