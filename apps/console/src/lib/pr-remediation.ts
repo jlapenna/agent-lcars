@@ -51,7 +51,6 @@ import {
   parseAttemptClaimRunId,
   selectCrossModelReviewer,
   selectPullRequestRemediation,
-  UNIFIED_REVIEW_LABEL,
 } from './pr-review-routing';
 import {
   hasCrossRepoOption,
@@ -887,37 +886,28 @@ async function reconcilePullRequestRemediationOnce(
     (settledMode === 'implement' || settledMode === 'reply') &&
     !hasCurrentHeadLcarsReview
   ) {
-    const requiresReview = anchor.repo.toLowerCase() === 'jlapenna/agent-lcars';
-    const hasReviewLabel = labels.some(
-      (name) => REVIEW_LABELS.has(name) || name === UNIFIED_REVIEW_LABEL,
-    );
-    const hadPriorReview = runs.some(
-      (run) => run.params?.['mode'] === 'review',
-    );
-    if (requiresReview || hasReviewLabel || hadPriorReview) {
-      const requestedPipeline = labels
-        .map((name) => REVIEW_LABELS.get(name))
-        .find((pipeline) => pipeline !== undefined);
-      const selection = selectCrossModelReviewer({
-        repo: anchor.repo,
-        authorPipeline,
-        requestedPipeline,
-        supportedPipelines,
-      });
-      const requestId = `${PR_REREVIEW_REQUEST_PREFIX}${anchor.issue}:${snapshot.headRefOid.slice(0, 16)}`;
-      const outcome = await admitGithubWork(deps, {
-        anchor,
-        requestId,
-        params: {
-          mode: 'review',
-          ...crossRepo,
-        },
-        work: buildAnchorWork(selection.pipeline),
-        workMirrorsAnchor: true,
-        fallbackPipelines: selection.fallbackPipelines,
-      });
-      return { action: 'rereviewed', outcome };
-    }
+    const requestedPipeline = labels
+      .map((name) => REVIEW_LABELS.get(name))
+      .find((pipeline) => pipeline !== undefined);
+    const selection = selectCrossModelReviewer({
+      repo: anchor.repo,
+      authorPipeline,
+      requestedPipeline,
+      supportedPipelines,
+    });
+    const requestId = `${PR_REREVIEW_REQUEST_PREFIX}${anchor.issue}:${snapshot.headRefOid.slice(0, 16)}`;
+    const outcome = await admitGithubWork(deps, {
+      anchor,
+      requestId,
+      params: {
+        mode: 'review',
+        ...crossRepo,
+      },
+      work: buildAnchorWork(selection.pipeline),
+      workMirrorsAnchor: true,
+      fallbackPipelines: selection.fallbackPipelines,
+    });
+    return { action: 'rereviewed', outcome };
   }
 
   return { action: 'ignored', reason: 'clean' };

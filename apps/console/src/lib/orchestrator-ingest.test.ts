@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { withConsoleReplyMarker } from './console-reply-marker';
 import { type IngestResult, interpretDelivery } from './orchestrator-ingest';
@@ -1187,6 +1187,80 @@ describe('interpretDelivery repository allow-list (#1190)', () => {
 });
 
 describe('unified cross-model PR review intake', () => {
+  // Joe's rule: the review mechanism is the same in every repository. A
+  // branch on a repository name, or on "this repository versus the others",
+  // fails here.
+  describe('is identical in every repository', () => {
+    const OTHER_REPO = 'supersprinklesracing/sprinkles';
+    const decide = (
+      repo: string,
+      action: string,
+      author: string,
+      labels: string[],
+    ) => {
+      const result = interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: {
+          action,
+          repository: { full_name: repo },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: 91,
+            title: 'feat: change',
+            body: 'Change.',
+            user: { login: author, type: 'User' },
+            head: { ref: 'feat/change', sha: 'c'.repeat(40) },
+            labels: labels.map((name) => ({ name })),
+          },
+          sender: { login: 'jlapenna' },
+        },
+      });
+      return JSON.parse(JSON.stringify(result).replaceAll(repo, '<repo>'));
+    };
+
+    beforeEach(() => {
+      process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
+        `${REPO},${OTHER_REPO}`;
+      process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+        { owner: 'jlapenna', name: 'agent-lcars' },
+        { owner: 'supersprinklesracing', name: 'sprinkles' },
+      ]);
+    });
+    afterEach(() => {
+      delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
+      delete process.env['AGENT_LCARS_WATCHED_REPOS'];
+    });
+
+    const actions = ['opened', 'ready_for_review', 'synchronize', 'reopened'];
+    const authors = ['jlapenna', 'agent-lcars[bot]', 'github-actions[bot]'];
+    const labelSets = [
+      [],
+      ['review'],
+      ['review:codex'],
+      ['status:needs-human'],
+      ['bot:renovate'],
+    ];
+    const cases = actions.flatMap((action) =>
+      authors.flatMap((author) =>
+        labelSets.map((labels) => ({ action, author, labels })),
+      ),
+    );
+
+    it.each(cases)(
+      '$action by $author with labels $labels',
+      ({ action, author, labels }) => {
+        const here = decide(REPO, action, author, labels);
+        expect(decide(OTHER_REPO, action, author, labels)).toEqual(here);
+        expect(here).toMatchObject({
+          kind: 'request',
+          params: { mode: 'review' },
+        });
+      },
+    );
+  });
+
   it('auto-triggers Claude review with Antigravity fallback when a Codex PR opens ready for review', () => {
     const result = interpretDelivery({
       event: 'pull_request',
@@ -1539,7 +1613,7 @@ describe('unified cross-model PR review intake', () => {
     });
   });
 
-  it('auto-triggers re-review on synchronize in member repositories even when review:* is attached, while still excluding Renovate', () => {
+  it('reviews a push in every repository, labeled or not, while still excluding Renovate', () => {
     const MEMBER_REPO = 'jlapenna/sync-padd';
     process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
       `${REPO},${MEMBER_REPO}`;
@@ -1592,9 +1666,10 @@ describe('unified cross-model PR review intake', () => {
           sender: { login: 'agent-lcars[bot]' },
         },
       });
-      expect(unlabeledSync).toEqual({
-        kind: 'ignore',
-        reason: 'unhandled-action',
+      expect(unlabeledSync).toMatchObject({
+        kind: 'request',
+        taskId: { repo: MEMBER_REPO, issue: 224 },
+        params: { mode: 'review' },
       });
 
       const renovate = interpretDelivery({

@@ -5,6 +5,7 @@ import {
   type GithubAnchorProjection,
   MemoryStore,
   Orchestrator,
+  type Run,
   type TaskId,
 } from '@agent-lcars/orchestrator';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -666,6 +667,36 @@ describe('automatic pull-request review & conflict remediation', () => {
     expect(
       await reconcilePullRequestRemediation(f.remediationDeps, anchor),
     ).toEqual({ action: 'ignored', reason: 'parked-or-excluded-label' });
+  });
+
+  it('requests the missing current-head review after a fix run in any repository, with no label or earlier review', async () => {
+    const f = createFixture();
+    const anchor = { repo: REPO, issue: 4020 };
+    f.setPr(REPO, 4020, {
+      author: { login: 'jlapenna' },
+      labels: [],
+      reviews: [],
+      mergeStateStatus: 'BLOCKED',
+    });
+    const afterRun = {
+      runId: `${REPO}#4020/r1`,
+      params: { mode: 'implement' },
+      result: { ok: true, summary: 'pull-request' },
+    } as unknown as Run;
+
+    const result = await reconcilePullRequestRemediation(
+      f.remediationDeps,
+      anchor,
+      { afterRun },
+    );
+
+    expect(result).toMatchObject({
+      action: 'rereviewed',
+      outcome: { kind: 'accepted' },
+    });
+    expect(await f.store.readActiveRun(anchor)).toMatchObject({
+      params: { mode: 'review' },
+    });
   });
 
   it('defers while the issue-anchored run authoring the PR branch is still live', async () => {
