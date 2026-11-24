@@ -1206,6 +1206,9 @@ export const runClaimResponseSchema = z.strictObject({
   /** Present for native Work anchors only. */
   workId: workIdSchema.optional(),
   pipeline: z.string(),
+  /** The run's Work mode. The executor launches `review` runs with its
+   * smaller review shape when one is configured. */
+  mode: z.string().min(1).max(64).optional(),
   /** A goose recipe whose admitted profile runs its tools on Claude or
    * Antigravity; the executor projects that credential only into that worker. */
   providerAuth: z.enum(['claude', 'agy']).optional(),
