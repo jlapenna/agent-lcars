@@ -379,21 +379,25 @@ describe('getSessionArchive', () => {
     expect(result.rows.map((row) => row.sessionId)).toEqual(['a1']);
   });
 
-  it('reads the default window and narrower ones through the synced archive', async () => {
+  it('reads windows longer than a day through the synced archive', async () => {
     (listSessionDocs as Mock).mockResolvedValue([]);
     syncedReads.length = 0;
 
     await getSessionArchive({ days: 14 });
-    await getSessionArchive({ days: 1 });
-    expect(syncedReads).toEqual([14, 1]);
+    await getSessionArchive({ days: 7 });
+    expect(syncedReads).toEqual([14, 7]);
 
-    // Wider windows and a snapshot's own clock always read Firestore.
+    // A day or less, wider windows and a snapshot's own clock always read
+    // Firestore directly.
+    (listSessionDocs as Mock).mockClear();
+    await getSessionArchive({ days: 1 });
     await getSessionArchive({ days: 30 });
     await getSessionArchive(
-      { days: 1 },
+      { days: 7 },
       { observedAt: new Date().toISOString() },
     );
-    expect(syncedReads).toEqual([14, 1]);
+    expect(syncedReads).toEqual([14, 7]);
+    expect(listSessionDocs).toHaveBeenCalledTimes(3);
   });
 
   it('keeps one archive per process, shared by every module graph that loads it', async () => {
