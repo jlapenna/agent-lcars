@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import socket
 import sys
@@ -2408,7 +2409,133 @@ class PerOwnerQuotaTests(unittest.TestCase):
             )
         else:
             response.json.return_value = payload
+            response.content = json.dumps(payload).encode()
         return response
+
+    def conditional_api(self, registry=None):
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=("jlapenna/homelab",),
+        )
+        api = exporter.GitHubAPI(
+            config,
+            exporter.ExporterState(registry or CollectorRegistry()),
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+        self.addCleanup(api.close)
+        return api
+
+    def test_unchanged_resource_is_reread_with_a_free_conditional_request(self):
+        # GitHub does not charge a 304 Not Modified against the rate limit,
+        # so runs that never change (including ones GitHub leaves stuck for
+        # weeks) cost nothing to re-read.
+        registry = CollectorRegistry()
+        api = self.conditional_api(registry)
+        path = "/repos/jlapenna/homelab/actions/runs/7"
+        quota = {"x-ratelimit-remaining": "4000", "x-ratelimit-reset": "9999999999"}
+        api.session.get = Mock(
+            side_effect=[
+                self.json_response(
+                    {"id": 7, "status": "queued"}, headers={"ETag": '"e1"', **quota}
+                ),
+                self.json_response(
+                    None,
+                    status_code=304,
+                    headers={"ETag": '"e1"', **quota, "x-ratelimit-remaining": "499"},
+                ),
+                self.json_response(
+                    {"id": 7, "status": "completed"},
+                    headers={"ETag": '"e2"', **quota},
+                ),
+                self.json_response(None, status_code=304, headers={"ETag": '"e2"'}),
+            ]
+        )
+
+        first = api.get(path, endpoint="run")
+        second = api.get(path, endpoint="run")
+        self.assertEqual(second, {"id": 7, "status": "queued"})
+        # Each call gets its own payload; callers may mutate what they read.
+        self.assertIsNot(second, first)
+        self.assertNotIn(
+            "If-None-Match", api.session.get.call_args_list[0].kwargs["headers"]
+        )
+        self.assertEqual(
+            api.session.get.call_args_list[1].kwargs["headers"]["If-None-Match"], '"e1"'
+        )
+        # A 304 still carries quota headers, and they still gate optional calls.
+        self.assertFalse(api.has_optional_quota("jlapenna"))
+
+        self.assertEqual(
+            api.get(path, endpoint="run"), {"id": 7, "status": "completed"}
+        )
+        self.assertEqual(
+            api.get(path, endpoint="run"), {"id": 7, "status": "completed"}
+        )
+        self.assertEqual(
+            api.session.get.call_args_list[3].kwargs["headers"]["If-None-Match"], '"e2"'
+        )
+        self.assertEqual(
+            registry.get_sample_value(
+                "github_actions_exporter_api_requests_total",
+                {"owner": "jlapenna", "endpoint": "run", "status": "304"},
+            ),
+            2.0,
+        )
+
+    def test_conditional_requests_are_keyed_by_path_and_params(self):
+        api = self.conditional_api()
+        path = "/repos/jlapenna/homelab/actions/runs"
+        api.session.get = Mock(
+            side_effect=[
+                self.json_response({"page": 1}, headers={"ETag": '"p1"'}),
+                self.json_response({"page": 2}, headers={"ETag": '"p2"'}),
+                self.json_response(None, status_code=304),
+            ]
+        )
+        api.get(path, endpoint="runs", params={"page": 1})
+        api.get(path, endpoint="runs", params={"page": 2})
+        self.assertNotIn(
+            "If-None-Match", api.session.get.call_args_list[1].kwargs["headers"]
+        )
+        self.assertEqual(
+            api.get(path, endpoint="runs", params={"page": 2}), {"page": 2}
+        )
+        self.assertEqual(
+            api.session.get.call_args_list[2].kwargs["headers"]["If-None-Match"], '"p2"'
+        )
+
+    def test_response_without_etag_stays_unconditional_and_stray_304_fails(self):
+        api = self.conditional_api()
+        path = "/repos/jlapenna/homelab/actions/runs/8"
+        api.session.get = Mock(
+            side_effect=[
+                self.json_response({"id": 8}),
+                self.json_response(None, status_code=304),
+            ]
+        )
+        self.assertEqual(api.get(path, endpoint="run"), {"id": 8})
+        with self.assertRaises(exporter.GitHubPayloadError):
+            api.get(path, endpoint="run")
+        self.assertNotIn(
+            "If-None-Match", api.session.get.call_args_list[1].kwargs["headers"]
+        )
+
+    def test_conditional_cache_drops_least_recently_used_entries(self):
+        api = self.conditional_api()
+        paths = [f"/repos/jlapenna/homelab/actions/runs/{n}" for n in (1, 2, 3)]
+        api.session.get = Mock(
+            side_effect=lambda url, **_: self.json_response(
+                {"url": url}, headers={"ETag": f'"{url[-1]}"'}
+            )
+        )
+        with patch.object(exporter, "CONDITIONAL_CACHE_ENTRIES", 2):
+            for path in paths:
+                api.get(path, endpoint="run")
+            api.get(paths[0], endpoint="run")
+        self.assertNotIn(
+            "If-None-Match", api.session.get.call_args_list[3].kwargs["headers"]
+        )
 
     def test_one_owners_quota_does_not_overwrite_anothers(self):
         # GitHub meters each installation against its own core quota. A single

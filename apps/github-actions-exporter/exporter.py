@@ -10,6 +10,7 @@ import os
 import sqlite3
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -75,6 +76,12 @@ CONCURRENCY_GROUPS_PER_CYCLE_LIMIT = 20
 OPTIONAL_METADATA_MIN_REMAINING = 500
 MIN_RATE_LIMIT_BACKOFF_SECONDS = 60.0
 MAX_RATE_LIMIT_BACKOFF_SECONDS = 3600.0
+# Responses remembered for GitHub conditional requests. A 304 Not Modified
+# does not count against the rate limit, so re-reading a run or jobs list
+# that has not changed (including runs GitHub leaves stuck for weeks) is
+# free. Each poll reads roughly a hundred URLs; the oldest entries beyond
+# this bound are dropped and simply refetched in full.
+CONDITIONAL_CACHE_ENTRIES = 1024
 # A GitHub App installation token lives one hour. Re-mint with enough margin
 # that a token cannot expire between the check and the request that uses it,
 # including a slow paginated sweep.
@@ -714,6 +721,10 @@ class GitHubAPI:
         self._monotonic = monotonic
         self._quota_lock = threading.Lock()
         self._owner_quota: dict[str, _OwnerQuotaState] = {}
+        self._conditional_lock = threading.Lock()
+        self._conditional: OrderedDict[
+            tuple[str, tuple[tuple[str, str], ...]], tuple[str, bytes]
+        ] = OrderedDict()
         self.session = requests.Session()
         # Authorization is deliberately NOT a session header: it is resolved
         # per request from the repository's owner, because one App can hold a
@@ -850,24 +861,54 @@ class GitHubAPI:
                         quota.reset_epoch,
                     )
                 quota.blocked_until_monotonic = 0.0
+        cache_key = (
+            path,
+            tuple(sorted((str(k), str(v)) for k, v in (params or {}).items())),
+        )
+        with self._conditional_lock:
+            cached = self._conditional.get(cache_key)
+        headers = {"Authorization": self.credentials.authorization(owner)}
+        if cached is not None:
+            headers["If-None-Match"] = cached[0]
         response = self.session.get(
             f"{self.api_url}{path}",
             params=params,
             timeout=(5, 30),
-            headers={"Authorization": self.credentials.authorization(owner)},
+            headers=headers,
         )
         try:
             self.state.record_response(endpoint, response, owner)
-            try:
-                response.raise_for_status()
-            except requests.HTTPError as exc:
-                error = GitHubRequestError(endpoint, response)
-                self._update_owner_quota(
-                    owner, response, rate_limited_error=error.rate_limited
-                )
-                raise error from exc
-            self._update_owner_quota(owner, response, rate_limited_error=False)
-            payload = response.json()
+            if response.status_code == 304:
+                if cached is None:
+                    raise GitHubPayloadError(
+                        f"GitHub {endpoint} returned 304 to an unconditional request"
+                    )
+                self._update_owner_quota(owner, response, rate_limited_error=False)
+                with self._conditional_lock:
+                    if cache_key in self._conditional:
+                        self._conditional.move_to_end(cache_key)
+                # Parse per call so callers never share a mutable payload.
+                payload = json.loads(cached[1])
+            else:
+                try:
+                    response.raise_for_status()
+                except requests.HTTPError as exc:
+                    error = GitHubRequestError(endpoint, response)
+                    self._update_owner_quota(
+                        owner, response, rate_limited_error=error.rate_limited
+                    )
+                    raise error from exc
+                self._update_owner_quota(owner, response, rate_limited_error=False)
+                payload = response.json()
+                etag = _header(response.headers, "etag")
+                with self._conditional_lock:
+                    if etag and isinstance(payload, dict):
+                        self._conditional[cache_key] = (etag, response.content)
+                        self._conditional.move_to_end(cache_key)
+                        while len(self._conditional) > CONDITIONAL_CACHE_ENTRIES:
+                            self._conditional.popitem(last=False)
+                    else:
+                        self._conditional.pop(cache_key, None)
             if not isinstance(payload, dict):
                 raise GitHubPayloadError(
                     f"GitHub {endpoint} response was not an object"
