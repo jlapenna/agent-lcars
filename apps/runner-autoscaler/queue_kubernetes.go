@@ -80,6 +80,12 @@ type queueKubernetesConfig struct {
 	Tolerations       []queueToleration `yaml:"tolerations,omitempty"`
 	Requests          map[string]string `yaml:"requests"`
 	Limits            map[string]string `yaml:"limits"`
+	// ReviewResources is an optional smaller shape for provider `review`
+	// runs. Reviews read a checkout and talk to a model, using a fraction of
+	// the shape implement runs need, so a smaller slot places them as soon as
+	// a node frees that much room. Requests equal limits; every quantity
+	// stays within the legacy requests.
+	ReviewResources map[string]string `yaml:"review_resources,omitempty"`
 	// Runtimes declares per-pipeline execution runtimes (the claw adapter),
 	// keyed by claimed pipeline name. A claimed pipeline with an entry runs
 	// from that entry alone; every other pipeline keeps the legacy
@@ -139,6 +145,21 @@ func (c *queueKubernetesConfig) validate() error {
 		limit, err := resource.ParseQuantity(c.Limits[name])
 		if err != nil || limit.Cmp(request) < 0 {
 			return fmt.Errorf("kubernetes limits.%s must be at least its request", name)
+		}
+	}
+	if len(c.ReviewResources) == 0 {
+		return nil
+	}
+	if len(c.ReviewResources) != 3 {
+		return fmt.Errorf("kubernetes review_resources must declare exactly cpu, memory and ephemeral-storage")
+	}
+	for _, name := range []string{"cpu", "memory", "ephemeral-storage"} {
+		review, err := resource.ParseQuantity(c.ReviewResources[name])
+		if err != nil || review.Sign() <= 0 {
+			return fmt.Errorf("kubernetes review_resources.%s must be a positive quantity", name)
+		}
+		if review.Cmp(resource.MustParse(c.Requests[name])) > 0 {
+			return fmt.Errorf("kubernetes review_resources.%s must not exceed requests.%s", name, name)
 		}
 	}
 	return nil
@@ -833,10 +854,14 @@ func (q *kubernetesQueue) legacyJobShape(l directRunnerLaunch, runTokenEnv core.
 		volumes = append(volumes, core.Volume{Name: "codex-volatile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{Medium: core.StorageMediumMemory, SizeLimit: &size}}})
 		mounts = append(mounts, core.VolumeMount{Name: "codex-volatile", MountPath: directRunnerCodexVolatileMountPath})
 	}
+	requests, limits := q.config.Requests, q.config.Limits
+	if l.mode == "review" && l.pipeline != "goose" && len(q.config.ReviewResources) > 0 {
+		requests, limits = q.config.ReviewResources, q.config.ReviewResources
+	}
 	return queueJobShape{
 		container: "direct-runner", image: q.image, pullPolicy: core.PullAlways,
 		env: env, volumes: volumes, mounts: mounts,
-		requests: q.config.Requests, limits: q.config.Limits, deadline: deadline,
+		requests: requests, limits: limits, deadline: deadline,
 	}, nil
 }
 func ptr[T any](v T) *T { return &v }
