@@ -789,6 +789,22 @@ describe('automatic pull-request review & conflict remediation', () => {
       expect(dismissals).toHaveLength(1);
     });
 
+    it("approves a pull request carrying only Renovate's own label", async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4030, {
+        author: RENOVATE,
+        headRefName: 'renovate/vitest',
+        labels: ['bot:renovate'],
+        commits: [
+          { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+        ],
+      });
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'approved-dependency-update', head: HEAD_1 });
+    });
+
     it('approves a head once', async () => {
       const f = createFixture();
       f.setPr(REPO, 4030, {
@@ -849,7 +865,55 @@ describe('automatic pull-request review & conflict remediation', () => {
         },
       ],
       ['the pull request is a draft', { isDraft: true }],
-      ['the commits were not read', {}],
+      ['the commits were not read', { commits: undefined }],
+      [
+        'someone dismissed LCARS approval of this head',
+        {
+          reviews: [
+            {
+              databaseId: 951,
+              state: 'DISMISSED',
+              author: { __typename: 'Bot', login: 'agent-lcars' },
+              commit: { oid: HEAD_1 },
+            },
+          ],
+        },
+      ],
+      ['it is held for a human', { labels: ['status:needs-human'] }],
+      ['it is blocked', { labels: ['bot:renovate', 'status:blocked'] }],
+      [
+        'a reviewer requested changes on this head',
+        {
+          reviews: [
+            {
+              databaseId: 952,
+              state: 'CHANGES_REQUESTED',
+              author: { login: 'jlapenna' },
+              commit: { oid: HEAD_1 },
+            },
+          ],
+        },
+      ],
+      [
+        'a reviewer left a thread open',
+        {
+          reviewThreads: [
+            {
+              id: 'PRRT_OPEN',
+              isResolved: false,
+              comments: {
+                nodes: [
+                  {
+                    authorAssociation: 'OWNER',
+                    author: { __typename: 'User', login: 'jlapenna' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+      ['the review threads were only partly read', { threadsTruncated: true }],
     ])('does not approve when %s', async (_case, overrides) => {
       const f = createFixture();
       f.setPr(REPO, 4030, {
@@ -860,13 +924,6 @@ describe('automatic pull-request review & conflict remediation', () => {
         ],
         ...overrides,
       });
-      if (!('commits' in overrides) && !('isDraft' in overrides)) {
-        f.setPr(REPO, 4030, {
-          author: RENOVATE,
-          headRefName: 'renovate/vitest',
-          ...overrides,
-        });
-      }
 
       const result = await reconcilePullRequestRemediation(
         f.remediationDeps,

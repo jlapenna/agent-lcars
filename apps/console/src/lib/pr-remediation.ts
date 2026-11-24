@@ -458,6 +458,8 @@ async function readPullRequestSnapshot(
 function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
   blockingReviewKeys: string[];
   hasCurrentHeadLcarsReview: boolean;
+  /** Someone dismissed an LCARS review of this head: a decision to respect. */
+  hasDismissedCurrentHeadLcarsReview: boolean;
 } {
   const head = snapshot.headRefOid;
   const latestByAuthor = new Map<
@@ -465,6 +467,7 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
     { verdict: 'blocked' | 'clear'; key: string }
   >();
   let hasCurrentHeadLcarsReview = false;
+  let hasDismissedCurrentHeadLcarsReview = false;
 
   for (const review of snapshot.reviews.nodes) {
     if (review === null || review.author === null || review.commit === null) {
@@ -485,6 +488,9 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
         ? `${login}:${review.databaseId}`
         : `${login}:${review.state}`;
 
+    if (isLcarsBot && review.state === 'DISMISSED') {
+      hasDismissedCurrentHeadLcarsReview = true;
+    }
     if (isLcarsBot) {
       if (
         review.state === 'APPROVED' ||
@@ -517,7 +523,32 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
     .map((entry) => entry.key)
     .sort();
 
-  return { blockingReviewKeys, hasCurrentHeadLcarsReview };
+  return {
+    blockingReviewKeys,
+    hasCurrentHeadLcarsReview,
+    hasDismissedCurrentHeadLcarsReview,
+  };
+}
+
+/** Unresolved review threads opened by a reviewer remediation trusts. */
+function unresolvedTrustedThreadIds(snapshot: PullRequestSnapshot): string[] {
+  return snapshot.reviewThreads.nodes
+    .flatMap((thread) => {
+      if (thread === null || thread.isResolved) return [];
+      const firstComment = thread.comments.nodes[0];
+      if (
+        firstComment === undefined ||
+        firstComment === null ||
+        !isTrustedRemediationReviewer(
+          normalizeGraphqlActorLogin(firstComment.author),
+          firstComment.authorAssociation,
+        )
+      ) {
+        return [];
+      }
+      return [thread.id];
+    })
+    .sort();
 }
 
 async function resolveAuthorPipeline(
@@ -799,8 +830,23 @@ async function reconcilePullRequestRemediationOnce(
   }
 
   const author = normalizeGraphqlActorLogin(snapshot.author);
+  const labels = snapshot.labels.nodes.flatMap((node) =>
+    node === null ? [] : [node.name],
+  );
+  const headReviews = evaluateCurrentHeadReviews(snapshot);
+  // Approve only a head nobody has spoken against: not held by a label, not
+  // already reviewed or dismissed by LCARS, and free of any reviewer's change
+  // request or open thread. A partial read of reviews or threads is no proof.
   if (
     author !== undefined &&
+    !labels.includes('status:needs-human') &&
+    !labels.includes('status:blocked') &&
+    !snapshot.reviews.pageInfo.hasPreviousPage &&
+    !snapshot.reviewThreads.pageInfo.hasNextPage &&
+    !headReviews.hasCurrentHeadLcarsReview &&
+    !headReviews.hasDismissedCurrentHeadLcarsReview &&
+    headReviews.blockingReviewKeys.length === 0 &&
+    unresolvedTrustedThreadIds(snapshot).length === 0 &&
     isVerifiedDependencyUpdate({
       authorLogin: author,
       headRef: snapshot.headRefName,
@@ -824,9 +870,7 @@ async function reconcilePullRequestRemediationOnce(
                     ],
               ),
             },
-    }) &&
-    !snapshot.reviews.pageInfo.hasPreviousPage &&
-    !evaluateCurrentHeadReviews(snapshot).hasCurrentHeadLcarsReview
+    })
   ) {
     const head = snapshot.headRefOid;
     const reviewId = await approveDependencyUpdate(deps, anchor, head, author);
@@ -848,9 +892,6 @@ async function reconcilePullRequestRemediationOnce(
   if (!author || isAutomatedReviewExcludedAuthor(author)) {
     return { action: 'ignored', reason: 'excluded-author' };
   }
-  const labels = snapshot.labels.nodes.flatMap((node) =>
-    node === null ? [] : [node.name],
-  );
   if (
     labels.includes('bot:renovate') ||
     labels.includes('status:needs-human') ||
@@ -909,25 +950,8 @@ async function reconcilePullRequestRemediationOnce(
   const hasMergeConflict =
     snapshot.mergeable === 'CONFLICTING' ||
     snapshot.mergeStateStatus === 'DIRTY';
-  const unresolvedThreadIds = snapshot.reviewThreads.nodes
-    .flatMap((thread) => {
-      if (thread === null || thread.isResolved) return [];
-      const firstComment = thread.comments.nodes[0];
-      if (
-        firstComment === undefined ||
-        firstComment === null ||
-        !isTrustedRemediationReviewer(
-          normalizeGraphqlActorLogin(firstComment.author),
-          firstComment.authorAssociation,
-        )
-      ) {
-        return [];
-      }
-      return [thread.id];
-    })
-    .sort();
-  const { blockingReviewKeys, hasCurrentHeadLcarsReview } =
-    evaluateCurrentHeadReviews(snapshot);
+  const unresolvedThreadIds = unresolvedTrustedThreadIds(snapshot);
+  const { blockingReviewKeys, hasCurrentHeadLcarsReview } = headReviews;
 
   const crossRepo: Record<string, string> = hasCrossRepoOption(labels)
     ? { crossRepo: 'true' }
