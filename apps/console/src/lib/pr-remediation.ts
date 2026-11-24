@@ -1125,17 +1125,6 @@ export async function reconcileOpenPullRequestRemediations(
       (hasConcreteRemediationSignal(right) ? 0 : 1),
   );
 
-  await recordBlockedPullRequestCensus(
-    deps,
-    eligible.filter(
-      (projection) =>
-        projection.mergeableState === 'dirty' ||
-        (projection.unresolvedReviewThreadCount ?? 0) > 0,
-    ),
-    projectionsComplete,
-    deadlineMs,
-  );
-
   // Enqueue only: `handleReconcile`'s single outbox drain runs immediately
   // afterward and owns outbox claims, backoff, and response accounting.
   const enqueueOnlyDeps: PrRemediationDeps = {
@@ -1169,6 +1158,20 @@ export async function reconcileOpenPullRequestRemediations(
       );
     }
   }
+
+  // After remediation, so the census never spends the sweep's budget before
+  // remediation does; a census starved of time reports complete=false.
+  // Runs this sweep just admitted count as running.
+  await recordBlockedPullRequestCensus(
+    deps,
+    eligible.filter(
+      (projection) =>
+        projection.mergeableState === 'dirty' ||
+        (projection.unresolvedReviewThreadCount ?? 0) > 0,
+    ),
+    projectionsComplete,
+    deadlineMs,
+  );
 }
 
 /** Census cap: beyond this many blocked PRs the census reports incomplete. */

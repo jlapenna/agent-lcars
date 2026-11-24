@@ -866,6 +866,10 @@ describe('automatic pull-request review & conflict remediation', () => {
       },
       { enrich: false },
     );
+    // The census follows the sweep's remediation checks, never precedes them.
+    expect(structured.mock.calls.at(-1)?.[1]).toBe(
+      'LCARS PR remediation census',
+    );
     structured.mockRestore();
   });
 
