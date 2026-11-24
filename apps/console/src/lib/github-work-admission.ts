@@ -2,6 +2,7 @@ import 'server-only';
 
 import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import { AGENT_LABELS, REVIEW_LABELS } from '@agent-lcars/dispatch-contracts';
+import { logger } from '@agent-lcars/logging';
 import {
   decidedRun,
   isRefusal,
@@ -450,9 +451,19 @@ async function drainAndRerouteCooledProvider(
 ): Promise<Awaited<ReturnType<OrchestratorRouteDeps['drain']>>> {
   const drained = await runtime.drain();
   if (run.providerFallback === undefined) return drained;
-  const rerouted = await runtime.orchestrator.rerouteQueued();
-  if (rerouted.some((entry) => entry.fromRunId === run.runId)) {
-    await runtime.drain();
+  // Admission is already committed. A failed eager reroute is logged and left
+  // to the maintenance pass; it never fails the admission.
+  try {
+    const rerouted = await runtime.orchestrator.rerouteQueued();
+    if (rerouted.some((entry) => entry.fromRunId === run.runId)) {
+      await runtime.drain();
+    }
+  } catch (error) {
+    logger.warn(
+      'agent-lcars: eager cooldown reroute failed for %s:',
+      run.runId,
+      error,
+    );
   }
   return drained;
 }
