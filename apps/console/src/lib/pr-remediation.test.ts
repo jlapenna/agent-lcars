@@ -55,6 +55,7 @@ interface MockPrSnapshot {
   author?: { __typename?: string | null; login: string } | null;
   labels?: string[];
   assignees?: string[];
+  commits?: { oid: string; author: string | null; signedByGitHub: boolean }[];
   reviews?: {
     databaseId?: number;
     state: string;
@@ -112,6 +113,26 @@ function makeGraphqlPr(overrides: MockPrSnapshot = {}) {
         login,
       })),
     },
+    ...(overrides.commits === undefined
+      ? {}
+      : {
+          commits: {
+            totalCount: overrides.commits.length,
+            nodes: overrides.commits.map((commit) => ({
+              commit: {
+                oid: commit.oid,
+                author: {
+                  user:
+                    commit.author === null ? null : { login: commit.author },
+                },
+                signature: {
+                  isValid: commit.signedByGitHub,
+                  wasSignedByGitHub: commit.signedByGitHub,
+                },
+              },
+            })),
+          },
+        }),
     reviews: {
       pageInfo: { hasPreviousPage: false },
       nodes: (overrides.reviews ?? []).map((review) => ({
@@ -696,6 +717,233 @@ describe('automatic pull-request review & conflict remediation', () => {
     });
     expect(await f.store.readActiveRun(anchor)).toMatchObject({
       params: { mode: 'review' },
+    });
+  });
+
+  describe('verified dependency updates', () => {
+    const RENOVATE = { __typename: 'Bot', login: 'renovate' };
+    const reviewPosts = (f: ReturnType<typeof createFixture>) =>
+      vi
+        .mocked(f.fetchImpl)
+        .mock.calls.filter(
+          ([url, init]) =>
+            String(url).endsWith(`/repos/${REPO}/pulls/4030/reviews`) &&
+            init?.method === 'POST',
+        )
+        .map(([, init]) => JSON.parse(String(init?.body)) as unknown);
+    const anchor = { repo: REPO, issue: 4030 };
+
+    it("approves the head when every commit is the bot's and GitHub-signed", async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4030, {
+        author: RENOVATE,
+        headRefName: 'renovate/vitest',
+        commits: [
+          { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+        ],
+      });
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'approved-dependency-update', head: HEAD_1 });
+      expect(reviewPosts(f)).toEqual([
+        expect.objectContaining({ commit_id: HEAD_1, event: 'APPROVE' }),
+      ]);
+      expect(await f.store.readActiveRun(anchor)).toBeUndefined();
+    });
+
+    it('withdraws the approval when the head moved while it was submitted', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4030, {
+        author: RENOVATE,
+        headRefName: 'renovate/vitest',
+        commits: [
+          { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+        ],
+      });
+      const realFetch = f.remediationDeps.fetchImpl;
+      f.remediationDeps.fetchImpl = (async (input, init) => {
+        const response = await realFetch(input, init);
+        // The push lands just after the approval is accepted.
+        if (String(input).endsWith('/pulls/4030/reviews')) {
+          f.setPr(REPO, 4030, {
+            author: RENOVATE,
+            headRefName: 'renovate/vitest',
+            headRefOid: HEAD_2,
+          });
+        }
+        return response;
+      }) as typeof fetch;
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'ignored', reason: 'head-moved' });
+      const dismissals = vi
+        .mocked(f.fetchImpl)
+        .mock.calls.filter(
+          ([url, init]) =>
+            String(url).endsWith(
+              `/repos/${REPO}/pulls/4030/reviews/1/dismissals`,
+            ) && init?.method === 'PUT',
+        );
+      expect(dismissals).toHaveLength(1);
+    });
+
+    it("approves a pull request carrying only Renovate's own label", async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4030, {
+        author: RENOVATE,
+        headRefName: 'renovate/vitest',
+        labels: ['bot:renovate'],
+        commits: [
+          { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+        ],
+      });
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'approved-dependency-update', head: HEAD_1 });
+    });
+
+    it('approves a head once', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4030, {
+        author: RENOVATE,
+        headRefName: 'renovate/vitest',
+        commits: [
+          { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+        ],
+        reviews: [
+          {
+            databaseId: 950,
+            state: 'APPROVED',
+            author: { __typename: 'Bot', login: 'agent-lcars' },
+            commit: { oid: HEAD_1 },
+          },
+        ],
+      });
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'ignored', reason: 'excluded-author' });
+      expect(reviewPosts(f)).toEqual([]);
+    });
+
+    it.each([
+      [
+        'someone else pushed a commit',
+        {
+          commits: [
+            { oid: HEAD_2, author: 'renovate[bot]', signedByGitHub: true },
+            { oid: HEAD_1, author: 'jlapenna', signedByGitHub: true },
+          ],
+        },
+      ],
+      [
+        'a commit is not signed by GitHub',
+        {
+          commits: [
+            { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: false },
+          ],
+        },
+      ],
+      [
+        'the commit list does not reach the head',
+        {
+          commits: [
+            { oid: HEAD_2, author: 'renovate[bot]', signedByGitHub: true },
+          ],
+        },
+      ],
+      [
+        'the branch needs qualification',
+        {
+          headRefName: 'renovate/runner-cli-runtimes',
+          commits: [
+            { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+          ],
+        },
+      ],
+      ['the pull request is a draft', { isDraft: true }],
+      ['the commits were not read', { commits: undefined }],
+      [
+        'someone dismissed LCARS approval of this head',
+        {
+          reviews: [
+            {
+              databaseId: 951,
+              state: 'DISMISSED',
+              author: { __typename: 'Bot', login: 'agent-lcars' },
+              commit: { oid: HEAD_1 },
+            },
+          ],
+        },
+      ],
+      ['it is held for a human', { labels: ['status:needs-human'] }],
+      ['it is blocked', { labels: ['bot:renovate', 'status:blocked'] }],
+      [
+        'a reviewer requested changes on this head',
+        {
+          reviews: [
+            {
+              databaseId: 952,
+              state: 'CHANGES_REQUESTED',
+              author: { login: 'jlapenna' },
+              commit: { oid: HEAD_1 },
+            },
+          ],
+        },
+      ],
+      [
+        'a reviewer left a thread open',
+        {
+          reviewThreads: [
+            {
+              id: 'PRRT_OPEN',
+              isResolved: false,
+              comments: {
+                nodes: [
+                  {
+                    authorAssociation: 'OWNER',
+                    author: { __typename: 'User', login: 'jlapenna' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+      ['the review threads were only partly read', { threadsTruncated: true }],
+    ])('does not approve when %s', async (_case, overrides) => {
+      const f = createFixture();
+      f.setPr(REPO, 4030, {
+        author: RENOVATE,
+        headRefName: 'renovate/vitest',
+        commits: [
+          { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+        ],
+        ...overrides,
+      });
+
+      const result = await reconcilePullRequestRemediation(
+        f.remediationDeps,
+        anchor,
+      );
+
+      expect(result.action).toBe('ignored');
+      expect(reviewPosts(f)).toEqual([]);
+    });
+
+    it("does not approve a maintainer's pull request", async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4030, {
+        author: { login: 'jlapenna' },
+        commits: [{ oid: HEAD_1, author: 'jlapenna', signedByGitHub: true }],
+      });
+
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
+
+      expect(reviewPosts(f)).toEqual([]);
     });
   });
 

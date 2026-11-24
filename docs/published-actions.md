@@ -71,7 +71,9 @@ and Dependabot PRs whose commits are all GitHub-signed by the bot (excluding LCA
 qualification-gated `renovate/runner-cli-runtimes`,
 `renovate/major-runner-cli-runtimes`, `renovate/anthropic-review-workflow`, and
 `renovate/major-anthropic-review-workflow` branches) automatically receive a passing
-verdict unless an `agent-lcars[bot]` review at that head requested changes. Pushing a
+verdict unless an `agent-lcars[bot]` review at that head requested changes. The
+control plane also submits an ordinary approving review on such a head, as
+`agent-lcars[bot]`, when it has no LCARS review yet. Pushing a
 non-bot fix commit to an open Renovate/Dependabot PR dispatches review automatically;
 if non-bot or amended commits were
 pushed while the PR was still a draft, request review with `/review` after marking it

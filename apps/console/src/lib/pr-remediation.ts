@@ -48,6 +48,7 @@ import {
 import {
   detectPullRequestAuthorPipeline,
   isAutomatedReviewExcludedAuthor,
+  isVerifiedDependencyUpdate,
   parseAttemptClaimRunId,
   selectCrossModelReviewer,
   selectPullRequestRemediation,
@@ -83,7 +84,8 @@ export interface PrRemediationDeps {
 export type PrRemediationResult =
   | { action: 'ignored'; reason: string }
   | { action: 'remediated'; outcome: GithubWorkAdmissionOutcome }
-  | { action: 'rereviewed'; outcome: GithubWorkAdmissionOutcome };
+  | { action: 'rereviewed'; outcome: GithubWorkAdmissionOutcome }
+  | { action: 'approved-dependency-update'; head: string };
 
 const pullRequestSnapshotSchema = z.object({
   state: z.string(),
@@ -132,6 +134,32 @@ const pullRequestSnapshotSchema = z.object({
         .nullable(),
     ),
   }),
+  commits: z
+    .object({
+      totalCount: z.number().int(),
+      nodes: z.array(
+        z
+          .object({
+            commit: z.object({
+              oid: sha,
+              author: z
+                .object({
+                  user: z.object({ login: z.string() }).nullable(),
+                })
+                .nullable(),
+              signature: z
+                .object({
+                  isValid: z.boolean(),
+                  wasSignedByGitHub: z.boolean(),
+                })
+                .nullable(),
+            }),
+          })
+          .nullable(),
+      ),
+    })
+    .nullable()
+    .optional(),
   reviewThreads: z.object({
     pageInfo: z.object({ hasNextPage: z.boolean() }),
     nodes: z.array(
@@ -239,6 +267,67 @@ async function applyNeedsHumanLabel(
   }
 }
 
+/** LCARS reviewing as itself: an ordinary approving review on the head.
+ *  Returns the review's id so a caller can withdraw it. */
+async function approveDependencyUpdate(
+  deps: PrRemediationDeps,
+  anchor: GithubAnchor,
+  head: string,
+  bot: string,
+): Promise<number> {
+  const token = await deps.tokens.tokenFor(anchor.repo);
+  const response = await (deps.fetchImpl ?? fetch)(
+    `${deps.githubApiBaseUrl ?? 'https://api.github.com'}/repos/${anchor.repo}/pulls/${anchor.issue}/reviews`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: 'application/vnd.github+json',
+        'content-type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify({
+        commit_id: head,
+        event: 'APPROVE',
+        body: `Automated dependency update. Every commit on this pull request is authored by ${bot} and signed by GitHub, so LCARS approves it without a review run; CI gates the merge.`,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `approving dependency update ${anchor.repo}#${anchor.issue} failed (${response.status})`,
+    );
+  }
+  return z.object({ id: z.number().int() }).parse(await response.json()).id;
+}
+
+async function dismissReview(
+  deps: PrRemediationDeps,
+  anchor: GithubAnchor,
+  reviewId: number,
+  message: string,
+): Promise<void> {
+  const token = await deps.tokens.tokenFor(anchor.repo);
+  const response = await (deps.fetchImpl ?? fetch)(
+    `${deps.githubApiBaseUrl ?? 'https://api.github.com'}/repos/${anchor.repo}/pulls/${anchor.issue}/reviews/${reviewId}/dismissals`,
+    {
+      method: 'PUT',
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: 'application/vnd.github+json',
+        'content-type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify({ message, event: 'DISMISS' }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `dismissing review ${reviewId} on ${anchor.repo}#${anchor.issue} failed (${response.status})`,
+    );
+  }
+}
+
 async function graphql<T>(
   deps: PrRemediationDeps,
   repo: string,
@@ -307,6 +396,10 @@ const PR_SNAPSHOT_QUERY = `
           pageInfo { hasPreviousPage }
           nodes { databaseId state body authorAssociation author { __typename login } commit { oid } }
         }
+        commits(first: 100) {
+          totalCount
+          nodes { commit { oid author { user { login } } signature { isValid wasSignedByGitHub } } }
+        }
         reviewThreads(first: 100) {
           pageInfo { hasNextPage }
           nodes {
@@ -365,6 +458,8 @@ async function readPullRequestSnapshot(
 function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
   blockingReviewKeys: string[];
   hasCurrentHeadLcarsReview: boolean;
+  /** Someone dismissed an LCARS review of this head: a decision to respect. */
+  hasDismissedCurrentHeadLcarsReview: boolean;
 } {
   const head = snapshot.headRefOid;
   const latestByAuthor = new Map<
@@ -372,6 +467,7 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
     { verdict: 'blocked' | 'clear'; key: string }
   >();
   let hasCurrentHeadLcarsReview = false;
+  let hasDismissedCurrentHeadLcarsReview = false;
 
   for (const review of snapshot.reviews.nodes) {
     if (review === null || review.author === null || review.commit === null) {
@@ -392,6 +488,9 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
         ? `${login}:${review.databaseId}`
         : `${login}:${review.state}`;
 
+    if (isLcarsBot && review.state === 'DISMISSED') {
+      hasDismissedCurrentHeadLcarsReview = true;
+    }
     if (isLcarsBot) {
       if (
         review.state === 'APPROVED' ||
@@ -424,7 +523,32 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
     .map((entry) => entry.key)
     .sort();
 
-  return { blockingReviewKeys, hasCurrentHeadLcarsReview };
+  return {
+    blockingReviewKeys,
+    hasCurrentHeadLcarsReview,
+    hasDismissedCurrentHeadLcarsReview,
+  };
+}
+
+/** Unresolved review threads opened by a reviewer remediation trusts. */
+function unresolvedTrustedThreadIds(snapshot: PullRequestSnapshot): string[] {
+  return snapshot.reviewThreads.nodes
+    .flatMap((thread) => {
+      if (thread === null || thread.isResolved) return [];
+      const firstComment = thread.comments.nodes[0];
+      if (
+        firstComment === undefined ||
+        firstComment === null ||
+        !isTrustedRemediationReviewer(
+          normalizeGraphqlActorLogin(firstComment.author),
+          firstComment.authorAssociation,
+        )
+      ) {
+        return [];
+      }
+      return [thread.id];
+    })
+    .sort();
 }
 
 async function resolveAuthorPipeline(
@@ -596,8 +720,18 @@ export async function reconcilePullRequestRemediation(
   if (result.action !== 'ignored' || result.reason !== 'wrong-repo') {
     recordPrRemediationOutcome({
       trigger,
-      outcome: result.action === 'ignored' ? 'skipped' : result.action,
-      reason: result.action === 'ignored' ? result.reason : result.outcome.kind,
+      outcome:
+        result.action === 'ignored'
+          ? 'skipped'
+          : result.action === 'approved-dependency-update'
+            ? 'approved'
+            : result.action,
+      reason:
+        result.action === 'ignored'
+          ? result.reason
+          : result.action === 'approved-dependency-update'
+            ? 'dependency-update'
+            : result.outcome.kind,
       repo: anchor.repo,
       number: anchor.issue,
     });
@@ -696,12 +830,68 @@ async function reconcilePullRequestRemediationOnce(
   }
 
   const author = normalizeGraphqlActorLogin(snapshot.author);
-  if (!author || isAutomatedReviewExcludedAuthor(author)) {
-    return { action: 'ignored', reason: 'excluded-author' };
-  }
   const labels = snapshot.labels.nodes.flatMap((node) =>
     node === null ? [] : [node.name],
   );
+  const headReviews = evaluateCurrentHeadReviews(snapshot);
+  // Approve only a head nobody has spoken against: not held by a label, not
+  // already reviewed or dismissed by LCARS, and free of any reviewer's change
+  // request or open thread. A partial read of reviews or threads is no proof.
+  if (
+    author !== undefined &&
+    !labels.includes('status:needs-human') &&
+    !labels.includes('status:blocked') &&
+    !snapshot.reviews.pageInfo.hasPreviousPage &&
+    !snapshot.reviewThreads.pageInfo.hasNextPage &&
+    !headReviews.hasCurrentHeadLcarsReview &&
+    !headReviews.hasDismissedCurrentHeadLcarsReview &&
+    headReviews.blockingReviewKeys.length === 0 &&
+    unresolvedTrustedThreadIds(snapshot).length === 0 &&
+    isVerifiedDependencyUpdate({
+      authorLogin: author,
+      headRef: snapshot.headRefName,
+      headOid: snapshot.headRefOid,
+      commits:
+        snapshot.commits == null
+          ? undefined
+          : {
+              totalCount: snapshot.commits.totalCount,
+              nodes: snapshot.commits.nodes.flatMap((node) =>
+                node === null
+                  ? []
+                  : [
+                      {
+                        oid: node.commit.oid,
+                        authorLogin: node.commit.author?.user?.login,
+                        signedByGitHub:
+                          node.commit.signature?.isValid === true &&
+                          node.commit.signature.wasSignedByGitHub === true,
+                      },
+                    ],
+              ),
+            },
+    })
+  ) {
+    const head = snapshot.headRefOid;
+    const reviewId = await approveDependencyUpdate(deps, anchor, head, author);
+    // A push that lands while the approval is in flight is not dismissed by
+    // GitHub: its stale-review rule runs at push time, before this review
+    // existed. Read the head again and withdraw an approval it has outrun.
+    const after = await readPullRequestSnapshot(deps, anchor);
+    if (after === null || after.headRefOid !== head) {
+      await dismissReview(
+        deps,
+        anchor,
+        reviewId,
+        'The pull request head moved while this approval was being submitted.',
+      );
+      return { action: 'ignored', reason: 'head-moved' };
+    }
+    return { action: 'approved-dependency-update', head };
+  }
+  if (!author || isAutomatedReviewExcludedAuthor(author)) {
+    return { action: 'ignored', reason: 'excluded-author' };
+  }
   if (
     labels.includes('bot:renovate') ||
     labels.includes('status:needs-human') ||
@@ -760,25 +950,8 @@ async function reconcilePullRequestRemediationOnce(
   const hasMergeConflict =
     snapshot.mergeable === 'CONFLICTING' ||
     snapshot.mergeStateStatus === 'DIRTY';
-  const unresolvedThreadIds = snapshot.reviewThreads.nodes
-    .flatMap((thread) => {
-      if (thread === null || thread.isResolved) return [];
-      const firstComment = thread.comments.nodes[0];
-      if (
-        firstComment === undefined ||
-        firstComment === null ||
-        !isTrustedRemediationReviewer(
-          normalizeGraphqlActorLogin(firstComment.author),
-          firstComment.authorAssociation,
-        )
-      ) {
-        return [];
-      }
-      return [thread.id];
-    })
-    .sort();
-  const { blockingReviewKeys, hasCurrentHeadLcarsReview } =
-    evaluateCurrentHeadReviews(snapshot);
+  const unresolvedThreadIds = unresolvedTrustedThreadIds(snapshot);
+  const { blockingReviewKeys, hasCurrentHeadLcarsReview } = headReviews;
 
   const crossRepo: Record<string, string> = hasCrossRepoOption(labels)
     ? { crossRepo: 'true' }

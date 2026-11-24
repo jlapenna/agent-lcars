@@ -70,6 +70,53 @@ export function isUnattendedDependencyBotPullRequest(input: {
   return !QUALIFICATION_REQUIRED_RENOVATE_REF_RE.test(normalizedRef);
 }
 
+/**
+ * A dependency update nobody but the bot has touched: every commit on the
+ * pull request is authored by the bot and signed by GitHub. LCARS approves
+ * these without a review run (CI gates the merge); the qualification branches
+ * are never covered, and a commit from anyone else ends the exemption.
+ *
+ * Author plus GitHub's signature is the proof. GitHub signs a commit made
+ * through its API or web interface only when the request carries no custom
+ * author, committer or signature, so a GitHub-signed commit whose author is
+ * the bot was made by the bot's own authenticated installation. Its committer
+ * is GitHub's web-flow identity, never the bot, so the committer is no test.
+ */
+export function isVerifiedDependencyUpdate(input: {
+  /** Normalized author login, e.g. `renovate[bot]`. */
+  authorLogin: string | undefined;
+  headRef: string | undefined;
+  headOid: string;
+  commits:
+    | {
+        totalCount: number;
+        nodes: readonly {
+          oid: string;
+          authorLogin: string | undefined;
+          signedByGitHub: boolean;
+        }[];
+      }
+    | undefined;
+}): boolean {
+  const author = input.authorLogin?.toLowerCase();
+  if (author === undefined || !DEPENDENCY_BOT_LOGINS.has(author)) return false;
+  if (!author.endsWith('[bot]')) return false;
+  if (QUALIFICATION_REQUIRED_RENOVATE_REF_RE.test(input.headRef ?? '')) {
+    return false;
+  }
+  const commits = input.commits;
+  if (commits === undefined) return false;
+  if (commits.totalCount < 1 || commits.totalCount > 100) return false;
+  if (commits.nodes.length !== commits.totalCount) return false;
+  if (!commits.nodes.some((commit) => commit.oid === input.headOid)) {
+    return false;
+  }
+  return commits.nodes.every(
+    (commit) =>
+      commit.authorLogin?.toLowerCase() === author && commit.signedByGitHub,
+  );
+}
+
 export interface PullRequestAuthorSignals {
   /** Authoritative pipeline from the store's originating implement Run. */
   authorPipelineFromStore?: AgentPipeline;
