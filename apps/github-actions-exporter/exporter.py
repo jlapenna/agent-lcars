@@ -865,8 +865,14 @@ class GitHubAPI:
             path,
             tuple(sorted((str(k), str(v)) for k, v in (params or {}).items())),
         )
-        with self._conditional_lock:
-            cached = self._conditional.get(cache_key)
+        # A `created` window ends at the current second, so its key never
+        # repeats: it can never earn a 304 and would only fill the cache with
+        # dead run-list pages.
+        cacheable = "created" not in (params or {})
+        cached = None
+        if cacheable:
+            with self._conditional_lock:
+                cached = self._conditional.get(cache_key)
         headers = {"Authorization": self.credentials.authorization(owner)}
         if cached is not None:
             headers["If-None-Match"] = cached[0]
@@ -902,7 +908,9 @@ class GitHubAPI:
                 payload = response.json()
                 etag = _header(response.headers, "etag")
                 with self._conditional_lock:
-                    if etag and isinstance(payload, dict):
+                    if not cacheable:
+                        pass
+                    elif etag and isinstance(payload, dict):
                         self._conditional[cache_key] = (etag, response.content)
                         self._conditional.move_to_end(cache_key)
                         while len(self._conditional) > CONDITIONAL_CACHE_ENTRIES:

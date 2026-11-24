@@ -2521,6 +2521,17 @@ class PerOwnerQuotaTests(unittest.TestCase):
             "If-None-Match", api.session.get.call_args_list[1].kwargs["headers"]
         )
 
+    def test_run_list_windows_are_not_cached(self):
+        api = self.conditional_api()
+        path = "/repos/jlapenna/homelab/actions/runs"
+        api.session.get = Mock(
+            return_value=self.json_response(
+                {"workflow_runs": []}, headers={"ETag": '"w"'}
+            )
+        )
+        api.get(path, endpoint="runs", params={"created": "2026-01-01..2026-01-02"})
+        self.assertEqual(len(api._conditional), 0)
+
     def test_conditional_cache_drops_least_recently_used_entries(self):
         api = self.conditional_api()
         paths = [f"/repos/jlapenna/homelab/actions/runs/{n}" for n in (1, 2, 3)]
