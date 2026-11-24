@@ -1463,8 +1463,16 @@ export async function reconcileOpenPullRequestRemediations(
     try {
       const active = await deps.store.readActiveRun(projection.anchor);
       if (active !== undefined && isLive(active.state)) continue;
-      // A delivery-owned PR is still inspected: reconciliation admits no run
-      // for it, but may ask the maintainer to approve an App-authored PR.
+      // Reconciliation admits no run for a delivery-owned PR, so it is not
+      // worth one of this sweep's inspections, with one exception: a PR the
+      // LCARS App opened, which may still need its maintainer review request.
+      if (projection.author?.toLowerCase() !== LCARS_REVIEWER_LOGIN) {
+        const waitingDeliveries = await deps.store.readWaitingDeliveryTasks({
+          repo: projection.anchor.repo,
+          number: projection.anchor.issue,
+        });
+        if (waitingDeliveries.length > 0) continue;
+      }
       inspected += 1;
       await reconcilePullRequestRemediation(
         enqueueOnlyDeps,
