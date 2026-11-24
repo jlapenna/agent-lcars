@@ -330,14 +330,17 @@ function archiveSync(): SessionArchiveSync {
   return realm[ARCHIVE_SYNC_KEY] as SessionArchiveSync;
 }
 
-/** Windows up to the 14-day default read the in-memory archive; wider
- * ones, a snapshot's own clock, and hermetic E2E fixtures (whose resets
- * delete documents) read Firestore directly. */
+/** Windows longer than a day, up to the 14-day default, read the in-memory
+ * archive. A day or less (Bridge, the rail's 24-hour figures) reads
+ * Firestore directly: about 500 documents in 0.4 s, where an instance that
+ * has not loaded the archive yet would first read all 14 days. Wider
+ * windows, a snapshot's own clock, and hermetic E2E fixtures (whose resets
+ * delete documents) also read directly. */
 async function readArchiveDocs(
   filter: ArchiveDocsFilter,
   syncedDays: number | undefined,
 ): Promise<SessionDoc[]> {
-  if (syncedDays === undefined || isE2eTesting())
+  if (syncedDays === undefined || syncedDays <= 1 || isE2eTesting())
     return listArchiveDocs(filter);
   return (await archiveSync().read(syncedDays)).filter(
     (doc) =>
