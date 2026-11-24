@@ -721,6 +721,43 @@ describe('automatic pull-request review & conflict remediation', () => {
       expect(await f.store.readActiveRun(anchor)).toBeUndefined();
     });
 
+    it('withdraws the approval when the head moved while it was submitted', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4030, {
+        author: RENOVATE,
+        headRefName: 'renovate/vitest',
+        commits: [
+          { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+        ],
+      });
+      const realFetch = f.remediationDeps.fetchImpl;
+      f.remediationDeps.fetchImpl = (async (input, init) => {
+        const response = await realFetch(input, init);
+        // The push lands just after the approval is accepted.
+        if (String(input).endsWith('/pulls/4030/reviews')) {
+          f.setPr(REPO, 4030, {
+            author: RENOVATE,
+            headRefName: 'renovate/vitest',
+            headRefOid: HEAD_2,
+          });
+        }
+        return response;
+      }) as typeof fetch;
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'ignored', reason: 'head-moved' });
+      const dismissals = vi
+        .mocked(f.fetchImpl)
+        .mock.calls.filter(
+          ([url, init]) =>
+            String(url).endsWith(
+              `/repos/${REPO}/pulls/4030/reviews/1/dismissals`,
+            ) && init?.method === 'PUT',
+        );
+      expect(dismissals).toHaveLength(1);
+    });
+
     it('approves a head once', async () => {
       const f = createFixture();
       f.setPr(REPO, 4030, {

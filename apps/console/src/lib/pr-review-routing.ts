@@ -75,6 +75,12 @@ export function isUnattendedDependencyBotPullRequest(input: {
  * pull request is authored by the bot and signed by GitHub. LCARS approves
  * these without a review run (CI gates the merge); the qualification branches
  * are never covered, and a commit from anyone else ends the exemption.
+ *
+ * Author plus GitHub's signature is the proof. GitHub signs a commit made
+ * through its API or web interface only when the request carries no custom
+ * author, committer or signature, so a GitHub-signed commit whose author is
+ * the bot was made by the bot's own authenticated installation. Its committer
+ * is GitHub's web-flow identity, never the bot, so the committer is no test.
  */
 export function isVerifiedDependencyUpdate(input: {
   /** Normalized author login, e.g. `renovate[bot]`. */

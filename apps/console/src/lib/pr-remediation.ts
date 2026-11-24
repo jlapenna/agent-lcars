@@ -268,13 +268,14 @@ async function applyNeedsHumanLabel(
   }
 }
 
-/** LCARS reviewing as itself: an ordinary approving review on the head. */
+/** LCARS reviewing as itself: an ordinary approving review on the head.
+ *  Returns the review's id so a caller can withdraw it. */
 async function approveDependencyUpdate(
   deps: PrRemediationDeps,
   anchor: GithubAnchor,
   head: string,
   bot: string,
-): Promise<void> {
+): Promise<number> {
   const token = await deps.tokens.tokenFor(anchor.repo);
   const response = await (deps.fetchImpl ?? fetch)(
     `${deps.githubApiBaseUrl ?? 'https://api.github.com'}/repos/${anchor.repo}/pulls/${anchor.issue}/reviews`,
@@ -296,6 +297,34 @@ async function approveDependencyUpdate(
   if (!response.ok) {
     throw new Error(
       `approving dependency update ${anchor.repo}#${anchor.issue} failed (${response.status})`,
+    );
+  }
+  return z.object({ id: z.number().int() }).parse(await response.json()).id;
+}
+
+async function dismissReview(
+  deps: PrRemediationDeps,
+  anchor: GithubAnchor,
+  reviewId: number,
+  message: string,
+): Promise<void> {
+  const token = await deps.tokens.tokenFor(anchor.repo);
+  const response = await (deps.fetchImpl ?? fetch)(
+    `${deps.githubApiBaseUrl ?? 'https://api.github.com'}/repos/${anchor.repo}/pulls/${anchor.issue}/reviews/${reviewId}/dismissals`,
+    {
+      method: 'PUT',
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: 'application/vnd.github+json',
+        'content-type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify({ message, event: 'DISMISS' }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `dismissing review ${reviewId} on ${anchor.repo}#${anchor.issue} failed (${response.status})`,
     );
   }
 }
@@ -800,8 +829,22 @@ async function reconcilePullRequestRemediationOnce(
     !snapshot.reviews.pageInfo.hasPreviousPage &&
     !evaluateCurrentHeadReviews(snapshot).hasCurrentHeadLcarsReview
   ) {
-    await approveDependencyUpdate(deps, anchor, snapshot.headRefOid, author);
-    return { action: 'approved-dependency-update', head: snapshot.headRefOid };
+    const head = snapshot.headRefOid;
+    const reviewId = await approveDependencyUpdate(deps, anchor, head, author);
+    // A push that lands while the approval is in flight is not dismissed by
+    // GitHub: its stale-review rule runs at push time, before this review
+    // existed. Read the head again and withdraw an approval it has outrun.
+    const after = await readPullRequestSnapshot(deps, anchor);
+    if (after === null || after.headRefOid !== head) {
+      await dismissReview(
+        deps,
+        anchor,
+        reviewId,
+        'The pull request head moved while this approval was being submitted.',
+      );
+      return { action: 'ignored', reason: 'head-moved' };
+    }
+    return { action: 'approved-dependency-update', head };
   }
   if (!author || isAutomatedReviewExcludedAuthor(author)) {
     return { action: 'ignored', reason: 'excluded-author' };
