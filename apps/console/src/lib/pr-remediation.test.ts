@@ -947,6 +947,68 @@ describe('automatic pull-request review & conflict remediation', () => {
     });
   });
 
+  it('reviews a head pushed while an earlier review was running', async () => {
+    const f = createFixture();
+    const anchor = { repo: REPO, issue: 4021 };
+    // The review that just settled approved HEAD_1; the PR is now at HEAD_2.
+    f.setPr(REPO, 4021, {
+      author: { login: 'jlapenna' },
+      headRefOid: HEAD_2,
+      reviews: [
+        {
+          databaseId: 960,
+          state: 'APPROVED',
+          author: { __typename: 'Bot', login: 'agent-lcars' },
+          commit: { oid: HEAD_1 },
+        },
+      ],
+    });
+    const afterRun = {
+      runId: `${REPO}#4021/r1`,
+      params: { mode: 'review' },
+      result: { ok: true, summary: 'review' },
+    } as unknown as Run;
+
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor, {
+        afterRun,
+      }),
+    ).toMatchObject({ action: 'rereviewed', outcome: { kind: 'accepted' } });
+    expect(await f.store.readActiveRun(anchor)).toMatchObject({
+      params: { mode: 'review' },
+      requestId: `pr-rereview:4021:${HEAD_2.slice(0, 16)}`,
+    });
+  });
+
+  it('does not review again a head the settled review already covered', async () => {
+    const f = createFixture();
+    const anchor = { repo: REPO, issue: 4022 };
+    f.setPr(REPO, 4022, {
+      author: { login: 'jlapenna' },
+      headRefOid: HEAD_1,
+      reviews: [
+        {
+          databaseId: 961,
+          state: 'APPROVED',
+          author: { __typename: 'Bot', login: 'agent-lcars' },
+          commit: { oid: HEAD_1 },
+        },
+      ],
+    });
+    const afterRun = {
+      runId: `${REPO}#4022/r1`,
+      params: { mode: 'review' },
+      result: { ok: true, summary: 'review' },
+    } as unknown as Run;
+
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor, {
+        afterRun,
+      }),
+    ).toEqual({ action: 'ignored', reason: 'clean' });
+    expect(await f.store.readActiveRun(anchor)).toBeUndefined();
+  });
+
   it('defers while the issue-anchored run authoring the PR branch is still live', async () => {
     const f = createFixture();
     const anchor = { repo: REPO, issue: 4002 };
