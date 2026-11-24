@@ -1225,6 +1225,34 @@ class EventConsumerTests(unittest.TestCase):
             metrics,
         )
 
+    def test_later_attempt_retires_a_job_whose_own_run_event_never_arrived(self):
+        # Attempt 1's run is known, so attempt 2's job is stored directly;
+        # attempt 3's run then arrives without attempt 2's ever arriving.
+        self.deliver(run_message(workflow_run(conclusion="failure")))
+        self.deliver(
+            job_message(
+                workflow_job(id=789, run_attempt=2, status="queued", conclusion=None)
+            )
+        )
+        self.deliver(
+            run_message(
+                workflow_run(
+                    run_attempt=3,
+                    status="in_progress",
+                    conclusion=None,
+                    updated_at="2026-08-05T05:00:00Z",
+                )
+            )
+        )
+        self.assertEqual(
+            [
+                row["status"]
+                for row in self.database.rows("SELECT status FROM jobs WHERE id = 789")
+            ],
+            ["orphaned"],
+        )
+        self.assertNotIn('status="queued"', self.scrape())
+
     def test_duplicate_deliveries_count_once(self):
         for _ in range(3):
             self.deliver(run_message(workflow_run()), job_message(workflow_job()))
@@ -1664,9 +1692,15 @@ class StreamingPullTests(unittest.TestCase):
         with self.assertRaises(StopConsumer):
             consumer.run_forever(subscriber)
 
-        self.assertEqual(observed, [1.0, 1.0])
+        # The last wait happens after cancel, with the stream already marked
+        # closed: it lets in-flight callbacks finish before main() can close
+        # the database under them.
+        self.assertEqual(observed, [1.0, 1.0, 0.0])
         self.assertTrue(future.cancelled)
         self.assertEqual(self.running(), 0.0)
+        self.assertIs(
+            subscriber.subscribe.call_args.kwargs["await_callbacks_on_shutdown"], True
+        )
 
     def test_subscribe_errors_are_retried_and_long_streams_reset_the_delay(self):
         subscriber = Mock()

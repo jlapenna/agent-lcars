@@ -96,6 +96,8 @@ SNAPSHOT_REFRESH_SECONDS = 30.0
 # gives up on (for example a revoked credential or a deleted subscription).
 RECONNECT_MIN_SECONDS = 1.0
 RECONNECT_MAX_SECONDS = 60.0
+# How long stream_once waits for a cancelled stream to finish its callbacks.
+SHUTDOWN_WAIT_SECONDS = 30.0
 # A stream that ran this long before failing restarts the delay from the minimum.
 RECONNECT_RESET_SECONDS = 300.0
 
@@ -485,13 +487,25 @@ class Database:
                 SELECT 1 FROM workflow_runs
                 WHERE workflow_runs.repository = jobs.repository
                   AND workflow_runs.id = jobs.run_id
-                  AND workflow_runs.status IN ({finished})
-                  AND workflow_runs.run_attempt = COALESCE(
-                    jobs.run_attempt,
+                  AND (
                     (
-                      SELECT MAX(latest.run_attempt) FROM workflow_runs AS latest
-                      WHERE latest.repository = jobs.repository
-                        AND latest.id = jobs.run_id
+                      workflow_runs.status IN ({finished})
+                      AND workflow_runs.run_attempt = COALESCE(
+                        jobs.run_attempt,
+                        (
+                          SELECT MAX(latest.run_attempt)
+                          FROM workflow_runs AS latest
+                          WHERE latest.repository = jobs.repository
+                            AND latest.id = jobs.run_id
+                        )
+                      )
+                    )
+                    -- A later attempt supersedes this job's attempt even when
+                    -- the job's own run event never arrived, matching
+                    -- _attempt_finished.
+                    OR (
+                      jobs.run_attempt IS NOT NULL
+                      AND workflow_runs.run_attempt > jobs.run_attempt
                     )
                   )
               )
@@ -1415,6 +1429,10 @@ class EventConsumer:
                 subscription,
                 callback=self.handle_message,
                 flow_control=FlowControl(max_messages=MAX_OUTSTANDING_MESSAGES),
+                # Let in-flight callbacks finish their SQLite write before
+                # stream_once returns, so main() never closes the database
+                # under a running callback.
+                await_callbacks_on_shutdown=True,
             )
         except Exception:
             LOGGER.exception("could not open the streaming pull on %s", subscription)
@@ -1439,6 +1457,12 @@ class EventConsumer:
         finally:
             self.state.subscription_running.set(0)
             future.cancel()
+            try:
+                future.result(timeout=SHUTDOWN_WAIT_SECONDS)
+            except Exception as exc:  # noqa: BLE001 -- any outcome of a cancelled stream
+                # Cancellation itself ends the future with an error; the
+                # reason the stream stopped was already logged above.
+                LOGGER.debug("streaming pull on %s shut down: %r", subscription, exc)
 
     def run_forever(self, subscriber: Any) -> None:
         """Hold the streaming pull open, reopening it with a bounded delay."""
