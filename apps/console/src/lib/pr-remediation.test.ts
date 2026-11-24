@@ -1,6 +1,8 @@
 // @vitest-environment node
 
+import { logger } from '@agent-lcars/logging';
 import {
+  type GithubAnchorProjection,
   MemoryStore,
   Orchestrator,
   type TaskId,
@@ -20,6 +22,7 @@ import {
   reconcileOpenPullRequestRemediations,
   reconcilePullRequestRemediation,
 } from './pr-remediation';
+import { PrRemediationGraphqlError } from './pr-remediation-observability';
 import { hashRunToken, mintRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
 import { providerFallbackAuthority } from './work-provider-fallback';
@@ -737,6 +740,133 @@ describe('automatic pull-request review & conflict remediation', () => {
         body: JSON.stringify({ labels: ['status:needs-human'] }),
       }),
     );
+  });
+
+  it('reports a GraphQL errors envelope by its GitHub error type', async () => {
+    const f = createFixture();
+    const structured = vi
+      .spyOn(logger, 'structured')
+      .mockImplementation(() => undefined);
+    const deps = {
+      ...f.remediationDeps,
+      fetchImpl: (async () =>
+        Response.json({
+          errors: [{ type: 'RATE_LIMITED', message: 'API rate limit' }],
+        })) as unknown as typeof fetch,
+    };
+
+    await expect(
+      reconcilePullRequestRemediation(deps, { repo: REPO, issue: 4004 }),
+    ).rejects.toBeInstanceOf(PrRemediationGraphqlError);
+    expect(structured).toHaveBeenCalledWith(
+      'warn',
+      'LCARS PR remediation outcome',
+      {
+        component: 'lcars-pr-remediation',
+        trigger: 'webhook',
+        outcome: 'error',
+        reason: 'graphql-error',
+        repo: REPO,
+        number: 4004,
+        graphqlErrorTypes: ['RATE_LIMITED'],
+      },
+      { enrich: false },
+    );
+    structured.mockRestore();
+  });
+
+  it('records each skipped check with its trigger and reason', async () => {
+    const f = createFixture();
+    const structured = vi
+      .spyOn(logger, 'structured')
+      .mockImplementation(() => undefined);
+    f.setPr(REPO, 4005, {
+      headRepository: { nameWithOwner: 'attacker/homelab' },
+      mergeable: 'CONFLICTING',
+    });
+
+    await reconcilePullRequestRemediation(f.remediationDeps, {
+      repo: REPO,
+      issue: 4005,
+    });
+    expect(structured).toHaveBeenCalledWith(
+      'info',
+      'LCARS PR remediation outcome',
+      {
+        component: 'lcars-pr-remediation',
+        trigger: 'webhook',
+        outcome: 'skipped',
+        reason: 'fork-pull-request',
+        repo: REPO,
+        number: 4005,
+      },
+      { enrich: false },
+    );
+    structured.mockRestore();
+  });
+
+  it('counts blocked PRs nothing has touched for two hours as stalled', async () => {
+    const f = createFixture();
+    const structured = vi
+      .spyOn(logger, 'structured')
+      .mockImplementation(() => undefined);
+    const seed = async (
+      issue: number,
+      overrides: Partial<GithubAnchorProjection>,
+    ) => {
+      const anchor = { repo: REPO, issue };
+      const generation =
+        await f.store.beginGithubAnchorProjectionRefresh(anchor);
+      await f.store.applyGithubAnchorProjectionRefresh({
+        anchor,
+        generation,
+        projection: {
+          anchor,
+          kind: 'pr',
+          state: 'open',
+          draft: false,
+          mergedAt: null,
+          title: `PR ${issue}`,
+          body: '',
+          url: `https://github.com/${REPO}/pull/${issue}`,
+          author: 'jlapenna',
+          labels: [],
+          assigneeLogins: [],
+          sourceUpdatedAt: T0,
+          observedAt: T0,
+          ...overrides,
+        },
+      });
+    };
+    await seed(4010, { mergeableState: 'dirty' });
+    await seed(4011, { unresolvedReviewThreadCount: 2 });
+    await seed(4012, { mergeableState: 'clean' });
+    f.advanceMinutes(180);
+    // Recent PR activity keeps a blocked PR out of the stalled count.
+    await seed(4013, { mergeableState: 'dirty', sourceUpdatedAt: f.now() });
+
+    await reconcileOpenPullRequestRemediations(
+      f.remediationDeps,
+      Date.now() + 60_000,
+    );
+
+    expect(structured).toHaveBeenCalledWith(
+      'warn',
+      'LCARS PR remediation census',
+      {
+        component: 'lcars-pr-remediation-census',
+        complete: true,
+        blocked: 3,
+        running: 0,
+        deliveryOwned: 0,
+        stalled: 2,
+        oldestStalledSeconds: 180 * 60,
+        stallAfterSeconds: 7200,
+        stalledPullRequests: [`${REPO}#4010`, `${REPO}#4011`],
+      },
+      { enrich: false },
+    );
+    structured.mockRestore();
   });
 
   it('deduplicates identical state and caps consecutive automatic remediation rounds', async () => {

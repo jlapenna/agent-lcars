@@ -477,3 +477,13 @@ a non-remediation caller run. Removing `status:needs-human` alone fires
 remain; reply on the PR to resume automatic remediation. When review threads
 or reviews exceed one GraphQL page, remediation stops and parks only a
 conflicting PR.
+
+Every check logs one `lcars-pr-remediation` event (`trigger`, `outcome`
+`remediated`/`rereviewed`/`skipped`/`error`, bounded `reason`, repository and
+number). GitHub GraphQL `errors` envelopes report `reason=graphql-error` with
+GitHub's error types. Each five-minute maintenance sweep logs one
+`lcars-pr-remediation-census` event: blocked PRs (merge conflict or unresolved
+review threads), those with a live run or a waiting delivery owner, and
+`stalled` PRs with neither and no PR or run activity for two hours, plus
+`complete=false` when the census could not read everything. Homelab turns
+both into `node_lcars_pr_remediation_*` gauges and alerts.
