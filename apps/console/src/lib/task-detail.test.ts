@@ -64,7 +64,6 @@ vi.mock('./orchestrator-runtime', () => ({
   }),
 }));
 vi.mock('./dashboard-data', () => ({
-  DASHBOARD_CACHE_LIFE: { stale: 30, revalidate: 30, expire: 60 },
   getCachedAgentActivity: vi.fn(async () => ({
     data: cachedActivity,
     fetchedAt: '2026-07-07T00:00:00Z',

@@ -1,126 +1,50 @@
-import { isE2eTesting } from '@agent-lcars/util-server';
-import { cacheLife, cacheTag } from 'next/cache';
+import { cache } from 'react';
 
 import { type ActionItemsResult } from './action-items';
 import { type AgentActivity, getAgentActivity } from './agent-activity';
 import { getAuthoritativeQueueItems } from './authoritative-queue';
-import { AUTHORITATIVE_QUEUE_TAG } from './cache-tags';
 
 /**
- * A short server-side cache in front of authoritative queue reads.
+ * The authoritative queue and agent activity that Bridge, Inbox, Agents and
+ * the console frame render, read fresh for every request.
  *
- * Every navigation between Queue and Agents, and every Refresh click, used
- * to re-run the whole GitHub fetch. #147/#148 removed the search API's
- * 30-req/min ceiling and #151 collapsed the per-item N+1, but a load still
- * costs core-budget requests for GitHub issue/PR metadata plus authoritative
- * broker task and run reads. Those are paid on every load, which is exactly
- * what a cache is for.
- *
- * Uses Next 16's native `"use cache"` rather than the legacy
- * `unstable_cache`: on this version the latter's entries were not reliably
- * purged by tag invalidation, which showed up as the console serving a
- * stale board after its fixtures changed. A cache whose invalidation does
- * not fire is worse than no cache - it means stale state after a merge.
- * See #149.
- *
- * Deliberately short. This is a live ops console: the point is to collapse
- * incidental refetches (navigation, a double-click, two tabs), NOT to serve
- * meaningfully old data. Everything that should show a change immediately -
- * every mutation in `app/actions.ts`, the Refresh control, and the e2e seed
- * route - invalidates the tag rather than waiting this out.
- *
- * See DASHBOARD_CACHE_LIFE below for why the window is spelled out rather
- * than taken from a named profile.
+ * Both are Firestore reads of the control plane's own projections (Work,
+ * Task, Run, webhook anchors and autoscaler status) and take about 0.3 s
+ * and 0.5 s uncached. They used to sit behind a 30 to 60 s cache, which made
+ * every page show runs and queue state up to a minute old. React's `cache`
+ * shares one read between the page and its components within a render. The
+ * frame's readouts and inbox badge load in a separate request (a Route
+ * Handler, where `cache` does not share), so `loadShellReadouts` passes one
+ * activity read to the inbox snapshot explicitly.
  */
 
-/**
- * Explicit, NOT the built-in `seconds` profile.
- *
- * `seconds` is `{ stale: 30, revalidate: 1, expire: 60 }`, and that
- * `revalidate: 1` is the problem: any load more than a second after the last
- * one serves the cached value AND kicks off a background refetch. For a
- * human clicking between Queue and Agents that is every single load, so the
- * cache removes the *blocking* but not the *requests* - which is most of
- * why it exists: it prevents repeated projection reads during ordinary
- * navigation.
- *
- * `revalidate: 30` means loads inside a 30s window are genuinely free.
- * `expire: 60` bounds how stale a served value can get; `stale: 30` is the
- * client router's own window. None of this weakens correctness after a
- * mutation - every writer invalidates the tag rather than waiting this out.
- */
-export const DASHBOARD_CACHE_LIFE = { stale: 30, revalidate: 30, expire: 60 };
-
-/** Wall-clock time the underlying fetch actually ran.
- *
- * Captured inside the cached function, so it is cached alongside the data it
- * describes and therefore reports the data's real age rather than the render
- * time. The header's "Updated ..." label reads this - without it a cache hit
- * would render "Updated just now" over data up to the cache lifetime old. */
+/** Wall-clock time the underlying read ran. The header's "Data as of" label
+ * reads it, so it reports when the data was read rather than the render
+ * time of a page that stayed open. */
 export interface Fetched<T> {
   data: T;
   fetchedAt: string;
 }
 
-async function fetchActionItems(): Promise<Fetched<ActionItemsResult>> {
-  const fetchedAt = new Date().toISOString();
-  return {
-    data: await getAuthoritativeQueueItems(),
-    fetchedAt,
-  };
-}
+export const getCachedQueueItems = cache(
+  async (): Promise<Fetched<ActionItemsResult>> => {
+    const fetchedAt = new Date().toISOString();
+    return { data: await getAuthoritativeQueueItems(), fetchedAt };
+  },
+);
 
-async function getProductionCachedActionItems(): Promise<
-  Fetched<ActionItemsResult>
-> {
-  'use cache';
-  cacheTag(AUTHORITATIVE_QUEUE_TAG);
-  cacheLife(DASHBOARD_CACHE_LIFE);
-  return fetchActionItems();
-}
+export const getCachedAgentActivity = cache(
+  async (): Promise<Fetched<AgentActivity>> => {
+    const fetchedAt = new Date().toISOString();
+    return { data: await getAgentActivity(), fetchedAt };
+  },
+);
 
-async function fetchAgentActivity(): Promise<Fetched<AgentActivity>> {
-  const fetchedAt = new Date().toISOString();
-  return {
-    data: await getAgentActivity(),
-    fetchedAt,
-  };
-}
-
-async function getProductionCachedAgentActivity(): Promise<
-  Fetched<AgentActivity>
-> {
-  'use cache';
-  cacheTag(AUTHORITATIVE_QUEUE_TAG);
-  cacheLife(DASHBOARD_CACHE_LIFE);
-  return fetchAgentActivity();
-}
-
-/**
- * E2E fixture reads deliberately bypass Next's persistent cache. Tag
- * invalidation removes committed entries, but it cannot stop an older RSC
- * request from committing its in-flight fill after a fixture reset. Reusing
- * fixture IDs then turns that late value into a valid hit for the next test.
- * Production keeps the same short cache; only the hermetic fixture runtime
- * pays for a fresh read on every render.
- */
-export function getCachedQueueItems(): Promise<Fetched<ActionItemsResult>> {
-  return isE2eTesting() ? fetchActionItems() : getProductionCachedActionItems();
-}
-
-export function getCachedAgentActivity(): Promise<Fetched<AgentActivity>> {
-  return isE2eTesting()
-    ? fetchAgentActivity()
-    : getProductionCachedAgentActivity();
-}
-
-/** The age the page should report, given every cached source it rendered
- * from: the oldest of them, since that is the staleness the maintainer is
- * actually looking at. Uncached sources (the Firestore reads) are always
- * current and so never lower this.
+/** The age the page should report, given every source it rendered from: the
+ * oldest of them.
  *
  * Plain lexicographic order is chronological here - every input is a UTC
- * `toISOString()` from the cached fetches above. */
+ * `toISOString()` from the reads above. */
 export function oldestFetchedAt(...fetchedAt: string[]): string {
   return [...fetchedAt].sort()[0] ?? new Date().toISOString();
 }

@@ -1,4 +1,4 @@
-import { revalidatePath, updateTag } from 'next/cache';
+import { revalidatePath } from 'next/cache';
 import {
   afterEach,
   beforeEach,
@@ -30,7 +30,6 @@ import {
   updateIssueContent as updateIssueContentLib,
   updatePrBranch,
 } from '../lib/backend-actions';
-import { AUTHORITATIVE_QUEUE_TAG } from '../lib/cache-tags';
 import {
   configureTestWatchedRepos,
   TEST_HOME_REPOSITORY,
@@ -54,7 +53,6 @@ const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
 
 vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
-  updateTag: vi.fn(),
 }));
 
 // Mocked in full (rather than jest.requireActual) because the real module
@@ -312,7 +310,6 @@ describe('agent-lcars Server Actions', () => {
 
       await expect(mergePr(DEFAULT_REPO, 42)).resolves.toEqual({ ok: true });
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('rebasePr returns { ok: true } and revalidates', async () => {
@@ -321,7 +318,6 @@ describe('agent-lcars Server Actions', () => {
       await expect(rebasePr(DEFAULT_REPO, 42)).resolves.toEqual({ ok: true });
       expect(updatePrBranch).toHaveBeenCalledWith(DEFAULT_REPO, 42);
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('approveAndRebase returns { ok: true } and revalidates', async () => {
@@ -331,7 +327,6 @@ describe('agent-lcars Server Actions', () => {
         ok: true,
       });
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('replyToItem reports a comment that dispatched nobody, and revalidates', async () => {
@@ -346,7 +341,6 @@ describe('agent-lcars Server Actions', () => {
         note: 'No agent assigned - posted as a comment only',
       });
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('reports a posted reply as success with a dispatch failure warning', async () => {
@@ -383,7 +377,6 @@ describe('agent-lcars Server Actions', () => {
         false,
       );
       expect(postComment).not.toHaveBeenCalled();
-      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('preserves the assignment failure warning after retry admission succeeds', async () => {
@@ -552,7 +545,6 @@ describe('agent-lcars Server Actions', () => {
       });
       expect(closeIssueLib).toHaveBeenCalledWith(DEFAULT_REPO, 2709);
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('updateIssueContent returns { ok: true } and revalidates', async () => {
@@ -568,7 +560,6 @@ describe('agent-lcars Server Actions', () => {
         content,
       );
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('clearHumanNeeded returns { ok: true } and revalidates', async () => {
@@ -579,7 +570,6 @@ describe('agent-lcars Server Actions', () => {
       });
       expect(clearNeedsHumanLabel).toHaveBeenCalledWith(DEFAULT_REPO, 2709);
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
   });
 

@@ -7,7 +7,6 @@ const {
   enqueueGitHubWebhook,
   handleWebhookDelivery,
   ProjectionRefreshError,
-  revalidateTag,
 } = vi.hoisted(() => {
   class ProjectionRefreshError extends Error {
     override readonly name = 'ProjectionRefreshError';
@@ -17,7 +16,6 @@ const {
     enqueueGitHubWebhook: vi.fn(),
     handleWebhookDelivery: vi.fn(),
     ProjectionRefreshError,
-    revalidateTag: vi.fn(),
   };
 });
 
@@ -30,7 +28,6 @@ vi.mock('@/lib/orchestrator-routes', () => ({
 vi.mock('@/lib/github-webhook-auth', () => ({
   verifyWebhookSignature: vi.fn(() => true),
 }));
-vi.mock('next/cache', () => ({ revalidateTag }));
 
 import { POST } from './route';
 
@@ -64,18 +61,6 @@ afterEach(() => {
 });
 
 describe('POST /api/control-plane/webhook/process', () => {
-  it('binds queue invalidation to the durable webhook projection path', async () => {
-    handleWebhookDelivery.mockImplementation(async (deps) => {
-      await deps.invalidateAuthoritativeQueue();
-      return { status: 200, body: { ignored: 'no-trigger-label' } };
-    });
-
-    const response = await POST(request('0'));
-
-    expect(response.status).toBe(200);
-    expect(revalidateTag).toHaveBeenCalledWith('authoritative-queue', 'max');
-  });
-
   it('hands a projection-only repair to a durable successor at the retry cap', async () => {
     handleWebhookDelivery.mockRejectedValue(
       new ProjectionRefreshError('GitHub exact refresh unavailable'),
@@ -95,9 +80,7 @@ describe('POST /api/control-plane/webhook/process', () => {
       }),
     );
     expect(handleWebhookDelivery).toHaveBeenCalledWith(
-      expect.objectContaining({
-        invalidateAuthoritativeQueue: expect.any(Function),
-      }),
+      expect.anything(),
       expect.objectContaining({
         event: 'issues',
         deliveryId: 'projection-refresh-delivery',

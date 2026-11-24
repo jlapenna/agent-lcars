@@ -1,8 +1,6 @@
 import { logger } from '@agent-lcars/logging';
 import { required } from '@agent-lcars/util-server';
-import { revalidateTag } from 'next/cache';
 
-import { AUTHORITATIVE_QUEUE_TAG } from '@/lib/cache-tags';
 import {
   MAX_PROCESS_ATTEMPTS,
   MAX_REPAIR_GENERATIONS,
@@ -81,7 +79,6 @@ export async function POST(request: Request): Promise<Response> {
       },
     );
     await runtime.drain();
-    revalidateTag(AUTHORITATIVE_QUEUE_TAG, 'max');
     return respond(result.body, result.status >= 500 ? result.status : 200);
   } catch (error) {
     if (error instanceof PermanentAdmissionError) {
