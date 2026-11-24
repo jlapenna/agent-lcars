@@ -183,7 +183,11 @@ jobs:
               --method POST --input - >/dev/null \
             || echo "::warning::Could not assign $FLEET_LOGIN to #$PR"
 
+      # The App's own pull request is the one that needs a person: GitHub lets
+      # no account approve its own pull request, so LCARS requests a
+      # maintainer's review there and this step must leave that request alone.
       - name: Clear outstanding review requests
+        if: github.event.pull_request.user.login != format('{0}[bot]', steps.mint-app-token.outputs.app-slug)
         env:
           GH_TOKEN: ${{ steps.mint-app-token.outputs.token }}
           PR: ${{ github.event.pull_request.number }}
@@ -338,21 +342,25 @@ jobs:
             fi
 
             CHECKED=$((CHECKED + 1))
-            REQUESTS=$(gh api "repos/$REPO/pulls/$PR/requested_reviewers")
-            PAYLOAD=$(jq -c '{reviewers: [.users[].login], team_reviewers: [.teams[].slug]}' <<<"$REQUESTS")
-            if jq -e '(.reviewers | length) + (.team_reviewers | length) > 0' <<<"$PAYLOAD" >/dev/null; then
+            # The App's own pull request keeps its review request: a maintainer
+            # must approve it, because GitHub lets no account approve its own.
+            if [ "$AUTHOR" != "${APP_LOGIN#app/}[bot]" ]; then
+              REQUESTS=$(gh api "repos/$REPO/pulls/$PR/requested_reviewers")
+              PAYLOAD=$(jq -c '{reviewers: [.users[].login], team_reviewers: [.teams[].slug]}' <<<"$REQUESTS")
+              if jq -e '(.reviewers | length) + (.team_reviewers | length) > 0' <<<"$PAYLOAD" >/dev/null; then
+                if ! gh api "repos/$REPO/pulls/$PR/requested_reviewers" \
+                  --method DELETE --input - <<<"$PAYLOAD" >/dev/null; then
+                  echo "::error::Could not clear review requests for agent PR #$PR."
+                  FAILED=$((FAILED + 1))
+                  continue
+                fi
+              fi
               if ! gh api "repos/$REPO/pulls/$PR/requested_reviewers" \
-                --method DELETE --input - <<<"$PAYLOAD" >/dev/null; then
-                echo "::error::Could not clear review requests for agent PR #$PR."
+                --jq 'if (.users | length) == 0 and (.teams | length) == 0 then . else error("review requests remain") end' >/dev/null; then
+                echo "::error::Review requests remain on agent PR #$PR."
                 FAILED=$((FAILED + 1))
                 continue
               fi
-            fi
-            if ! gh api "repos/$REPO/pulls/$PR/requested_reviewers" \
-              --jq 'if (.users | length) == 0 and (.teams | length) == 0 then . else error("review requests remain") end' >/dev/null; then
-              echo "::error::Review requests remain on agent PR #$PR."
-              FAILED=$((FAILED + 1))
-              continue
             fi
 
             VIEW=$(gh pr view "$PR" --repo "$REPO" --json state,autoMergeRequest)

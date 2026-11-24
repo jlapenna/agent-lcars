@@ -23,7 +23,11 @@ import {
 import { workPayloadSchema } from '@agent-lcars/work';
 import { z } from 'zod';
 
-import { isAdminGithubLogin, isControlPlaneRepository } from './deployment';
+import {
+  adminGithubLogins,
+  isAdminGithubLogin,
+  isControlPlaneRepository,
+} from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import {
   admitGithubWork,
@@ -119,6 +123,20 @@ const pullRequestSnapshotSchema = z.object({
   assignees: z.object({
     nodes: z.array(z.object({ login: z.string() }).nullable()),
   }),
+  reviewRequests: z
+    .object({
+      nodes: z.array(
+        z
+          .object({
+            requestedReviewer: z
+              .object({ login: z.string().optional() })
+              .nullable(),
+          })
+          .nullable(),
+      ),
+    })
+    .nullable()
+    .optional(),
   reviews: z.object({
     pageInfo: z.object({ hasPreviousPage: z.boolean() }),
     nodes: z.array(
@@ -301,6 +319,33 @@ async function approveDependencyUpdate(
   return z.object({ id: z.number().int() }).parse(await response.json()).id;
 }
 
+/** Ask people for a review the ordinary way: a GitHub review request. */
+async function requestReview(
+  deps: PrRemediationDeps,
+  anchor: GithubAnchor,
+  reviewers: readonly string[],
+): Promise<void> {
+  const token = await deps.tokens.tokenFor(anchor.repo);
+  const response = await (deps.fetchImpl ?? fetch)(
+    `${deps.githubApiBaseUrl ?? 'https://api.github.com'}/repos/${anchor.repo}/pulls/${anchor.issue}/requested_reviewers`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: 'application/vnd.github+json',
+        'content-type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify({ reviewers }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `requesting review on ${anchor.repo}#${anchor.issue} failed (${response.status})`,
+    );
+  }
+}
+
 async function dismissReview(
   deps: PrRemediationDeps,
   anchor: GithubAnchor,
@@ -392,6 +437,9 @@ const PR_SNAPSHOT_QUERY = `
         author { __typename login }
         labels(first: 100) { nodes { name } }
         assignees(first: 20) { nodes { login } }
+        reviewRequests(first: 20) {
+          nodes { requestedReviewer { __typename ... on User { login } } }
+        }
         reviews(last: 100) {
           pageInfo { hasPreviousPage }
           nodes { databaseId state body authorAssociation author { __typename login } commit { oid } }
@@ -455,11 +503,18 @@ async function readPullRequestSnapshot(
   return data.repository?.pullRequest ?? null;
 }
 
+/** The identity every LCARS review is published as. */
+const LCARS_REVIEWER_LOGIN = 'agent-lcars[bot]';
+
 function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
   blockingReviewKeys: string[];
   hasCurrentHeadLcarsReview: boolean;
   /** Someone dismissed an LCARS review of this head: a decision to respect. */
   hasDismissedCurrentHeadLcarsReview: boolean;
+  /** LCARS's latest verdict on this head is a pass. */
+  lcarsPassedCurrentHead: boolean;
+  /** Lower-cased logins of trusted reviewers who approved this head. */
+  approvedBy: string[];
 } {
   const head = snapshot.headRefOid;
   const latestByAuthor = new Map<
@@ -468,6 +523,7 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
   >();
   let hasCurrentHeadLcarsReview = false;
   let hasDismissedCurrentHeadLcarsReview = false;
+  const approvedBy = new Set<string>();
 
   for (const review of snapshot.reviews.nodes) {
     if (review === null || review.author === null || review.commit === null) {
@@ -482,7 +538,7 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
       continue;
     }
     const authorKey = login.toLowerCase();
-    const isLcarsBot = authorKey === 'agent-lcars[bot]';
+    const isLcarsBot = authorKey === LCARS_REVIEWER_LOGIN;
     const key =
       review.databaseId !== null && review.databaseId !== undefined
         ? `${login}:${review.databaseId}`
@@ -503,9 +559,12 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
       }
     }
 
+    if (review.state === 'APPROVED') approvedBy.add(authorKey);
     if (review.state === 'CHANGES_REQUESTED') {
+      approvedBy.delete(authorKey);
       latestByAuthor.set(authorKey, { verdict: 'blocked', key });
     } else if (review.state === 'APPROVED' || review.state === 'DISMISSED') {
+      if (review.state === 'DISMISSED') approvedBy.delete(authorKey);
       latestByAuthor.set(authorKey, { verdict: 'clear', key });
     } else if (review.state === 'COMMENTED' && isLcarsBot) {
       if (hasReviewLineMarker(review.body, '<!-- lcars-review:block -->')) {
@@ -527,6 +586,10 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
     blockingReviewKeys,
     hasCurrentHeadLcarsReview,
     hasDismissedCurrentHeadLcarsReview,
+    lcarsPassedCurrentHead:
+      hasCurrentHeadLcarsReview &&
+      latestByAuthor.get(LCARS_REVIEWER_LOGIN)?.verdict === 'clear',
+    approvedBy: [...approvedBy].sort(),
   };
 }
 
@@ -1082,6 +1145,30 @@ async function reconcilePullRequestRemediationOnce(
       fallbackPipelines: selection.fallbackPipelines,
     });
     return { action: 'remediated', outcome };
+  }
+
+  // GitHub lets no account approve its own pull request, so a pull request
+  // the LCARS App opened cannot get its approval from the LCARS review. Once
+  // LCARS has passed the current head and nothing else stands against it, ask
+  // the maintainers for that approval, once per maintainer.
+  if (
+    author.toLowerCase() === LCARS_REVIEWER_LOGIN &&
+    headReviews.lcarsPassedCurrentHead
+  ) {
+    const pending = new Set(
+      (snapshot.reviewRequests?.nodes ?? []).flatMap((node) =>
+        node?.requestedReviewer?.login
+          ? [node.requestedReviewer.login.toLowerCase()]
+          : [],
+      ),
+    );
+    const wanted = adminGithubLogins().filter(
+      (login) => !pending.has(login) && !headReviews.approvedBy.includes(login),
+    );
+    if (wanted.length > 0 && headReviews.approvedBy.length === 0) {
+      await requestReview(deps, anchor, wanted);
+      return { action: 'ignored', reason: 'maintainer-review-requested' };
+    }
   }
 
   // A `synchronize` push during a live run on this PR anchor is refused as
