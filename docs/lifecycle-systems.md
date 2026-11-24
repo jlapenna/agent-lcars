@@ -472,7 +472,10 @@ Renovate PRs. Fork PRs are never remediated. After
 `status:needs-human`; these blockers otherwise never enter the Decision Inbox. A round that finishes `no-op` at the PR's current head (the agent judged
 no change warranted, for example a superseded PR) also applies
 `status:needs-human` on the next check, so the PR reaches the Inbox instead
-of staying blocked; a new head remediates again.
+of staying blocked; a new head remediates again. Unresolved threads from
+untrusted authors never start a run, but every enrolled ruleset requires
+conversation resolution, so a PR blocked only by them is labeled
+`status:needs-human` (`reason=untrusted-threads`).
 
 The round count comes from run history and resets only on a human `reply` or
 a non-remediation caller run. Removing `status:needs-human` alone fires

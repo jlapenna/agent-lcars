@@ -1475,9 +1475,19 @@ describe('automatic pull-request review & conflict remediation', () => {
         },
       ],
     });
+    // No agent acts on the stranger's thread, but it still blocks the merge
+    // (conversation resolution is required), so a human is asked instead.
     expect(
       await reconcilePullRequestRemediation(f.remediationDeps, anchor),
-    ).toEqual({ action: 'ignored', reason: 'clean' });
+    ).toEqual({ action: 'ignored', reason: 'untrusted-threads' });
+    expect(await f.store.listRuns(anchor)).toHaveLength(0);
+    expect(f.fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining(`/repos/${LCARS_REPO}/issues/4010/labels`),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ labels: ['status:needs-human'] }),
+      }),
+    );
 
     // Even if `agent-lcars-bot` was assigned by a prior `review` run, an untrusted PR author without `agent:*` or `implement` history stays untrusted!
     f.setPr(REPO, 4011, {
@@ -1782,6 +1792,9 @@ describe('automatic pull-request review & conflict remediation', () => {
         repo: LCARS_REPO,
         issue: 3489,
       }),
-    ).toEqual({ action: 'ignored', reason: 'clean' });
+    ).toEqual({ action: 'ignored', reason: 'untrusted-threads' });
+    expect(
+      await f.store.listRuns({ repo: LCARS_REPO, issue: 3489 }),
+    ).toHaveLength(0);
   });
 });
