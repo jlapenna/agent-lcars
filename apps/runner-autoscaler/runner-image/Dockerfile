@@ -50,6 +50,12 @@ ARG GO_BUILD_BASE=golang:${GO_VERSION}-bookworm
 
 # One pin feeds the source image and both runtime-user build assertions.
 ARG TERRAFORM_VERSION=1.17.2
+# The fleet pnpm seed's source stage (homelab#3787). By default the seed is
+# fetched by the pnpm-store-seed stage below. A publisher may instead pass a
+# previously built `--target pnpm-store-seed` image by digest, so ordinary
+# runner builds reuse it from the registry instead of re-fetching every fleet
+# package whenever the builder's native cache has evicted that stage.
+ARG PNPM_SEED_SOURCE=pnpm-store-seed
 
 # Builds jlapenna/agent-lcars's telemetry sidecar/finalize tool AND the
 # `lcars` session-title/status CLI (apps/telemetry-watcher's `bundle` and
@@ -256,10 +262,12 @@ RUN set -eu; \
 # A small fixture preserves the lower-image-layer TypeScript hit and normal
 # is-number writable miss. Depend on the real production fetch as well; none
 # of these phases may run in parallel or bypass a rejected fleet lockfile.
+FROM ${PNPM_SEED_SOURCE} AS pnpm-seed-source
+
 FROM node-build AS pnpm-regression-seed
 ARG NODE_OPTIONS=--max-old-space-size=512
 WORKDIR /seed
-COPY --from=pnpm-store-seed /fleet-pnpm-pins /proof/production-pnpm-pins
+COPY --from=pnpm-seed-source /fleet-pnpm-pins /proof/production-pnpm-pins
 COPY pnpm-seed-regression/seed/package.json package.json
 COPY pnpm-seed-regression/seed/pnpm-lock.yaml pnpm-lock.yaml
 RUN pnpm fetch --frozen-lockfile --ignore-scripts --store-dir /pnpm-store
@@ -293,7 +301,7 @@ RUN --mount=type=tmpfs,target=/home/runner/_work,size=268435456 \
 
 FROM scratch AS pnpm-store-proof
 COPY --from=pnpm-cpu-regression /proof/cpu-selection.ok /proof/cpu-selection.ok
-COPY --from=pnpm-store-seed /fleet-pnpm-pins /proof/production-pnpm-pins
+COPY --from=pnpm-seed-source /fleet-pnpm-pins /proof/production-pnpm-pins
 COPY --from=pnpm-store-layer-proof /home/runner/.cache/pnpm-proof/layer.ok /proof/layer.ok
 COPY --from=pnpm-store-work-proof /home/runner/.cache/pnpm-proof/work-mount.ok /proof/work-mount.ok
 COPY --from=pnpm-regression-base /home/runner/.config/pnpm/config.yaml /proof/config.yaml
@@ -948,9 +956,9 @@ RUN hindsight-coding-agents install claude-code codex antigravity-cli \
 # would otherwise resolve `pnpm` to the registry's latest release (12.x
 # today); making this repo's pin the global default, with
 # COREPACK_DEFAULT_TO_LATEST=0, keeps that offline and on the fleet's line.
-COPY --from=pnpm-store-seed --chown=runner:runner \
+COPY --from=pnpm-seed-source --chown=runner:runner \
     /root/.cache/node/corepack/v1/pnpm/ /home/runner/.cache/node/corepack/v1/pnpm/
-COPY --from=pnpm-store-seed /fleet-pnpm-pins \
+COPY --from=pnpm-seed-source /fleet-pnpm-pins \
     /usr/local/share/agent-lcars-corepack/fleet-pnpm-pins
 ENV COREPACK_DEFAULT_TO_LATEST=0
 RUN corepack install --global "$(node -p 'require("./package.json").packageManager')"
@@ -988,11 +996,11 @@ RUN bash /usr/local/lib/agent-lcars/verify-image-invariants.sh
 RUN mkdir -p /home/runner/.local/share/pnpm/store /home/runner/.cache/pnpm && \
     touch -d @0 /home/runner /home/runner/.local /home/runner/.local/share \
       /home/runner/.local/share/pnpm /home/runner/.cache
-COPY --from=pnpm-store-seed --chown=runner:runner \
+COPY --from=pnpm-seed-source --chown=runner:runner \
     /pnpm-store/ /home/runner/.local/share/pnpm/store/
 # pnpm's registry-metadata cache from the same fetch, so a job's supply-chain
 # verification reads it from this lower layer instead of rewriting it.
-COPY --from=pnpm-store-seed --chown=runner:runner \
+COPY --from=pnpm-seed-source --chown=runner:runner \
     /pnpm-cache/ /home/runner/.cache/pnpm/
 
 # Pin pnpm's content-addressable store and metadata cache to the exact paths
