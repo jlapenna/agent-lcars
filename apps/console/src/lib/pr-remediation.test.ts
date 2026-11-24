@@ -1078,6 +1078,32 @@ describe('automatic pull-request review & conflict remediation', () => {
       expect(requests(f)).toEqual([]);
     });
 
+    it('asks only the maintainer, not every console admin', async () => {
+      vi.stubEnv('AGENT_LCARS_ADMIN_GITHUB_LOGINS', 'jlapenna,lizsprinkles');
+      const f = createFixture();
+      f.setPr(REPO, 4040, { author: LCARS, reviews: [pass] });
+
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
+
+      expect(requests(f)).toEqual([{ reviewers: ['jlapenna'] }]);
+    });
+
+    it('asks even while a delivery binding owns the pull request, without admitting a run', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4040, { author: LCARS, reviews: [pass] });
+      vi.spyOn(f.store, 'readWaitingDeliveryTasks').mockResolvedValue([
+        {} as never,
+      ]);
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor, {
+          wakeDelivery: false,
+        }),
+      ).toEqual({ action: 'ignored', reason: 'maintainer-review-requested' });
+      expect(requests(f)).toEqual([{ reviewers: ['jlapenna'] }]);
+      expect(await f.store.readActiveRun(anchor)).toBeUndefined();
+    });
+
     it("does not ask about a maintainer's own pull request", async () => {
       const f = createFixture();
       f.setPr(REPO, 4040, { author: { login: 'jlapenna' }, reviews: [pass] });

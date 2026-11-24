@@ -68,7 +68,7 @@ request: a PR opened by the LCARS App itself merges after a maintainer
 approves it. LCARS still reviews it, as a `COMMENT` carrying
 `<!-- lcars-review:pass -->` or `<!-- lcars-review:block -->`; once it passes
 with nothing else against the head, the control plane requests the
-maintainers' review, and `agent-automerge-reusable.yml` leaves that request
+maintainer's review, and `agent-automerge-reusable.yml` leaves that request
 in place.
 
 Enabling the gate in a repository is one change to its ruleset root

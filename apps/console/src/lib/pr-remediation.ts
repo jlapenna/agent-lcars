@@ -24,9 +24,9 @@ import { workPayloadSchema } from '@agent-lcars/work';
 import { z } from 'zod';
 
 import {
-  adminGithubLogins,
   isAdminGithubLogin,
   isControlPlaneRepository,
+  maintainerLogin,
 } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import {
@@ -344,6 +344,57 @@ async function requestReview(
       `requesting review on ${anchor.repo}#${anchor.issue} failed (${response.status})`,
     );
   }
+}
+
+/**
+ * GitHub lets no account approve its own pull request, so a pull request the
+ * LCARS App opened cannot get its approval from the LCARS review. Once LCARS
+ * has passed the current head and nothing else stands against it, ask the
+ * maintainer for that approval, once. Only {@link maintainerLogin} is asked:
+ * the plural admin list authorizes console sign-in and may name people who
+ * are not collaborators on this repository, which GitHub rejects as a whole.
+ *
+ * Read-only with respect to runs, so a delivery-owned pull request may take
+ * it too. Returns whether a request was made.
+ */
+async function requestMaintainerReviewIfDue(
+  deps: PrRemediationDeps,
+  anchor: GithubAnchor,
+  snapshot: PullRequestSnapshot,
+): Promise<boolean> {
+  const author = normalizeGraphqlActorLogin(snapshot.author);
+  if (
+    author?.toLowerCase() !== LCARS_REVIEWER_LOGIN ||
+    snapshot.state !== 'OPEN' ||
+    snapshot.mergedAt !== null ||
+    snapshot.isDraft ||
+    snapshot.mergeable === 'CONFLICTING' ||
+    snapshot.mergeStateStatus === 'DIRTY' ||
+    snapshot.reviews.pageInfo.hasPreviousPage ||
+    snapshot.reviewThreads.pageInfo.hasNextPage ||
+    snapshot.labels.nodes.some(
+      (node) =>
+        node?.name === 'status:needs-human' || node?.name === 'status:blocked',
+    ) ||
+    unresolvedTrustedThreadIds(snapshot).length > 0
+  ) {
+    return false;
+  }
+  const headReviews = evaluateCurrentHeadReviews(snapshot);
+  if (
+    !headReviews.lcarsPassedCurrentHead ||
+    headReviews.blockingReviewKeys.length > 0 ||
+    headReviews.approvedBy.length > 0
+  ) {
+    return false;
+  }
+  const maintainer = maintainerLogin().toLowerCase();
+  const pending = (snapshot.reviewRequests?.nodes ?? []).some(
+    (node) => node?.requestedReviewer?.login?.toLowerCase() === maintainer,
+  );
+  if (pending) return false;
+  await requestReview(deps, anchor, [maintainer]);
+  return true;
 }
 
 async function dismissReview(
@@ -878,6 +929,13 @@ async function reconcilePullRequestRemediationOnce(
         await deps.drain(Math.max(10, woken.length * 2));
       }
     }
+    const owned = await readPullRequestSnapshot(deps, anchor);
+    if (
+      owned !== null &&
+      (await requestMaintainerReviewIfDue(deps, anchor, owned))
+    ) {
+      return { action: 'ignored', reason: 'maintainer-review-requested' };
+    }
     return { action: 'ignored', reason: 'delivery-owned' };
   }
 
@@ -1147,28 +1205,8 @@ async function reconcilePullRequestRemediationOnce(
     return { action: 'remediated', outcome };
   }
 
-  // GitHub lets no account approve its own pull request, so a pull request
-  // the LCARS App opened cannot get its approval from the LCARS review. Once
-  // LCARS has passed the current head and nothing else stands against it, ask
-  // the maintainers for that approval, once per maintainer.
-  if (
-    author.toLowerCase() === LCARS_REVIEWER_LOGIN &&
-    headReviews.lcarsPassedCurrentHead
-  ) {
-    const pending = new Set(
-      (snapshot.reviewRequests?.nodes ?? []).flatMap((node) =>
-        node?.requestedReviewer?.login
-          ? [node.requestedReviewer.login.toLowerCase()]
-          : [],
-      ),
-    );
-    const wanted = adminGithubLogins().filter(
-      (login) => !pending.has(login) && !headReviews.approvedBy.includes(login),
-    );
-    if (wanted.length > 0 && headReviews.approvedBy.length === 0) {
-      await requestReview(deps, anchor, wanted);
-      return { action: 'ignored', reason: 'maintainer-review-requested' };
-    }
+  if (await requestMaintainerReviewIfDue(deps, anchor, snapshot)) {
+    return { action: 'ignored', reason: 'maintainer-review-requested' };
   }
 
   // A `synchronize` push during a live run on this PR anchor is refused as
@@ -1425,11 +1463,8 @@ export async function reconcileOpenPullRequestRemediations(
     try {
       const active = await deps.store.readActiveRun(projection.anchor);
       if (active !== undefined && isLive(active.state)) continue;
-      const waitingDeliveries = await deps.store.readWaitingDeliveryTasks({
-        repo: projection.anchor.repo,
-        number: projection.anchor.issue,
-      });
-      if (waitingDeliveries.length > 0) continue;
+      // A delivery-owned PR is still inspected: reconciliation admits no run
+      // for it, but may ask the maintainer to approve an App-authored PR.
       inspected += 1;
       await reconcilePullRequestRemediation(
         enqueueOnlyDeps,
