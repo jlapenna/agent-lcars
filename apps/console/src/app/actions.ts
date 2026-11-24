@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 
 import { taskKey } from '@agent-lcars/orchestrator';
-import { revalidatePath, updateTag } from 'next/cache';
+import { revalidatePath } from 'next/cache';
 import type { Session } from 'next-auth';
 
 import { createAdminAction } from '@/lib/auth-guards';
@@ -31,7 +31,6 @@ import {
   updateIssueContent as updateIssueContentLib,
   updatePrBranch,
 } from '../lib/backend-actions';
-import { AUTHORITATIVE_QUEUE_TAG } from '../lib/cache-tags';
 import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
 import { readGithubHumanDecision } from '../lib/github-human-decision';
 import { safeReturnPath } from '../lib/github-reauth';
@@ -131,18 +130,10 @@ export async function refreshGithubSignIn(returnTo: string): Promise<void> {
   await signIn('github', { redirectTo: safeReturnPath(returnTo) });
 }
 
-/**
- * Everything a mutation has to invalidate. `revalidatePath` alone would
- * re-render the page against the still-cached authoritative projection (see
- * lib/dashboard-data.ts), so a queued webhook update could appear not to
- * have happened until the cache lifetime elapsed.
- *
- * `updateTag`, not `revalidateTag`: this runs inside a Server Action, and
- * read-your-own-writes is exactly the semantic a mutation needs - the
- * caller must see its own effect on the very next render.
- */
+/** Re-renders the dashboard after a mutation, so the caller sees its own
+ * effect on the next render: the queue is read fresh for every request
+ * (lib/dashboard-data.ts). */
 function revalidateDashboard() {
-  updateTag(AUTHORITATIVE_QUEUE_TAG);
   revalidatePath('/');
 }
 
