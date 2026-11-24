@@ -246,7 +246,7 @@ never written to a repository, a log or a claw Job pod:
 gcloud iam service-accounts keys create /dev/stdout \
   --iam-account=claw-homelab-ops@agent-lcars.iam.gserviceaccount.com \
   | (cd <homelab feature worktree> && \
-     ./bin/manage-secrets.sh set-stdin --create claw_zone_executor_key_json)
+     ./bin/manage-secrets.sh set --create claw_zone_executor_key_json)
 ```
 
 Rotate by creating a new key the same way, deploying it, and deleting the old
