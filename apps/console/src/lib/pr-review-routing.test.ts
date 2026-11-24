@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   detectPullRequestAuthorPipeline,
   isAutomatedReviewExcludedAuthor,
+  isVerifiedDependencyUpdate,
   parseAttemptClaimRunId,
   selectCrossModelReviewer,
 } from './pr-review-routing';
@@ -265,5 +266,74 @@ describe('selectCrossModelReviewer', () => {
       fallbackPipelines: ['agy', 'codex'],
       crossModelOverride: false,
     });
+  });
+});
+
+describe('isVerifiedDependencyUpdate', () => {
+  const head = 'a'.repeat(40);
+  const base = {
+    authorLogin: 'renovate[bot]',
+    headRef: 'renovate/vitest',
+    headOid: head,
+    commits: {
+      totalCount: 1,
+      nodes: [
+        { oid: head, authorLogin: 'renovate[bot]', signedByGitHub: true },
+      ],
+    },
+  };
+
+  it('accepts a pull request only the bot has committed to', () => {
+    expect(isVerifiedDependencyUpdate(base)).toBe(true);
+    expect(
+      isVerifiedDependencyUpdate({
+        ...base,
+        authorLogin: 'dependabot[bot]',
+        headRef: 'dependabot/npm_and_yarn/vitest-4',
+        commits: {
+          totalCount: 1,
+          nodes: [
+            { oid: head, authorLogin: 'dependabot[bot]', signedByGitHub: true },
+          ],
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['another author', { authorLogin: 'jlapenna' }],
+    [
+      'a qualification branch',
+      { headRef: 'renovate/major-runner-cli-runtimes' },
+    ],
+    ['unread commits', { commits: undefined }],
+    ['no commits', { commits: { totalCount: 0, nodes: [] } }],
+    [
+      'more commits than were read',
+      { commits: { ...base.commits, totalCount: 2 } },
+    ],
+    ['a head outside the commit list', { headOid: 'b'.repeat(40) }],
+    [
+      'a commit by someone else',
+      {
+        commits: {
+          totalCount: 1,
+          nodes: [{ oid: head, authorLogin: 'jlapenna', signedByGitHub: true }],
+        },
+      },
+    ],
+    [
+      'an unsigned commit',
+      {
+        commits: {
+          totalCount: 1,
+          nodes: [
+            { oid: head, authorLogin: 'renovate[bot]', signedByGitHub: false },
+          ],
+        },
+      },
+    ],
+  ])('rejects %s', (_case, overrides) => {
+    expect(isVerifiedDependencyUpdate({ ...base, ...overrides })).toBe(false);
   });
 });

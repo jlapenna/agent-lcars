@@ -48,6 +48,7 @@ import {
 import {
   detectPullRequestAuthorPipeline,
   isAutomatedReviewExcludedAuthor,
+  isVerifiedDependencyUpdate,
   parseAttemptClaimRunId,
   selectCrossModelReviewer,
   selectPullRequestRemediation,
@@ -84,7 +85,8 @@ export interface PrRemediationDeps {
 export type PrRemediationResult =
   | { action: 'ignored'; reason: string }
   | { action: 'remediated'; outcome: GithubWorkAdmissionOutcome }
-  | { action: 'rereviewed'; outcome: GithubWorkAdmissionOutcome };
+  | { action: 'rereviewed'; outcome: GithubWorkAdmissionOutcome }
+  | { action: 'approved-dependency-update'; head: string };
 
 const pullRequestSnapshotSchema = z.object({
   state: z.string(),
@@ -133,6 +135,32 @@ const pullRequestSnapshotSchema = z.object({
         .nullable(),
     ),
   }),
+  commits: z
+    .object({
+      totalCount: z.number().int(),
+      nodes: z.array(
+        z
+          .object({
+            commit: z.object({
+              oid: sha,
+              author: z
+                .object({
+                  user: z.object({ login: z.string() }).nullable(),
+                })
+                .nullable(),
+              signature: z
+                .object({
+                  isValid: z.boolean(),
+                  wasSignedByGitHub: z.boolean(),
+                })
+                .nullable(),
+            }),
+          })
+          .nullable(),
+      ),
+    })
+    .nullable()
+    .optional(),
   reviewThreads: z.object({
     pageInfo: z.object({ hasNextPage: z.boolean() }),
     nodes: z.array(
@@ -240,6 +268,38 @@ async function applyNeedsHumanLabel(
   }
 }
 
+/** LCARS reviewing as itself: an ordinary approving review on the head. */
+async function approveDependencyUpdate(
+  deps: PrRemediationDeps,
+  anchor: GithubAnchor,
+  head: string,
+  bot: string,
+): Promise<void> {
+  const token = await deps.tokens.tokenFor(anchor.repo);
+  const response = await (deps.fetchImpl ?? fetch)(
+    `${deps.githubApiBaseUrl ?? 'https://api.github.com'}/repos/${anchor.repo}/pulls/${anchor.issue}/reviews`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: 'application/vnd.github+json',
+        'content-type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify({
+        commit_id: head,
+        event: 'APPROVE',
+        body: `Automated dependency update. Every commit on this pull request is authored by ${bot} and signed by GitHub, so LCARS approves it without a review run; CI gates the merge.`,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `approving dependency update ${anchor.repo}#${anchor.issue} failed (${response.status})`,
+    );
+  }
+}
+
 async function graphql<T>(
   deps: PrRemediationDeps,
   repo: string,
@@ -307,6 +367,10 @@ const PR_SNAPSHOT_QUERY = `
         reviews(last: 100) {
           pageInfo { hasPreviousPage }
           nodes { databaseId state body authorAssociation author { __typename login } commit { oid } }
+        }
+        commits(first: 100) {
+          totalCount
+          nodes { commit { oid author { user { login } } signature { isValid wasSignedByGitHub } } }
         }
         reviewThreads(first: 100) {
           pageInfo { hasNextPage }
@@ -597,8 +661,18 @@ export async function reconcilePullRequestRemediation(
   if (result.action !== 'ignored' || result.reason !== 'wrong-repo') {
     recordPrRemediationOutcome({
       trigger,
-      outcome: result.action === 'ignored' ? 'skipped' : result.action,
-      reason: result.action === 'ignored' ? result.reason : result.outcome.kind,
+      outcome:
+        result.action === 'ignored'
+          ? 'skipped'
+          : result.action === 'approved-dependency-update'
+            ? 'approved'
+            : result.action,
+      reason:
+        result.action === 'ignored'
+          ? result.reason
+          : result.action === 'approved-dependency-update'
+            ? 'dependency-update'
+            : result.outcome.kind,
       repo: anchor.repo,
       number: anchor.issue,
     });
@@ -697,6 +771,38 @@ async function reconcilePullRequestRemediationOnce(
   }
 
   const author = normalizeGraphqlActorLogin(snapshot.author);
+  if (
+    author !== undefined &&
+    isVerifiedDependencyUpdate({
+      authorLogin: author,
+      headRef: snapshot.headRefName,
+      headOid: snapshot.headRefOid,
+      commits:
+        snapshot.commits == null
+          ? undefined
+          : {
+              totalCount: snapshot.commits.totalCount,
+              nodes: snapshot.commits.nodes.flatMap((node) =>
+                node === null
+                  ? []
+                  : [
+                      {
+                        oid: node.commit.oid,
+                        authorLogin: node.commit.author?.user?.login,
+                        signedByGitHub:
+                          node.commit.signature?.isValid === true &&
+                          node.commit.signature.wasSignedByGitHub === true,
+                      },
+                    ],
+              ),
+            },
+    }) &&
+    !snapshot.reviews.pageInfo.hasPreviousPage &&
+    !evaluateCurrentHeadReviews(snapshot).hasCurrentHeadLcarsReview
+  ) {
+    await approveDependencyUpdate(deps, anchor, snapshot.headRefOid, author);
+    return { action: 'approved-dependency-update', head: snapshot.headRefOid };
+  }
   if (!author || isAutomatedReviewExcludedAuthor(author)) {
     return { action: 'ignored', reason: 'excluded-author' };
   }

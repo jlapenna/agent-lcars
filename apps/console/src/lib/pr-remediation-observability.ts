@@ -7,7 +7,7 @@ export type PrRemediationTrigger =
   'webhook' | 'run-settled' | 'merge-sweep' | 'open-sweep';
 
 export type PrRemediationOutcome =
-  'remediated' | 'rereviewed' | 'skipped' | 'error';
+  'remediated' | 'rereviewed' | 'approved' | 'skipped' | 'error';
 
 /** GitHub answered the GraphQL read with errors instead of data (rate limit,
  *  permission, query). Carries GitHub's bounded error types, never a body. */
