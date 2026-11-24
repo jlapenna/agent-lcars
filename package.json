@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@google-cloud/firestore": "9.4.1",
+    "@google-cloud/pubsub": "^6.4.1",
     "@google-cloud/storage": "^9.0.0",
     "@google-cloud/tasks": "^7.0.0",
     "@jlapenna/fleet-runtime": "github:jlapenna/fleet-runtime#main",

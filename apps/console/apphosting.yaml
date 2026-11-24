@@ -236,6 +236,13 @@ env:
     value: 'us-central1'
     availability:
       - RUNTIME
+  # Pub/Sub topic (infra/terraform/github_actions_events.tf) that receives
+  # verified workflow_job/workflow_run deliveries for the Homelab GitHub
+  # Actions exporter (#3525).
+  - variable: AGENT_LCARS_ACTIONS_EVENTS_TOPIC
+    value: 'github-actions-events'
+    availability:
+      - RUNTIME
 
   - variable: DISPATCH_FIRESTORE_DATABASE_ID
     value: 'dispatch-controller'

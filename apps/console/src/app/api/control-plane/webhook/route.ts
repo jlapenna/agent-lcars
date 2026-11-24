@@ -4,6 +4,10 @@ import { NextResponse } from 'next/server';
 
 import { readBoundedRequestBody } from '@/lib/bounded-request-body';
 import { isControlPlaneRepository } from '@/lib/deployment';
+import {
+  GITHUB_ACTIONS_EVENTS,
+  publishActionsEvent,
+} from '@/lib/github-actions-events';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
 import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
 
@@ -62,7 +66,10 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const deliveryId = header(request, 'x-github-delivery');
   const eventName = header(request, 'x-github-event');
-  if (eventName === 'ping' || !ADMITTED_EVENTS.has(eventName)) {
+  if (
+    eventName === 'ping' ||
+    (!ADMITTED_EVENTS.has(eventName) && !GITHUB_ACTIONS_EVENTS.has(eventName))
+  ) {
     return NextResponse.json(
       {
         deliveryId,
@@ -85,6 +92,28 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
   const repository = payload.repository?.full_name;
+  if (GITHUB_ACTIONS_EVENTS.has(eventName) && repository !== undefined) {
+    // Every repository the App is installed on is forwarded; the exporter
+    // keeps only the repositories it is configured to watch.
+    try {
+      const result = await publishActionsEvent({
+        rawBody,
+        deliveryId,
+        eventName,
+        repository,
+      });
+      return NextResponse.json(result, {
+        status: 202,
+        headers: { 'Cache-Control': 'no-store' },
+      });
+    } catch (error) {
+      logger.error('agent-lcars: GitHub Actions event publish failed', error);
+      return NextResponse.json(
+        { error: 'GitHub Actions event publish failed' },
+        { status: 503, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
+  }
   if (repository === undefined || !isControlPlaneRepository(repository)) {
     logger.info('agent-lcars: ignored webhook outside control plane', {
       deliveryId,
