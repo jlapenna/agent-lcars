@@ -393,9 +393,8 @@ implementation. Required check names and App identities come from the effective
 default-branch rules and are compared with checks/statuses observed on its
 current head. A head whose CI has not emitted every context yet needs a repeat
 after CI completes; this audit does not wait for CI or grade check conclusions.
-For an App-backed `LCARS review`, the audit also checks the head of the merged
-pull request. If that merge predates review enforcement, rerunning its CI cannot
-produce the missing evidence. Run the audit after the next reviewed PR merges.
+The review gate is the ruleset's required approving review, not a check, so
+the audit does not look for one; GitHub's rule suite for the merge records it.
 
 `pass` means that particular setup fact was observed. `fail` identifies a
 measured mismatch or operational error. `unverifiable` means the necessary
@@ -492,7 +491,7 @@ AUDIT_READ_TOKEN="$(gh auth token)" \
   node tools/verify-onboarding.mjs --registrations=/path/to/accepted-registration-receipt.yml
 ```
 
-After activating the head-scoped `LCARS review` requirement, land one PR through the active check without bypass and wait for default-branch CI on that commit. Run the audit there. An earlier head or missing historical evidence gives an unverifiable result. A measured failure of the applicable required checks fails the audit. Preserve all per-repository
+After changing a required check, land one PR through it without bypass and wait for default-branch CI on that commit. Run the audit there. An earlier head or missing historical evidence gives an unverifiable result. A measured failure of the applicable required checks fails the audit. Preserve all per-repository
 and per-registration JSON facts. Repeat the audit after adding a watched repo
 or changing App permissions, registration identities, or rulesets. Every fact
 must be `pass` for complete qualification; `unverifiable` explicitly records
