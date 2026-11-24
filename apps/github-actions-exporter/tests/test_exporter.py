@@ -1,3 +1,4 @@
+import concurrent.futures
 import importlib.util
 import json
 import logging
@@ -1585,6 +1586,10 @@ class FakeFuture:
         self.cancelled = False
 
     def result(self, timeout=None):
+        if self.cancelled and not self.outcomes:
+            # Like the real future: waiting on a cancelled stream reports the
+            # cancellation once its callbacks have drained.
+            raise concurrent.futures.CancelledError()
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -1645,7 +1650,10 @@ class StreamingPullTests(unittest.TestCase):
         ]
         subscriber = Mock()
 
-        def subscribe(subscription, callback, flow_control):
+        def subscribe(
+            subscription, callback, flow_control, await_callbacks_on_shutdown
+        ):
+            self.assertIs(await_callbacks_on_shutdown, True)
             self.assertEqual(subscription, SUBSCRIPTION)
             self.assertEqual(callback, consumer.handle_message)
             self.assertEqual(
@@ -1664,6 +1672,9 @@ class StreamingPullTests(unittest.TestCase):
         ):
             consumer.run_forever(subscriber)
 
+        # Every scripted stream was actually opened and played back; a
+        # subscribe() signature mismatch would leave them unpopped.
+        self.assertEqual(futures, [])
         self.assertEqual(self.delays, [1.0, 2.0, 4.0])
         self.assertEqual(self.running(), 0.0)
         self.assertEqual(
