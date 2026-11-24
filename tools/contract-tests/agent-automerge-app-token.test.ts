@@ -79,21 +79,12 @@ describe('agent auto-merge App identity trust boundary', () => {
       .replaceAll('||', ' or ');
     for (const [event, name, conclusion, origin, enabled, admit] of [
       ['pull_request', 'CI', 'success', 'upstream', true, true],
-      [
-        'pull_request_review',
-        'LCARS review event',
-        'success',
-        'upstream',
-        true,
-        true,
-      ],
+      // No other event's run is admitted, whatever it is named.
       ['pull_request_review', 'CI', 'success', 'upstream', true, false],
-      ['push', 'LCARS review event', 'success', 'upstream', true, false],
-      ...['pull_request', 'pull_request_review'].flatMap((type) => [
-        [type, 'LCARS review event', 'success', 'fork', true, false],
-        [type, 'LCARS review event', 'failure', 'upstream', true, false],
-        [type, 'LCARS review event', 'success', 'upstream', false, false],
-      ]),
+      ['push', 'CI', 'success', 'upstream', true, false],
+      ['pull_request', 'CI', 'success', 'fork', true, false],
+      ['pull_request', 'CI', 'failure', 'upstream', true, false],
+      ['pull_request', 'CI', 'success', 'upstream', false, false],
     ]) {
       const context = {
         github: {
