@@ -1320,7 +1320,7 @@ elif [ "$PIPELINE" = "agy" ]; then
       mapfile -t new_agy_sessions < <(comm -13 "$AGY_BASELINE_SESSIONS" "$after_sessions")
       # Native child conversations start with SYSTEM_MESSAGE, while this
       # fresh coordinator starts with USER_EXPLICIT USER_INPUT (1.5.9).
-      # Four review children must not make the coordinator ambiguous.
+      # Review children must not make the coordinator ambiguous.
       local id transcript coordinator_sessions=()
       for id in "${new_agy_sessions[@]}"; do
         [[ "$id" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$ ]] || continue
@@ -1643,14 +1643,6 @@ if [ "$OUTCOME" = no-deliverable ] && grep -q 'FAILED lookup' "$VERIFY_OUTPUT"; 
   OUTCOME=verification-failed
 fi
 
-# The review is already published and verified; clearing the reviewer's own
-# outdated requested-changes reviews is best effort and never changes OUTCOME.
-if [ "$OUTCOME" = review ] && [ "$MODE" = review ] && [ -n "$ISSUE" ]; then
-  review_id="$(jq -r '.id // empty' <<< "$OUTCOME_REFERENCE")"
-  if [ -n "$review_id" ] && ! supersede_prior_reviews "$TARGET_REPO" "$ISSUE" "$review_id"; then
-    echo "::warning::Could not dismiss superseded requested-changes reviews on $TARGET_REPO#$ISSUE" >&2
-  fi
-fi
 
 payload_file="$RUNNER_TEMP/complete-payload.json"
 # The whole final message: the Work API stores any message within

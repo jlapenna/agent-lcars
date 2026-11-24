@@ -153,14 +153,8 @@
    required context is already successful on the head, the guarded CLI
    sequence above is the one that merges it.
 
-   A required check must be one the ruleset can see. From 2026-11-22 to
-   2026-11-23 `main` required `LCARS review (merge candidate)`, a check
-   published on a PR's test merge commit. GitHub's auto-merge counted it
-   there, but the ruleset evaluating the update of `main` did not, so every
-   maintainer merge was recorded as a `bypass`, merges by an actor that
-   cannot bypass were refused, and PR #3469 sat armed and green for 31
-   minutes until its merge command was run a second time (#3473). Read the
-   rule suite after a merge, as below: a `bypass` there is the signal.
+   Read the rule suite after a merge, as below: a `bypass` there means the
+   merge did not satisfy the ruleset.
 
    Execute the closing-scope guard and whichever arming call you use
    only as an `&&`-chained sequence: a rejected, incomplete or
