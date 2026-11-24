@@ -60,6 +60,11 @@ vi.mock('@agent-lcars/telemetry/server', () => ({
 
 beforeEach(() => {
   configureTestWatchedRepos([TEST_HOME_REPOSITORY, TEST_SPRINKLES_REPOSITORY]);
+  // The archive sync lives on globalThis; start each test from this file's
+  // own module instance.
+  delete (globalThis as Record<string, unknown>)[
+    '__agentLcarsSessionArchiveSync'
+  ];
 });
 
 afterEach(() => {
@@ -389,6 +394,21 @@ describe('getSessionArchive', () => {
       { observedAt: new Date().toISOString() },
     );
     expect(syncedReads).toEqual([14, 1]);
+  });
+
+  it('keeps one archive per process, shared by every module graph that loads it', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([]);
+
+    await getSessionArchive({ days: 14 });
+    const held = (globalThis as Record<string, unknown>)[
+      '__agentLcarsSessionArchiveSync'
+    ];
+    await getSessionArchive({ days: 1 });
+
+    expect(held).toBeDefined();
+    expect(
+      (globalThis as Record<string, unknown>)['__agentLcarsSessionArchiveSync'],
+    ).toBe(held);
   });
 
   it('derives rows and a ledger from the same doc set', async () => {

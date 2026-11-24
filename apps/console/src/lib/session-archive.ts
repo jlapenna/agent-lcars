@@ -28,7 +28,10 @@ import {
   type WatchedRepo,
 } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
-import { createSessionArchiveSync } from './session-archive-sync';
+import {
+  createSessionArchiveSync,
+  type SessionArchiveSync,
+} from './session-archive-sync';
 import { matchesSessionFind } from './session-find';
 import { aggregateSessionLedger, type SessionLedger } from './session-ledger';
 import {
@@ -302,19 +305,30 @@ async function listArchiveDocs(
  * sessions written since the previous one. The 14-day window is about
  * 6,000 documents and some 2 to 5 s to stream, which is what pages used to
  * pay, or avoid by serving a copy up to a minute old.
+ *
+ * Held on `globalThis` rather than in a module-level constant: Next bundles
+ * App Router pages and Route Handlers into separate module graphs that
+ * share one JS realm, so a module constant would hold two copies of the
+ * window and load each on its own (see e2e-github-fixtures.ts).
  */
-const archiveSync = createSessionArchiveSync(
-  {
-    listActiveSince: (activeSince) => listArchiveDocs({ activeSince }),
-    listWrittenSince: async (since) =>
-      listSessionDocsWrittenSince(
-        await getAgentTelemetryReaderFirestore(),
-        since,
-      ),
-    now: () => Date.now(),
-  },
-  DEFAULT_ARCHIVE_DAYS,
-);
+const ARCHIVE_SYNC_KEY = '__agentLcarsSessionArchiveSync';
+
+function archiveSync(): SessionArchiveSync {
+  const realm = globalThis as Record<string, unknown>;
+  realm[ARCHIVE_SYNC_KEY] ??= createSessionArchiveSync(
+    {
+      listActiveSince: (activeSince) => listArchiveDocs({ activeSince }),
+      listWrittenSince: async (since) =>
+        listSessionDocsWrittenSince(
+          await getAgentTelemetryReaderFirestore(),
+          since,
+        ),
+      now: () => Date.now(),
+    },
+    DEFAULT_ARCHIVE_DAYS,
+  );
+  return realm[ARCHIVE_SYNC_KEY] as SessionArchiveSync;
+}
 
 /** Windows up to the 14-day default read the in-memory archive; wider
  * ones, a snapshot's own clock, and hermetic E2E fixtures (whose resets
@@ -325,7 +339,7 @@ async function readArchiveDocs(
 ): Promise<SessionDoc[]> {
   if (syncedDays === undefined || isE2eTesting())
     return listArchiveDocs(filter);
-  return (await archiveSync.read(syncedDays)).filter(
+  return (await archiveSync().read(syncedDays)).filter(
     (doc) =>
       (filter.source === undefined || doc.source === filter.source) &&
       (filter.issueNumber === undefined ||
