@@ -124,10 +124,14 @@ fi
 # GitHub refuses both. DISMISSED is a verdict a later push already dismissed.
 review_without_verdict=""
 if [ "$(jq length <<< "$review_hits")" -gt 0 ]; then
-  if ! pr_author=$(gh api "repos/$REPO/pulls/$NUM" --jq '.user.login' 2>&1); then
-    errors+=("pull request author lookup (gh api repos/$REPO/pulls/$NUM) failed: $pr_author")
+  # Keep stderr apart: a warning there must not become part of the login.
+  author_error=$(mktemp) || exit 1
+  if ! pr_author=$(gh api "repos/$REPO/pulls/$NUM" --jq '.user.login' 2>"$author_error"); then
+    errors+=("pull request author lookup (gh api repos/$REPO/pulls/$NUM) failed: $(cat "$author_error")")
+    rm -f -- "$author_error"
     review_hits='[]'
   else
+    rm -f -- "$author_error"
     review_hits=$(jq -c --arg author "$pr_author" '[.[] | select(
       .state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED" or
       (.user.login == $author))]' <<< "$review_hits") || exit 1

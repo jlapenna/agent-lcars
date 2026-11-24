@@ -12,6 +12,8 @@ set -euo pipefail
 if [[ "$*" == "api repos/octo/example/pulls/42 --jq .user.login" ]]; then
   printf '%s\n' author >> "$FIXTURE_DIR/calls"
   [ "${FAIL_LOOKUP:-}" != author ] || { echo 'transient API error' >&2; exit 1; }
+  # A warning on stderr must not become part of the login.
+  echo 'warning: a newer gh is available' >&2
   cat "$FIXTURE_DIR/author"
   exit 0
 fi

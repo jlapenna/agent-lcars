@@ -183,6 +183,10 @@ review and comment-quality guidance applies.
      `comments: []`) or `<!-- lcars-review:block -->` (blocking defects) on its
      own line in `body`. A pull request opened by a maintainer, by Renovate or
      by any other account is not this reviewer's own, whoever wrote its commits.
+   - A requested review of a draft or closed anchor uses the same two states.
+     `REQUEST_CHANGES` records its blocking defects; `APPROVE` records that the
+     reviewed revision had none, and says in the body that the anchor is a
+     draft or closed.
    - Never switch credentials to evade GitHub's self-review rule, and never
      publish an approval or completed receipt for an incomplete procedure.
 
