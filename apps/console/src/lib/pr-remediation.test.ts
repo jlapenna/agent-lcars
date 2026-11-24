@@ -1152,6 +1152,56 @@ describe('automatic pull-request review & conflict remediation', () => {
     structured.mockRestore();
   });
 
+  it('parks a PR whose remediation round found no change warranted at the same head', async () => {
+    const f = createFixture();
+    const anchor = { repo: REPO, issue: 4006 };
+    const labelUrl = expect.stringContaining(
+      `/repos/${REPO}/issues/4006/labels`,
+    );
+    f.setPr(REPO, 4006, {
+      headRefOid: HEAD_1,
+      mergeable: 'CONFLICTING',
+      mergeStateStatus: 'DIRTY',
+    });
+
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+    ).toMatchObject({
+      action: 'remediated',
+      outcome: { kind: 'accepted', runId: `${REPO}#4006/r1` },
+    });
+    // The agent judged no change warranted (for example, superseded).
+    await f.orchestrator.report(`${REPO}#4006/r1`, {
+      ok: true,
+      summary: 'no-op',
+    });
+
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+    ).toEqual({ action: 'ignored', reason: 'remediation-no-op' });
+    expect(f.fetchImpl).toHaveBeenCalledWith(
+      labelUrl,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ labels: ['status:needs-human'] }),
+      }),
+    );
+    expect(await f.store.listRuns(anchor)).toHaveLength(1);
+
+    // A new head is a new situation, so remediation runs again.
+    f.setPr(REPO, 4006, {
+      headRefOid: HEAD_2,
+      mergeable: 'CONFLICTING',
+      mergeStateStatus: 'DIRTY',
+    });
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+    ).toMatchObject({
+      action: 'remediated',
+      outcome: { kind: 'accepted', runId: `${REPO}#4006/r2` },
+    });
+  });
+
   it('deduplicates identical state and caps consecutive automatic remediation rounds', async () => {
     const f = createFixture();
     const anchor = { repo: REPO, issue: 4001 };

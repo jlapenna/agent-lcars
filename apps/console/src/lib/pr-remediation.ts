@@ -618,6 +618,38 @@ function newestNonReviewRunIsParked(runs: readonly Run[]): boolean {
   return newest?.result?.summary === 'park';
 }
 
+/** True when the newest non-review run is an automatic remediation round for
+ * this exact head that finished `no-op`: the agent judged no change warranted
+ * (for example, the PR is superseded) while the PR stays blocked. Dedupe would
+ * otherwise leave that PR blocked with nobody told. */
+function newestRemediationRoundWasNoOp(
+  runs: readonly Run[],
+  headSha: string,
+): boolean {
+  let newest: Run | undefined;
+  for (const run of runs) {
+    if (run.params?.['mode'] === 'review') continue;
+    if (
+      newest === undefined ||
+      (parseRunGeneration(run.runId) ?? 0) >
+        (parseRunGeneration(newest.runId) ?? 0)
+    ) {
+      newest = run;
+    }
+  }
+  if (newest?.result?.summary !== 'no-op') return false;
+  const round = newest.requestId.startsWith(PR_REMEDIATION_REQUEST_PREFIX)
+    ? newest
+    : runs.find(
+        (candidate) =>
+          candidate.runId === newest.providerFallback?.originalRunId,
+      );
+  return (
+    round?.requestId.startsWith(PR_REMEDIATION_REQUEST_PREFIX) === true &&
+    round.requestId.includes(`:${headSha.slice(0, 12)}:`)
+  );
+}
+
 /** Counts consecutive distinct automatic PR remediation rounds since the last
  * human/operator request, ignoring fallback/retry attempts within one round. */
 function countConsecutiveAutoRemediations(runs: readonly Run[]): number {
@@ -996,6 +1028,10 @@ async function reconcilePullRequestRemediationOnce(
     unresolvedThreadIds.length > 0 ||
     blockingReviewKeys.length > 0
   ) {
+    if (newestRemediationRoundWasNoOp(runs, snapshot.headRefOid)) {
+      await applyNeedsHumanLabel(deps, anchor);
+      return { action: 'ignored', reason: 'remediation-no-op' };
+    }
     if (
       countConsecutiveAutoRemediations(runs) >= MAX_AUTO_PR_REMEDIATION_ROUNDS
     ) {

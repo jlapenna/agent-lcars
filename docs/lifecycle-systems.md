@@ -469,7 +469,10 @@ issue, to a waiting delivery binding (which keeps its same-provider correction
 above), to an agent `PARK`, and to `status:needs-human`, `status:blocked` and
 Renovate PRs. Fork PRs are never remediated. After
 `MAX_AUTO_PR_REMEDIATION_ROUNDS` consecutive rounds it applies
-`status:needs-human`; these blockers otherwise never enter the Decision Inbox.
+`status:needs-human`; these blockers otherwise never enter the Decision Inbox. A round that finishes `no-op` at the PR's current head (the agent judged
+no change warranted, for example a superseded PR) also applies
+`status:needs-human` on the next check, so the PR reaches the Inbox instead
+of staying blocked; a new head remediates again.
 
 The round count comes from run history and resets only on a human `reply` or
 a non-remediation caller run. Removing `status:needs-human` alone fires
