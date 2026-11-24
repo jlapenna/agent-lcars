@@ -1084,15 +1084,16 @@ async function reconcilePullRequestRemediationOnce(
     return { action: 'remediated', outcome };
   }
 
-  // If an implement or reply run on this PR anchor just finished cleanly, a
-  // `synchronize` push during that run was refused as `task-busy`. Admit the
-  // missing current-head review now that the PR lock is released.
-  const settledMode = options?.afterRun?.params?.['mode'];
+  // A `synchronize` push during a live run on this PR anchor is refused as
+  // `task-busy` and dropped, whatever the run was doing: fixing the PR,
+  // replying, or reviewing an earlier head. When that run finishes cleanly and
+  // the current head has no LCARS review, admit the missing one now that the
+  // PR lock is released. The request is keyed by the head, so a head is
+  // reviewed once however many runs settle while it is current.
   if (
     options?.afterRun !== undefined &&
     options.afterRun.result?.ok === true &&
     options.afterRun.result.summary !== 'park' &&
-    (settledMode === 'implement' || settledMode === 'reply') &&
     !hasCurrentHeadLcarsReview
   ) {
     const requestedPipeline = labels
