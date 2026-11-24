@@ -3,7 +3,6 @@ import type {
   IssueAgentSessionDoc,
 } from '@agent-lcars/telemetry';
 import { listSessionDocs } from '@agent-lcars/telemetry/server';
-import { cacheLife } from 'next/cache';
 import {
   afterEach,
   beforeEach,
@@ -33,7 +32,21 @@ import {
 const spendStore = vi.hoisted(() => ({ readGithubAnchorProjections: vi.fn() }));
 // The archive read sits behind Next's `'use cache'`, which only exists under
 // the Next compiler; here the directive is inert and the read runs directly.
-vi.mock('next/cache', () => ({ cacheLife: vi.fn() }));
+// The real sync holds state across reads; here every read loads its window,
+// so each test sees exactly the documents it mocks.
+const syncedReads = vi.hoisted(() => [] as number[]);
+vi.mock('./session-archive-sync', () => ({
+  createSessionArchiveSync: (deps: {
+    listActiveSince(since: string): Promise<unknown[]>;
+  }) => ({
+    read: (days: number) => {
+      syncedReads.push(days);
+      return deps.listActiveSince(
+        new Date(Date.now() - days * 86_400_000).toISOString(),
+      );
+    },
+  }),
+}));
 
 vi.mock('./orchestrator-runtime', () => ({
   createOrchestratorRuntime: () => ({ store: spendStore }),
@@ -42,6 +55,7 @@ vi.mock('./orchestrator-runtime', () => ({
 vi.mock('@agent-lcars/telemetry/server', () => ({
   getAgentTelemetryReaderFirestore: vi.fn(),
   listSessionDocs: vi.fn(),
+  listSessionDocsWrittenSince: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -329,10 +343,10 @@ describe('toSessionRow', () => {
 describe('getSessionArchive', () => {
   afterEach(() => vi.resetAllMocks());
 
-  it('requests exhaustive sessions with the archive window and source/issue filters', async () => {
+  it('pushes source/issue filters into Firestore for a window wider than the synced one', async () => {
     (listSessionDocs as Mock).mockResolvedValue([]);
 
-    await getSessionArchive({ days: 7, source: 'cli', issueNumber: 42 });
+    await getSessionArchive({ days: 30, source: 'cli', issueNumber: 42 });
 
     expect(listSessionDocs).toHaveBeenCalledWith(
       undefined,
@@ -344,25 +358,37 @@ describe('getSessionArchive', () => {
     );
   });
 
-  it('reads the default window and narrower ones through the short cache', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([]);
-    (cacheLife as Mock).mockClear();
+  it('filters the synced archive by source and issue', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([
+      cliDoc({ sessionId: 'c1' }),
+      agentDoc({ sessionId: 'a1', issueNumber: 5 }),
+      agentDoc({ sessionId: 'a2', issueNumber: 6 }),
+    ]);
 
-    await getSessionArchive({ days: 14 });
-    expect(cacheLife).toHaveBeenCalledWith({
-      stale: 30,
-      revalidate: 30,
-      expire: 60,
+    const result = await getSessionArchive({
+      days: 7,
+      source: 'issue-agent',
+      issueNumber: 5,
     });
 
+    expect(result.rows.map((row) => row.sessionId)).toEqual(['a1']);
+  });
+
+  it('reads the default window and narrower ones through the synced archive', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([]);
+    syncedReads.length = 0;
+
+    await getSessionArchive({ days: 14 });
+    await getSessionArchive({ days: 1 });
+    expect(syncedReads).toEqual([14, 1]);
+
     // Wider windows and a snapshot's own clock always read Firestore.
-    (cacheLife as Mock).mockClear();
     await getSessionArchive({ days: 30 });
     await getSessionArchive(
       { days: 1 },
       { observedAt: new Date().toISOString() },
     );
-    expect(cacheLife).not.toHaveBeenCalled();
+    expect(syncedReads).toEqual([14, 1]);
   });
 
   it('derives rows and a ledger from the same doc set', async () => {
