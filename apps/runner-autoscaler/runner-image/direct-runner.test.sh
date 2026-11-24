@@ -422,7 +422,7 @@ if [[ "$*" == *"--slurp"* ]]; then
     else echo '[[]]'; fi
   elif [[ "$*" == *"pulls/42/reviews"* ]]; then
     if [ "${FAKE_GH_MARKER_REVIEW:-}" = 1 ]; then
-      jq -cn --arg marker "<!-- attempt-claim:${ATTEMPT_ID} -->" '[[{id:100,user:{type:"Bot"},body:$marker,html_url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}]]'
+      jq -cn --arg marker "<!-- attempt-claim:${ATTEMPT_ID} -->" '[[{id:100,state:"APPROVED",user:{type:"Bot",login:"agent-lcars[bot]"},body:$marker,html_url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}]]'
     else echo '[[]]'; fi
   else exit 1; fi
   exit 0
