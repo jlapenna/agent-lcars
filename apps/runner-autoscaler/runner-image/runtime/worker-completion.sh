@@ -101,6 +101,40 @@ $CURL_TIMEOUT_CONFIG
 CURLCFG
 }
 
+# A verified passing review of the current head supersedes the same
+# reviewer's earlier requested-changes reviews on that pull request. GitHub
+# keeps a requested-changes review in force until it is dismissed, so without
+# this a later pass on the same commit (or a newer one) still leaves the PR
+# blocked and someone has to dismiss the outdated review by hand. Only the
+# verified review's own author is affected; a human's review is never touched.
+supersede_prior_reviews() {
+  local repo="$1" pr="$2" review_id="$3" head reviews stale url id
+  head="$(gh api "repos/$repo/pulls/$pr" --jq .head.sha)" || return 1
+  reviews="$(gh api --paginate --slurp "repos/$repo/pulls/$pr/reviews?per_page=100")" || return 1
+  stale="$(jq -r --argjson id "$review_id" --arg head "$head" '
+    [.[][]] as $all
+    | ($all | map(select(.id == $id)) | first) as $pass
+    | select($pass != null and $pass.commit_id == $head and
+        ($pass.state == "APPROVED" or ($pass.state == "COMMENTED" and
+          (($pass.body // "") | split("\n") | map(rtrimstr("\r")) | index("<!-- lcars-review:pass -->") != null))))
+    | $all[]
+    | select(.state == "CHANGES_REQUESTED" and .user.login == $pass.user.login and .id < $id)
+    | .id' <<< "$reviews")" || return 1
+  url="$(jq -r --argjson id "$review_id" '[.[][] | select(.id == $id)][0].html_url // empty' <<< "$reviews")"
+  # Attempt every stale review; one failure (say, already dismissed) must not
+  # leave the rest in force.
+  local failed=0
+  for id in $stale; do
+    if gh api --method PUT "repos/$repo/pulls/$pr/reviews/$id/dismissals" -f event=DISMISS \
+      -f message="Superseded by this reviewer's passing review of $head: $url" >/dev/null; then
+      echo "Dismissed superseded requested-changes review $id on $repo#$pr"
+    else
+      failed=1
+    fi
+  done
+  return "$failed"
+}
+
 # Consumed by all three provider branches in the sourcing direct runner.
 # shellcheck disable=SC2034
 WORKER_COMPLETION_PROMPT='Continue the same authorized task in this existing session. The completed deliverable lookup found no exact attempt-bound artifact. Finish the remaining work and publish the requested marker-stamped deliverable. Use PARK only for missing access or credentials or a maintainer-reserved action (shared protocol section 4), never for a judgement call you can make yourself or for a provider, setup, timeout, or lookup failure. Preserve useful work. This is the only correction round and uses the original remaining time budget.'

@@ -1640,6 +1640,15 @@ if [ "$OUTCOME" = no-deliverable ] && grep -q 'FAILED lookup' "$VERIFY_OUTPUT"; 
   OUTCOME=verification-failed
 fi
 
+# The review is already published and verified; clearing the reviewer's own
+# outdated requested-changes reviews is best effort and never changes OUTCOME.
+if [ "$OUTCOME" = review ] && [ "$MODE" = review ] && [ -n "$ISSUE" ]; then
+  review_id="$(jq -r '.id // empty' <<< "$OUTCOME_REFERENCE")"
+  if [ -n "$review_id" ] && ! supersede_prior_reviews "$TARGET_REPO" "$ISSUE" "$review_id"; then
+    echo "::warning::Could not dismiss superseded requested-changes reviews on $TARGET_REPO#$ISSUE" >&2
+  fi
+fi
+
 payload_file="$RUNNER_TEMP/complete-payload.json"
 # The whole final message: the Work API stores any message within
 # RUN_MESSAGE_MAX_BYTES whole (worker-completion.sh), so it is never cut to
