@@ -32,6 +32,13 @@ export const CLI_SESSION_RETENTION_DAYS = 30;
  * follow-up 2), well past the 30d `cli` docs get. */
 export const ISSUE_AGENT_SESSION_RETENTION_DAYS = 365;
 
+/** Field every session writer stamps with the Firestore server's commit time
+ * (`FieldValue.serverTimestamp()`). Readers that keep an archive in memory
+ * ask for the documents written since their last read, which keeps their
+ * view current without re-reading the window. It is storage metadata, not
+ * part of {@link SessionDoc}: readers drop it before parsing. */
+export const SESSION_WRITTEN_AT_FIELD = 'writtenAt';
+
 /** `intentId` prefix of a run that belongs to a native work item
  * (`work:<ulid>/r<n>`, the orchestrator's `taskKey` plus run generation). */
 const NATIVE_WORK_INTENT_PREFIX = 'work:';

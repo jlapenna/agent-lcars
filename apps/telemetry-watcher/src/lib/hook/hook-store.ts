@@ -1,6 +1,7 @@
 import {
   isNewerHookWrite,
   parseSessionDoc,
+  SESSION_WRITTEN_AT_FIELD,
   type SessionDoc,
   type SessionEventV1,
   type SessionWrite,
@@ -54,12 +55,16 @@ export function hookEventPayload(write: SessionWrite): Record<string, unknown> {
     ...Object.fromEntries(
       clearFields.map((field) => [field, FieldValue.delete()]),
     ),
+    [SESSION_WRITTEN_AT_FIELD]: FieldValue.serverTimestamp(),
   };
 }
 
 function parseStored(data: unknown): SessionDoc | undefined {
   if (typeof data !== 'object' || data === null) return undefined;
-  const record = { ...(data as Record<string, unknown>) };
+  const { [SESSION_WRITTEN_AT_FIELD]: _writtenAt, ...record } = data as Record<
+    string,
+    unknown
+  >;
   // Firestore hands TTL fields back as Timestamps; the doc contract is ISO.
   const expireAt = record['expireAt'];
   if (expireAt instanceof Timestamp) {

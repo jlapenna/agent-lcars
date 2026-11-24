@@ -11,6 +11,7 @@ import {
   CLI_TRANSCRIPT_SAFETY_MAX_BYTES,
   codexAdapter,
   MAX_TRANSCRIPT_LINE_BYTES,
+  SESSION_WRITTEN_AT_FIELD,
   type SessionDoc,
 } from '@agent-lcars/telemetry';
 import { FieldValue, Firestore } from '@google-cloud/firestore';
@@ -449,6 +450,7 @@ export function defaultCliArchiveDependencies(
         if (!sameSession(doc.data() as ArchiveSession | undefined, session))
           throw new Error('session-changed');
         tx.update(doc.ref, {
+          [SESSION_WRITTEN_AT_FIELD]: FieldValue.serverTimestamp(),
           cliTranscriptArchive: { status: 'pending', captureId },
           transcriptGcsUri: FieldValue.delete(),
           renderable: FieldValue.delete(),
@@ -462,7 +464,10 @@ export function defaultCliArchiveDependencies(
           doc.data()?.['cliTranscriptArchive']?.captureId === captureId &&
           doc.data()?.['cliTranscriptArchive']?.status === 'pending'
         )
-          tx.update(doc.ref, { cliTranscriptArchive: { status: 'failed' } });
+          tx.update(doc.ref, {
+            cliTranscriptArchive: { status: 'failed' },
+            [SESSION_WRITTEN_AT_FIELD]: FieldValue.serverTimestamp(),
+          });
       });
     },
     publish: (session, captureId, uri, expiresAt) =>
@@ -475,6 +480,7 @@ export function defaultCliArchiveDependencies(
         )
           return false;
         tx.update(doc.ref, {
+          [SESSION_WRITTEN_AT_FIELD]: FieldValue.serverTimestamp(),
           cliTranscriptArchive: { status: 'available', captureId, expiresAt },
           transcriptGcsUri: uri,
           renderable: true,
@@ -488,6 +494,7 @@ export function defaultCliArchiveDependencies(
         if (!sameSession(data as ArchiveSession | undefined, session))
           throw new Error('session-changed');
         tx.update(doc.ref, {
+          [SESSION_WRITTEN_AT_FIELD]: FieldValue.serverTimestamp(),
           cliTranscriptArchive: { status: 'expired' },
           transcriptGcsUri: FieldValue.delete(),
           renderable: FieldValue.delete(),

@@ -132,4 +132,10 @@ func TestLostRunSessionsFirestoreAdapterWire(t *testing.T) {
 	if fields := write.GetUpdate().GetFields(); len(fields) != 1 || fields["liveness"].GetStringValue() != "ended" {
 		t.Fatalf("fields = %v, want liveness=ended", fields)
 	}
+	// The server commit stamp the console's incremental archive read uses.
+	transforms := write.GetUpdateTransforms()
+	if len(transforms) != 1 || transforms[0].GetFieldPath() != "writtenAt" ||
+		transforms[0].GetSetToServerValue().String() != "REQUEST_TIME" {
+		t.Fatalf("update transforms = %v, want writtenAt=REQUEST_TIME", transforms)
+	}
 }
