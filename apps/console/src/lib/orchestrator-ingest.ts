@@ -27,7 +27,6 @@ import {
 } from './github-routing-labels';
 import {
   detectPullRequestAuthorPipeline,
-  isAutomatedReviewExcludedAuthor,
   isUnattendedDependencyBotPullRequest,
   parseAttemptClaimRunId,
   selectCrossModelReviewer,
@@ -407,18 +406,14 @@ function interpretPullRequestEvent(
         pullRequest.head.repo.full_name.toLowerCase() !==
           repository.full_name.toLowerCase()));
 
-  const requiresReview =
-    repository.full_name.toLowerCase() === 'jlapenna/agent-lcars';
   const labels = pullRequest.labels ?? [];
-  const hasExplicitReviewLabel = labels.some(
-    (item) =>
-      REVIEW_LABELS.has(item.name) || item.name === UNIFIED_REVIEW_LABEL,
-  );
+  // Every repository gets the same review triggers. A rule that names a
+  // repository here makes one repository behave differently from the rest.
   if (
     action === 'opened' ||
     action === 'ready_for_review' ||
-    ((requiresReview || hasExplicitReviewLabel) &&
-      (action === 'synchronize' || action === 'reopened'))
+    action === 'synchronize' ||
+    action === 'reopened'
   ) {
     if (pullRequest.state !== 'open') return ignore('anchor-closed');
     if (pullRequest.draft === true) return ignore('draft-pull-request');
@@ -434,19 +429,9 @@ function interpretPullRequestEvent(
         headRef: pullRequest.head?.ref,
         action,
         senderLogin: sender.login,
-      }) ||
-      (!requiresReview &&
-        (isAutomatedReviewExcludedAuthor(pullRequest.user.login) ||
-          labels.some(
-            (item) =>
-              item.name === 'status:needs-human' ||
-              item.name === 'bot:renovate',
-          )))
+      })
     ) {
       return ignore('excluded-review-author');
-    }
-    if (action === 'opened' && !requiresReview && hasExplicitReviewLabel) {
-      return ignore('explicit-review-label-present');
     }
     return buildReviewRequestDecision({
       repo: repository.full_name,
