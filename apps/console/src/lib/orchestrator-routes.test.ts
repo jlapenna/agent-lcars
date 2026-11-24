@@ -1825,6 +1825,52 @@ describe('handleWebhookDelivery cross-model PR review and quota fallback', () =>
     });
   });
 
+  it('moves a review off a provider already in cooldown at admission, not at the next maintenance pass', async () => {
+    const { deps, store } = fixture(
+      (s, clock) => new Orchestrator(s, clock, providerFallbackAuthority),
+    );
+    const opened = (issue: number, deliveryId: string) =>
+      handleWebhookDelivery(deps, {
+        event: 'pull_request',
+        deliveryId,
+        payload: {
+          action: 'opened',
+          repository: { full_name: REPO },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: issue,
+            title: 'feat: codex change',
+            body: 'Implemented by Codex.',
+            user: { login: 'agent-lcars[bot]', type: 'Bot' },
+            head: { ref: `codex/issue-${issue}`, sha: 'b'.repeat(40) },
+            labels: [],
+          },
+          sender: { login: 'agent-lcars[bot]' },
+        },
+      });
+
+    // Claude reports a quota stop, which opens its provider cooldown.
+    await opened(93, 'codex-pr-93');
+    await deps.orchestrator.report(`${REPO}#93/r1`, {
+      ok: false,
+      summary: 'provider-limit',
+    });
+
+    // The next Codex PR's review would pick Claude first; admission moves it
+    // to Antigravity immediately instead of leaving it queued on Claude.
+    await opened(94, 'codex-pr-94');
+    expect(await store.readRun(`${REPO}#94/r1`)).toMatchObject({
+      pipeline: 'claude',
+      state: 'canceled',
+    });
+    expect(await store.readRun(`${REPO}#94/r2`)).toMatchObject({
+      pipeline: 'agy',
+      params: { mode: 'review' },
+      queue: { state: 'queued' },
+    });
+  });
+
   it('resolves an Antigravity PR author from its attempt-claim run in the store even under shared agent-lcars[bot] login', async () => {
     const { deps, store } = fixture(
       (s, clock) => new Orchestrator(s, clock, providerFallbackAuthority),

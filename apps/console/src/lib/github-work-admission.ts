@@ -7,6 +7,7 @@ import {
   isRefusal,
   isWorkAnchor,
   type RequestBinding,
+  type Run,
   type TaskId,
   taskIdSchema,
 } from '@agent-lcars/orchestrator';
@@ -337,8 +338,9 @@ export async function admitGithubWork(
       providerRouting: outcome.task.providerRouting,
     };
   }
-  const { runId } = decidedRun(outcome);
-  const drained = await runtime.drain();
+  const decided = decidedRun(outcome);
+  const { runId } = decided;
+  const drained = await drainAndRerouteCooledProvider(runtime, decided);
   return {
     kind: 'accepted',
     runId,
@@ -428,11 +430,29 @@ export async function redispatchGithubWork(
     };
   }
 
-  const { runId } = decidedRun(outcome);
-  const drained = await runtime.drain();
+  const decided = decidedRun(outcome);
+  const { runId } = decided;
+  const drained = await drainAndRerouteCooledProvider(runtime, decided);
   return {
     kind: 'accepted',
     runId,
     dispatched: drained.dispatched.includes(runId),
   };
+}
+
+/** Drains a fresh run, then moves it to its fallback at once when its
+ * provider is in a provider-reported quota cooldown, rather than at the next
+ * five-minute maintenance pass. It is the same audited reroute that pass runs;
+ * a provider that is not cooling down is untouched. */
+async function drainAndRerouteCooledProvider(
+  runtime: Pick<OrchestratorRouteDeps, 'orchestrator' | 'drain'>,
+  run: Run,
+): Promise<Awaited<ReturnType<OrchestratorRouteDeps['drain']>>> {
+  const drained = await runtime.drain();
+  if (run.providerFallback === undefined) return drained;
+  const rerouted = await runtime.orchestrator.rerouteQueued();
+  if (rerouted.some((entry) => entry.fromRunId === run.runId)) {
+    await runtime.drain();
+  }
+  return drained;
 }
