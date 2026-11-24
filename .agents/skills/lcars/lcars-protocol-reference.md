@@ -13,8 +13,8 @@ enough.
   `apps/console/src/lib/orchestrator-ingest.ts`'s `interpretDelivery`, pure
   and stateless: an `issues`/`pull_request` `labeled` event whose label is
   `agent:claude`/`agent:codex`/`agent:opencode`/`agent:agy` requests mode `implement`
-  (issue or PR); a non-draft `pull_request` `opened` / `ready_for_review`
-  event, a unified `review` or `review:claude`/`review:codex`/
+  (issue or PR); a non-draft `pull_request` `opened` / `ready_for_review` /
+  `synchronize` / `reopened` event in any repository, a unified `review` or `review:claude`/`review:codex`/
   `review:opencode`/`review:agy` label on a PR, or a `/review` PR comment by an
   `OWNER` or `MEMBER` requests mode `review`, routed by
   `apps/console/src/lib/pr-review-routing.ts` to an opposite model with quota
@@ -65,7 +65,8 @@ enough.
 Tagging an **issue** with `agent:claude`/`agent:codex`/`agent:opencode`/`agent:agy`
 dispatches `mode: implement`. Tagging a **pull request** with the same
 `agent:*` label dispatches `mode: implement` too (#567). A pull request
-opened as non-draft, marked `ready_for_review`, commented with `/review` by an
+opened as non-draft, marked `ready_for_review`, pushed to or reopened (the same
+in every repository), commented with `/review` by an
 `OWNER` or `MEMBER`, or tagged with `review` or
 `review:claude`/`review:codex`/`review:opencode`/`review:agy` dispatches
 `mode: review` (#565/#568, revised by #567 and unified under cross-model

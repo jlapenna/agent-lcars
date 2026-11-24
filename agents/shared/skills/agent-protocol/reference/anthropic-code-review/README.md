@@ -170,16 +170,25 @@ review and comment-quality guidance applies.
      non-blocking note is genuinely load-bearing for the maintainer, place it in
      the top-level review `body` only, never as an inline comment. A blocking
      finding without a valid diff line also belongs in the review `body`.
-   - Use `REQUEST_CHANGES` for validated blocking defects, `APPROVE` for a
-     completed current-head review with no blocking defects, and `COMMENT` for
-     historical reviews or self-authored PRs (all direct-runner providers publish
-     as the LCARS App identity, which GitHub forbids from approving or requesting
-     changes on its own PR). For a `COMMENT` review of the current head, put
-     `<!-- lcars-review:pass -->` (no blocking defects, `comments: []`) or
-     `<!-- lcars-review:block -->` (blocking defects) on its own line in `body`.
-     Historical reviews omit both verdict markers. Never switch credentials to
-     evade GitHub's self-review rule, and never publish an approval or completed
-     receipt for an incomplete procedure.
+   - **The review state is the verdict.** Submit `APPROVE` for a completed
+     current-head review with no blocking defects and `REQUEST_CHANGES` for
+     validated blocking defects. GitHub's review requirement counts only those
+     two states, so a `COMMENT` is not a verdict and the run does not complete
+     with one. Notes on a passing review go in the `APPROVE` body.
+   - **The one exception is this reviewer's own pull request.** Read the pull
+     request's author login (`gh api repos/<repo>/pulls/<n> --jq .user.login`).
+     Only when it is the identity publishing this review (`agent-lcars[bot]`)
+     does GitHub refuse an approval or a change request; then, and only then,
+     submit `COMMENT` with `<!-- lcars-review:pass -->` (no blocking defects,
+     `comments: []`) or `<!-- lcars-review:block -->` (blocking defects) on its
+     own line in `body`. A pull request opened by a maintainer, by Renovate or
+     by any other account is not this reviewer's own, whoever wrote its commits.
+   - A requested review of a draft or closed anchor uses the same two states.
+     `REQUEST_CHANGES` records its blocking defects; `APPROVE` records that the
+     reviewed revision had none, and says in the body that the anchor is a
+     draft or closed.
+   - Never switch credentials to evade GitHub's self-review rule, and never
+     publish an approval or completed receipt for an incomplete procedure.
 
 Keep the review body concise: verdict, blocking findings (if any), reviewed SHA,
 material verification limits, and a short procedure receipt naming the packaged

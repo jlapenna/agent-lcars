@@ -118,6 +118,29 @@ if [ "$MODE" = review ] && [ -n "$NUM" ] &&
   fi
 fi
 
+# The review state is the verdict. GitHub's review requirement counts only an
+# approval or a change request, so a COMMENT carrying this run's claim is not
+# a deliverable. The one exception is the reviewer's own pull request, where
+# GitHub refuses both. DISMISSED is a verdict a later push already dismissed.
+review_without_verdict=""
+if [ "$(jq length <<< "$review_hits")" -gt 0 ]; then
+  # Keep stderr apart: a warning there must not become part of the login.
+  author_error=$(mktemp) || exit 1
+  if ! pr_author=$(gh api "repos/$REPO/pulls/$NUM" --jq '.user.login' 2>"$author_error"); then
+    errors+=("pull request author lookup (gh api repos/$REPO/pulls/$NUM) failed: $(cat "$author_error")")
+    rm -f -- "$author_error"
+    review_hits='[]'
+  else
+    rm -f -- "$author_error"
+    review_hits=$(jq -c --arg author "$pr_author" '[.[] | select(
+      .state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED" or
+      (.user.login == $author))]' <<< "$review_hits") || exit 1
+    if [ "$(jq length <<< "$review_hits")" -eq 0 ]; then
+      review_without_verdict=1
+    fi
+  fi
+fi
+
 # Preserve the runner's existing priority: park overrides a partial PR;
 # otherwise PR, structured no-op, comment, then mode-gated review. Select the
 # latest matching comment/review ID; every candidate already passed BOTH
@@ -171,5 +194,9 @@ fi
 # native work-item run that has none.
 anchor_label="${NUM:+#$NUM}"
 anchor_label="${anchor_label:-this work item}"
+if [ -n "$review_without_verdict" ]; then
+  echo "::error::$AGENT submitted a COMMENT review on $anchor_label. A COMMENT is not a verdict: submit a new pull-request review whose event is APPROVE or REQUEST_CHANGES, carrying this run's exact attempt-claim marker ($ATTEMPT_ID)."
+  exit 1
+fi
 echo "::error::$AGENT run completed 'successfully' but produced no deliverable on $anchor_label: $checked carries this run's exact attempt-claim marker ($ATTEMPT_ID). All of its local work may be lost."
 exit 1
