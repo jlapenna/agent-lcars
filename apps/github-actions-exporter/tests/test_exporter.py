@@ -1,17 +1,17 @@
+import concurrent.futures
 import importlib.util
 import json
+import logging
 import os
 import socket
 import sys
 import tempfile
-import time
 import unittest
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, call, patch
+from unittest.mock import MagicMock, Mock, patch
 
-import requests
 from prometheus_client import CollectorRegistry, generate_latest
 
 MODULE_PATH = Path(__file__).parents[1] / "exporter.py"
@@ -23,6 +23,8 @@ assert SPEC and SPEC.loader
 exporter = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = exporter
 SPEC.loader.exec_module(exporter)
+
+SUBSCRIPTION = "projects/agent-lcars/subscriptions/github-actions-exporter"
 
 
 def workflow_run(**overrides):
@@ -47,8 +49,11 @@ def workflow_run(**overrides):
 def workflow_job(**overrides):
     job = {
         "id": 456,
+        "run_id": 123,
+        "run_attempt": 1,
         "name": "repository validation",
         "workflow_name": "dynamic run name that must not be exported",
+        "head_branch": "do-not-export",
         "status": "completed",
         "conclusion": "success",
         "created_at": "2026-08-05T04:19:24Z",
@@ -71,9 +76,10 @@ def recent(hours_ago: float) -> str:
 def exported_metric_value(metrics: str, name: str, labels: str = "") -> float:
     """The value of one exported sample, with or without labels.
 
-    `labels` is the rendered label set, e.g. '{owner="jlapenna"}'. Matching the
-    bare name alone would silently pick the wrong series once a metric grows a
-    label, so the two forms are distinguished here rather than by prefix luck.
+    `labels` is the rendered label set, e.g. '{repository="jlapenna/homelab"}'.
+    Matching the bare name alone would silently pick the wrong series once a
+    metric grows a label, so the two forms are distinguished here rather than
+    by prefix luck.
     """
     wanted = f"{name}{labels} "
     for line in metrics.splitlines():
@@ -82,56 +88,49 @@ def exported_metric_value(metrics: str, name: str, labels: str = "") -> float:
     raise AssertionError(f"missing metric: {name}{labels}")
 
 
-class FakeState:
-    class Metric:
-        def __init__(self):
-            self.values = []
+class FakeMessage:
+    """The parts of a Pub/Sub message the consumer uses."""
 
-        def labels(self, *_args):
-            return self
+    def __init__(self, event, payload=None, *, data=None, delivery_id="delivery-1"):
+        self.attributes = {"event": event, "delivery_id": delivery_id}
+        self.data = data if data is not None else json.dumps(payload).encode()
+        self.acks = 0
+        self.nacks = 0
 
-        def set(self, value):
-            self.values.append(value)
+    def ack(self):
+        self.acks += 1
 
-        def inc(self):
-            return None
-
-    def __init__(self):
-        self.last_success = self.Metric()
-        self.poll_errors = self.Metric()
-        self.api_requests = self.Metric()
-        self.api_rate_remaining = self.Metric()
-        self.api_rate_limit = self.Metric()
-        self.api_rate_used = self.Metric()
-        self.api_rate_reset_timestamp = self.Metric()
-        self.backfill_in_progress = self.Metric()
-
-    def record_response(self, endpoint, response, owner=""):
-        self.api_requests.labels(
-            owner.casefold(), endpoint, str(response.status_code)
-        ).inc()
+    def nack(self):
+        self.nacks += 1
 
 
-class FakeAPI:
-    def __init__(self, run, jobs):
-        self.run = run
-        self.jobs = jobs
-        self.job_requests = 0
-        self.cutoffs = []
+def run_message(run, repository="jlapenna/homelab", **kwargs):
+    payload = {
+        "action": "completed" if run.get("status") == "completed" else "in_progress",
+        "workflow_run": run,
+        "repository": {"full_name": repository},
+    }
+    return FakeMessage("workflow_run", payload, **kwargs)
 
-    def list_runs(self, _repository, cutoff, _until):
-        self.cutoffs.append(cutoff)
-        return [self.run]
 
-    def get_run(self, _repository, _run_id):
-        return self.run
-
-    def list_jobs(self, _repository, _run_id):
-        self.job_requests += 1
-        return self.jobs
+def job_message(job, repository="jlapenna/homelab", **kwargs):
+    payload = {
+        "action": job.get("status"),
+        "workflow_job": job,
+        "repository": {"full_name": repository},
+    }
+    return FakeMessage("workflow_job", payload, **kwargs)
 
 
 class GitHubActionsExporterTests(unittest.TestCase):
+    def store_jobs(self, repository, run, jobs):
+        """Store job events belonging to `run`'s attempt."""
+        for job in jobs:
+            self.database.upsert_job(
+                repository,
+                dict(job, run_id=run["id"], run_attempt=run.get("run_attempt") or 1),
+            )
+
     def test_image_packages_exporter_readable_by_its_non_root_user(self):
         dockerfile = DOCKERFILE_PATH.read_text()
 
@@ -206,7 +205,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         run = workflow_run(status="in_progress", conclusion=None)
         self.database.upsert_run(repository, run)
 
-        self.database.upsert_jobs(
+        self.store_jobs(
             repository,
             run,
             [workflow_job(status="queued", conclusion=None, runner_name="")],
@@ -218,7 +217,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
             "",
         )
 
-        self.database.upsert_jobs(
+        self.store_jobs(
             repository,
             run,
             [
@@ -229,7 +228,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
                 )
             ],
         )
-        self.database.upsert_jobs(
+        self.store_jobs(
             repository, run, [workflow_job(status="in_progress", runner_name="  ")]
         )
         self.assertEqual(
@@ -238,7 +237,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
             ],
             "runner-homelab-autoscale-lcars-ci-abc123",
         )
-        self.database.upsert_jobs(
+        self.store_jobs(
             repository,
             run,
             [
@@ -250,9 +249,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         )
         completed_run = workflow_run()
         self.database.upsert_run(repository, completed_run)
-        self.database.upsert_jobs(
-            repository, completed_run, [workflow_job(runner_name=None)]
-        )
+        self.store_jobs(repository, completed_run, [workflow_job(runner_name=None)])
 
         database_path = self.database.connection.execute(
             "PRAGMA database_list"
@@ -268,7 +265,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
     def test_completed_run_and_job_emit_aggregated_metrics(self):
         run = workflow_run()
         self.database.upsert_run("jlapenna/homelab", run)
-        self.database.upsert_jobs("jlapenna/homelab", run, [workflow_job()])
+        self.store_jobs("jlapenna/homelab", run, [workflow_job()])
 
         metrics = self.metrics()
 
@@ -292,7 +289,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
     def test_full_suite_marker_separates_execution_and_short_circuit(self):
         run = workflow_run(path=".github/workflows/ci.yml")
         self.database.upsert_run("jlapenna/agent-lcars", run)
-        self.database.upsert_jobs(
+        self.store_jobs(
             "jlapenna/agent-lcars",
             run,
             [
@@ -367,7 +364,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
             completed_at="2026-08-05T04:18:00Z",
         )
         self.database.upsert_run("jlapenna/homelab", run)
-        self.database.upsert_jobs("jlapenna/homelab", run, [job])
+        self.store_jobs("jlapenna/homelab", run, [job])
 
         metrics = self.metrics()
 
@@ -392,7 +389,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
     def test_high_cardinality_identifiers_are_not_exported(self):
         run = workflow_run(name="dynamic issue title")
         self.database.upsert_run("jlapenna/homelab", run)
-        self.database.upsert_jobs("jlapenna/homelab", run, [workflow_job()])
+        self.store_jobs("jlapenna/homelab", run, [workflow_job()])
 
         metrics = self.metrics()
 
@@ -406,7 +403,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         run = workflow_run()
         with patch.object(exporter, "MAX_JOB_LABELS_PER_WORKFLOW", 2):
             self.database.upsert_run("jlapenna/homelab", run)
-            self.database.upsert_jobs(
+            self.store_jobs(
                 "jlapenna/homelab",
                 run,
                 [
@@ -421,26 +418,6 @@ class GitHubActionsExporterTests(unittest.TestCase):
         self.assertIn('job="job two"', metrics)
         self.assertIn('job="__other__"', metrics)
         self.assertNotIn('job="job three"', metrics)
-
-    def test_repeated_completed_run_does_not_refetch_or_double_count(self):
-        run = workflow_run()
-        api = FakeAPI(run, [workflow_job()])
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=("jlapenna/homelab",),
-            database_path=str(Path(self.temporary_directory.name) / "actions.db"),
-        )
-        poller = exporter.Poller(config, self.database, api, FakeState())
-
-        poller.refresh_repository("jlapenna/homelab")
-        poller.refresh_repository("jlapenna/homelab")
-
-        self.assertEqual(api.job_requests, 1)
-        self.assertTrue(self.database.backfill_complete("jlapenna/homelab"))
-        self.assertIn(
-            'github_actions_workflow_runs_total{conclusion="success",event="push",repository="jlapenna/homelab",workflow="validate"} 1.0',
-            self.metrics(),
-        )
 
     def test_consecutive_failures_count_back_from_the_latest_decisive_run(self):
         repository = "jlapenna/homelab"
@@ -594,7 +571,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         )
 
     def test_consecutive_failures_without_a_stored_success_are_marked_incomplete(self):
-        # A freshly backfilled database may hold only the tail of a longer
+        # A fresh database may hold only the tail of a longer
         # streak. The count is still reported (two observed failures are two
         # failures) but flagged as a lower bound.
         repository = "jlapenna/homelab"
@@ -694,105 +671,6 @@ class GitHubActionsExporterTests(unittest.TestCase):
         )
         self.assertEqual(exported_metric_value(self.metrics(), name, labels), 0.0)
 
-    def test_poller_finds_a_late_rerun_of_a_failed_pull_request_run(self):
-        # GitHub lists runs by created_at, and a rerun keeps its run's. One
-        # started after the overlap would never be seen, so the count would
-        # outlive the repair until a new push passed.
-        repository = "jlapenna/homelab"
-        labels = '{repository="jlapenna/homelab",workflow="validate"}'
-        name = "github_actions_workflow_pull_request_failing_branches"
-        first = self.pull_request_run(5, "feature-a", id=1)
-        second = self.pull_request_run(4, "feature-b", id=2)
-        for run in (first, second):
-            self.database.upsert_run(repository, run)
-            self.database.upsert_jobs(repository, run, [])
-        rerun = self.pull_request_run(
-            1, "feature-a", "success", id=1, run_attempt=2, created_at=recent(5)
-        )
-        api = Mock()
-        api.list_runs.return_value = []
-        api.get_run.side_effect = lambda _repository, run_id: (
-            rerun if run_id == 1 else second
-        )
-        api.list_jobs.return_value = []
-        poller = exporter.Poller(
-            exporter.Config(
-                credentials=exporter.StaticCredentials("test"),
-                repositories=(repository,),
-            ),
-            self.database,
-            api,
-            FakeState(),
-        )
-        self.assertEqual(exported_metric_value(self.metrics(), name, labels), 2.0)
-
-        poller.refresh_repository(repository)
-
-        self.assertCountEqual(
-            api.get_run.call_args_list, [call(repository, 1), call(repository, 2)]
-        )
-        self.assertEqual(exported_metric_value(self.metrics(), name, labels), 0.0)
-
-        # The recheck is rate-limited: the next cycle asks GitHub nothing.
-        api.get_run.reset_mock()
-        third = self.pull_request_run(0.5, "feature-c", id=3)
-        self.database.upsert_run(repository, third)
-        self.database.upsert_jobs(repository, third, [])
-        poller.refresh_repository(repository)
-        api.get_run.assert_not_called()
-
-    def test_rerun_checks_rotate_past_the_per_cycle_cap(self):
-        # Always checking the newest runs would never reach the rerun of an
-        # older failure once more runs than the cap were failing.
-        repository = "jlapenna/homelab"
-        labels = '{repository="jlapenna/homelab",workflow="validate"}'
-        name = "github_actions_workflow_pull_request_failing_branches"
-        limit = exporter.PULL_REQUEST_RECHECK_LIMIT
-        runs = {}
-        # id 1 is the newest failure; the last id is the oldest.
-        for run_id in range(1, limit + 2):
-            run = self.pull_request_run(run_id, f"feature-{run_id}", id=run_id)
-            runs[run_id] = run
-            self.database.upsert_run(repository, run)
-            self.database.upsert_jobs(repository, run, [])
-        oldest = limit + 1
-        runs[oldest] = self.pull_request_run(
-            0.5,
-            f"feature-{oldest}",
-            "success",
-            id=oldest,
-            run_attempt=2,
-            created_at=recent(oldest),
-        )
-        api = Mock()
-        api.list_runs.return_value = []
-        api.get_run.side_effect = lambda _repository, run_id: runs[run_id]
-        api.list_jobs.return_value = []
-        poller = exporter.Poller(
-            exporter.Config(
-                credentials=exporter.StaticCredentials("test"),
-                repositories=(repository,),
-            ),
-            self.database,
-            api,
-            FakeState(),
-        )
-
-        poller.refresh_repository(repository)
-        self.assertEqual(api.get_run.call_count, limit)
-        self.assertNotIn(call(repository, oldest), api.get_run.call_args_list)
-        self.assertEqual(
-            exported_metric_value(self.metrics(), name, labels), float(limit + 1)
-        )
-
-        # The next eligible cycle starts with the run it has not checked yet.
-        api.get_run.reset_mock()
-        poller.pull_request_recheck_after.clear()
-        poller.refresh_repository(repository)
-        self.assertEqual(api.get_run.call_args_list[0], call(repository, oldest))
-        self.assertEqual(api.get_run.call_count, limit)
-        self.assertEqual(exported_metric_value(self.metrics(), name, labels), 0.0)
-
     def test_approval_pending_pull_request_runs_are_not_failures(self):
         # action_required on a pull request is a run waiting for a maintainer
         # to approve it. Two of them are not a broken workflow.
@@ -804,7 +682,6 @@ class GitHubActionsExporterTests(unittest.TestCase):
         self.assertNotIn(
             "github_actions_workflow_pull_request_failing_branches{", self.metrics()
         )
-        self.assertEqual(self.database.failing_pull_request_run_ids(repository), [])
 
     def test_pull_request_failing_branches_expire_with_the_window(self):
         repository = "jlapenna/homelab"
@@ -849,7 +726,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         repository = "jlapenna/homelab"
         run = workflow_run(status="in_progress", conclusion=None)
         self.database.upsert_run(repository, run)
-        self.database.upsert_jobs(
+        self.store_jobs(
             repository,
             run,
             [
@@ -901,38 +778,6 @@ class GitHubActionsExporterTests(unittest.TestCase):
             metrics,
         )
 
-    def test_refresh_recovers_an_unlisted_earlier_rerun_attempt(self):
-        repository = "jlapenna/homelab"
-        latest = workflow_run(conclusion="success", run_attempt=2)
-        earlier = workflow_run(conclusion="failure", run_attempt=1)
-        self.database.upsert_run(repository, latest)
-        self.database.upsert_jobs(repository, latest, [workflow_job()])
-        api = Mock()
-        api.list_runs.return_value = []
-        api.get_run_attempt.return_value = earlier
-        poller = exporter.Poller(
-            exporter.Config(
-                credentials=exporter.StaticCredentials("test"),
-                repositories=(repository,),
-            ),
-            self.database,
-            api,
-            FakeState(),
-        )
-
-        poller.refresh_repository(repository)
-
-        api.get_run_attempt.assert_called_once_with(repository, latest["id"], 1)
-        metrics = self.metrics()
-        self.assertIn(
-            'github_actions_workflow_runs_total{conclusion="failure",event="push",repository="jlapenna/homelab",workflow="validate"} 1.0',
-            metrics,
-        )
-        self.assertIn(
-            'github_actions_workflow_runs_total{conclusion="success",event="push",repository="jlapenna/homelab",workflow="validate"} 1.0',
-            metrics,
-        )
-
     def test_new_attempt_supersedes_an_unfinished_older_attempt(self):
         older = workflow_run(status="in_progress", conclusion=None, run_attempt=1)
         newer = workflow_run(conclusion="success", run_attempt=2)
@@ -951,7 +796,6 @@ class GitHubActionsExporterTests(unittest.TestCase):
             [(row["run_attempt"], row["status"]) for row in rows],
             [(1, "superseded"), (2, "completed")],
         )
-        self.assertEqual(self.database.active_run_ids("jlapenna/homelab"), set())
         self.assertNotIn("github_actions_workflow_runs_current{", self.metrics())
 
     def test_late_older_attempt_cannot_become_active_again(self):
@@ -961,7 +805,14 @@ class GitHubActionsExporterTests(unittest.TestCase):
         self.database.upsert_run("jlapenna/homelab", newer)
         self.database.upsert_run("jlapenna/homelab", older)
 
-        self.assertEqual(self.database.active_run_ids("jlapenna/homelab"), set())
+        rows = self.database.rows(
+            "SELECT run_attempt, status FROM workflow_runs ORDER BY run_attempt"
+        )
+        self.assertEqual(
+            [(row["run_attempt"], row["status"]) for row in rows],
+            [(1, "superseded"), (2, "completed")],
+        )
+        self.assertNotIn("github_actions_workflow_runs_current{", self.metrics())
 
     def test_active_job_exports_current_and_oldest_queue_gauges(self):
         run = workflow_run(
@@ -971,7 +822,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
             status="queued", conclusion=None, started_at=None, completed_at=None
         )
         self.database.upsert_run("jlapenna/homelab", run)
-        self.database.upsert_jobs("jlapenna/homelab", run, [job])
+        self.store_jobs("jlapenna/homelab", run, [job])
 
         metrics = self.metrics()
 
@@ -980,7 +831,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
             metrics,
         )
         self.assertIn(
-            'github_actions_jobs_current{concurrency_group="none",job="repository validation",repository="jlapenna/homelab",runner_group="Default",runs_on="",status="queued",workflow="validate"} 1.0',
+            'github_actions_jobs_current{job="repository validation",repository="jlapenna/homelab",runner_group="Default",runs_on="",status="queued",workflow="validate"} 1.0',
             metrics,
         )
         self.assertIn("github_actions_job_oldest_queued_seconds", metrics)
@@ -995,7 +846,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
             status="queued", conclusion=None, started_at=None, completed_at=None
         )
         self.database.upsert_run("jlapenna/homelab", run)
-        self.database.upsert_jobs("jlapenna/homelab", run, [job])
+        self.store_jobs("jlapenna/homelab", run, [job])
         collector = exporter.DatabaseMetrics(self.database)
         collector.refresh()
         registry = CollectorRegistry()
@@ -1038,7 +889,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
 
         completed = workflow_run(updated_at="2026-08-05T04:25:00Z")
         self.database.upsert_run("jlapenna/homelab", completed)
-        self.database.upsert_jobs("jlapenna/homelab", completed, [workflow_job()])
+        self.store_jobs("jlapenna/homelab", completed, [workflow_job()])
         self.assertIn(
             "github_actions_workflow_runs_current{", generate_latest(registry).decode()
         )
@@ -1046,208 +897,6 @@ class GitHubActionsExporterTests(unittest.TestCase):
         refreshed = generate_latest(registry).decode()
         self.assertNotIn("github_actions_workflow_runs_current{", refreshed)
         self.assertNotIn("github_actions_job_oldest_queued_seconds{", refreshed)
-
-    def test_completed_run_does_not_finalize_or_export_active_job_snapshot(self):
-        run = workflow_run()
-        job = workflow_job(
-            status="queued", conclusion=None, started_at=None, completed_at=None
-        )
-        self.database.upsert_run("jlapenna/homelab", run)
-        self.database.upsert_jobs("jlapenna/homelab", run, [job])
-
-        rows = self.database.rows(
-            """
-            SELECT jobs.status, workflow_runs.jobs_updated_at
-            FROM jobs JOIN workflow_runs
-              ON workflow_runs.repository = jobs.repository
-             AND workflow_runs.id = jobs.run_id
-            WHERE jobs.repository = ? AND jobs.id = ?
-            """,
-            ("jlapenna/homelab", job["id"]),
-        )
-        self.assertEqual(
-            [(row["status"], row["jobs_updated_at"]) for row in rows],
-            [("refresh_pending", None)],
-        )
-        self.assertTrue(self.database.jobs_need_refresh("jlapenna/homelab", run))
-        self.assertNotIn("github_actions_jobs_current{", self.metrics())
-        self.assertNotIn("github_actions_job_oldest_queued_seconds{", self.metrics())
-
-        completed_job = workflow_job()
-        self.database.upsert_jobs("jlapenna/homelab", run, [completed_job])
-
-        self.assertFalse(self.database.jobs_need_refresh("jlapenna/homelab", run))
-        self.assertIn(
-            'github_actions_jobs_total{conclusion="success",execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
-            self.metrics(),
-        )
-
-    def test_startup_repairs_legacy_completed_run_with_active_job(self):
-        run = workflow_run()
-        job = workflow_job()
-        self.database.upsert_run("jlapenna/homelab", run)
-        self.database.upsert_jobs("jlapenna/homelab", run, [job])
-        with self.database.lock, self.database.connection:
-            self.database.connection.execute(
-                "UPDATE jobs SET status = 'queued' WHERE repository = ? AND id = ?",
-                ("jlapenna/homelab", job["id"]),
-            )
-        database_path = str(Path(self.temporary_directory.name) / "actions.db")
-        self.database.close()
-        self.database = exporter.Database(database_path)
-        self.addCleanup(self.database.close)
-
-        rows = self.database.rows(
-            """
-            SELECT jobs.status, workflow_runs.jobs_updated_at
-            FROM jobs JOIN workflow_runs
-              ON workflow_runs.repository = jobs.repository
-             AND workflow_runs.id = jobs.run_id
-            WHERE jobs.repository = ? AND jobs.id = ?
-            """,
-            ("jlapenna/homelab", job["id"]),
-        )
-        self.assertEqual(
-            [(row["status"], row["jobs_updated_at"]) for row in rows],
-            [("refresh_pending", None)],
-        )
-        self.assertNotIn("github_actions_jobs_current{", self.metrics())
-
-    def test_completed_run_with_pending_jobs_is_polled_until_it_converges(self):
-        repository = "jlapenna/homelab"
-        run = workflow_run()
-        queued_job = workflow_job(
-            status="queued", conclusion=None, started_at=None, completed_at=None
-        )
-        self.database.upsert_run(repository, run)
-        self.database.upsert_jobs(repository, run, [queued_job])
-        self.assertEqual(
-            self.database.pending_job_refresh_run_ids(repository), {run["id"]}
-        )
-        api = FakeAPI(run, [workflow_job()])
-        api.list_runs = Mock(return_value=[])
-        poller = exporter.Poller(
-            exporter.Config(
-                credentials=exporter.StaticCredentials("test"),
-                repositories=(repository,),
-            ),
-            self.database,
-            api,
-            FakeState(),
-        )
-
-        poller.refresh_repository(repository)
-
-        self.assertEqual(api.job_requests, 1)
-        self.assertEqual(self.database.pending_job_refresh_run_ids(repository), set())
-        self.assertIn(
-            'github_actions_jobs_total{conclusion="success",execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
-            self.metrics(),
-        )
-
-    def test_jobs_server_error_keeps_repository_fresh_and_retries_the_run(self):
-        repository = "jlapenna/homelab"
-        run = workflow_run()
-        queued_job = workflow_job(
-            status="queued", conclusion=None, started_at=None, completed_at=None
-        )
-        self.database.upsert_run(
-            repository,
-            workflow_run(
-                status="in_progress",
-                conclusion=None,
-                updated_at="2026-08-05T04:00:00Z",
-            ),
-        )
-        self.database.upsert_jobs(
-            repository,
-            workflow_run(
-                status="in_progress",
-                conclusion=None,
-                updated_at="2026-08-05T04:00:00Z",
-            ),
-            [queued_job],
-        )
-        api = FakeAPI(run, [workflow_job()])
-        api.list_runs = Mock(return_value=[run])
-        api.list_jobs = Mock(
-            side_effect=exporter.GitHubRequestError(
-                "jobs", Mock(status_code=502, headers={})
-            )
-        )
-        state = FakeState()
-        poller = exporter.Poller(
-            exporter.Config(
-                credentials=exporter.StaticCredentials("test"),
-                repositories=(repository,),
-            ),
-            self.database,
-            api,
-            state,
-        )
-
-        poller.refresh_repository(repository)
-
-        self.assertIsNotNone(self.database.last_success_at(repository))
-        self.assertEqual(
-            self.database.pending_job_refresh_run_ids(repository), {run["id"]}
-        )
-
-        api.list_runs = Mock(return_value=[])
-        api.list_jobs = Mock(return_value=[workflow_job()])
-        poller.refresh_repository(repository)
-
-        self.assertEqual(self.database.pending_job_refresh_run_ids(repository), set())
-        self.assertIn(
-            'github_actions_jobs_total{conclusion="success",execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
-            self.metrics(),
-        )
-
-    def test_deleted_run_with_stale_jobs_snapshot_is_retired(self):
-        repository = "jlapenna/homelab"
-        active = workflow_run(
-            status="in_progress", conclusion=None, updated_at="2026-08-05T04:00:00Z"
-        )
-        self.database.upsert_run(repository, active)
-        self.database.upsert_jobs(
-            repository,
-            active,
-            [
-                workflow_job(
-                    status="queued", conclusion=None, started_at=None, completed_at=None
-                )
-            ],
-        )
-        self.database.upsert_run(repository, workflow_run())
-        self.assertEqual(
-            self.database.pending_job_refresh_run_ids(repository), {active["id"]}
-        )
-
-        self.database.mark_run_missing(repository, active["id"])
-
-        self.assertEqual(self.database.pending_job_refresh_run_ids(repository), set())
-        self.assertNotIn("github_actions_jobs_current{", self.metrics())
-
-    def test_empty_retry_keeps_omitted_refresh_pending_job_retryable(self):
-        repository = "jlapenna/homelab"
-        run = workflow_run()
-        queued_job = workflow_job(
-            status="queued", conclusion=None, started_at=None, completed_at=None
-        )
-        self.database.upsert_run(repository, run)
-        self.database.upsert_jobs(repository, run, [queued_job])
-
-        self.database.upsert_jobs(repository, run, [])
-
-        self.assertEqual(
-            self.database.pending_job_refresh_run_ids(repository), {run["id"]}
-        )
-        rows = self.database.rows(
-            "SELECT status FROM jobs WHERE repository = ? AND id = ?",
-            (repository, queued_job["id"]),
-        )
-        self.assertEqual([row["status"] for row in rows], ["refresh_pending"])
-        self.assertNotIn("github_actions_job_oldest_queued_seconds{", self.metrics())
 
     def test_startup_does_not_hide_jobs_from_a_newer_active_attempt(self):
         repository = "jlapenna/homelab"
@@ -1266,9 +915,9 @@ class GitHubActionsExporterTests(unittest.TestCase):
             completed_at=None,
         )
         self.database.upsert_run(repository, completed)
-        self.database.upsert_jobs(repository, completed, [workflow_job()])
+        self.store_jobs(repository, completed, [workflow_job()])
         self.database.upsert_run(repository, active)
-        self.database.upsert_jobs(repository, active, [active_job])
+        self.store_jobs(repository, active, [active_job])
         database_path = str(Path(self.temporary_directory.name) / "actions.db")
         self.database.close()
         self.database = exporter.Database(database_path)
@@ -1280,473 +929,845 @@ class GitHubActionsExporterTests(unittest.TestCase):
         )
         self.assertEqual([row["status"] for row in rows], ["queued"])
         self.assertIn(
-            'github_actions_jobs_current{concurrency_group="none",job="repository validation",repository="jlapenna/homelab",runner_group="Default",runs_on="",status="queued",workflow="validate"} 1.0',
+            'github_actions_jobs_current{job="repository validation",repository="jlapenna/homelab",runner_group="Default",runs_on="",status="queued",workflow="validate"} 1.0',
             self.metrics(),
         )
 
-    def test_confirmed_concurrency_group_membership_is_exported(self):
-        run = workflow_run(status="in_progress", conclusion=None)
-        job = workflow_job(
-            id=789, status="queued", conclusion=None, started_at=None, completed_at=None
+    def test_polling_era_database_migrates_without_losing_history(self):
+        database_path = Path(self.temporary_directory.name) / "polling.db"
+        connection = exporter.sqlite3.connect(database_path)
+        connection.executescript(
+            """
+            CREATE TABLE workflow_runs (
+                repository TEXT NOT NULL,
+                id INTEGER NOT NULL,
+                run_attempt INTEGER NOT NULL DEFAULT 1,
+                workflow TEXT NOT NULL,
+                event TEXT NOT NULL,
+                status TEXT NOT NULL,
+                conclusion TEXT,
+                created_at REAL,
+                started_at REAL,
+                completed_at REAL,
+                updated_at REAL,
+                jobs_updated_at REAL,
+                head_branch TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (repository, id, run_attempt)
+            );
+            CREATE TABLE jobs (
+                repository TEXT NOT NULL,
+                id INTEGER NOT NULL,
+                run_id INTEGER NOT NULL,
+                workflow TEXT NOT NULL,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                conclusion TEXT,
+                created_at REAL,
+                started_at REAL,
+                completed_at REAL,
+                runner_group TEXT NOT NULL,
+                execution TEXT NOT NULL DEFAULT 'unknown',
+                concurrency_group TEXT NOT NULL DEFAULT 'none',
+                runner_name TEXT NOT NULL DEFAULT '',
+                runs_on TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (repository, id)
+            );
+            CREATE TABLE repository_state (
+                repository TEXT PRIMARY KEY,
+                initial_backfill_complete INTEGER NOT NULL DEFAULT 0,
+                last_success_at REAL
+            );
+            CREATE INDEX workflow_runs_status_idx ON workflow_runs (repository, status);
+            CREATE INDEX jobs_status_idx ON jobs (repository, status);
+            CREATE INDEX jobs_run_idx ON jobs (repository, run_id);
+            INSERT INTO workflow_runs VALUES
+                ('jlapenna/homelab', 1, 1, 'validate', 'push', 'completed',
+                 'success', 100, 110, 200, 200, NULL, 'main'),
+                ('jlapenna/homelab', 2, 1, 'validate', 'push', 'in_progress',
+                 NULL, 300, 310, NULL, 310, NULL, 'main');
+            INSERT INTO jobs VALUES
+                ('jlapenna/homelab', 10, 1, 'validate', 'build', 'completed',
+                 'success', 100, 120, 180, 'Default', 'unknown', 'ci-main',
+                 'runner-a', 'default'),
+                ('jlapenna/homelab', 11, 1, 'validate', 'lint', 'refresh_pending',
+                 NULL, 100, NULL, NULL, 'Default', 'unknown', 'none', '', ''),
+                ('jlapenna/homelab', 20, 2, 'validate', 'build', 'queued',
+                 NULL, 300, NULL, NULL, 'Default', 'unknown', 'unknown', '', '');
+            INSERT INTO repository_state VALUES ('jlapenna/homelab', 1, 400);
+            """
         )
-        self.database.upsert_run("jlapenna/homelab", run)
-        self.database.upsert_jobs(
-            "jlapenna/homelab",
-            run,
-            [job],
-            [{"group_name": "ci-refs/heads/main", "group_members": [{"job_id": 789}]}],
+        connection.commit()
+        connection.close()
+
+        migrated = exporter.Database(str(database_path))
+        self.addCleanup(migrated.close)
+
+        self.assertNotIn("concurrency_group", migrated._columns("jobs"))
+        self.assertNotIn("jobs_updated_at", migrated._columns("workflow_runs"))
+        self.assertEqual(
+            migrated._columns("repository_state"), {"repository", "last_event_at"}
         )
+        # The old poll timestamp does not claim an event was ever received.
+        self.assertIsNone(migrated.last_event_at("jlapenna/homelab"))
+        statuses = {
+            row["id"]: row["status"]
+            for row in migrated.rows("SELECT id, status FROM jobs")
+        }
+        self.assertEqual(statuses, {10: "completed", 11: "orphaned", 20: "queued"})
 
-        metrics = self.metrics()
-
-        self.assertIn(
-            'github_actions_jobs_current{concurrency_group="ci-refs/heads/main",'
-            'job="repository validation",repository="jlapenna/homelab",'
-            'runner_group="Default",runs_on="",status="queued",workflow="validate"} 1.0',
-            metrics,
+        # A legacy job (no stored attempt) still completes from its event.
+        migrated.upsert_job(
+            "jlapenna/homelab", workflow_job(id=20, run_id=2, name="build")
         )
+        self.assertEqual(
+            migrated.rows("SELECT status, run_attempt FROM jobs WHERE id = 20")[0][
+                "status"
+            ],
+            "completed",
+        )
+        # Reopening an already-migrated database is a no-op.
+        migrated.close()
+        reopened = exporter.Database(str(database_path))
+        self.addCleanup(reopened.close)
+        self.assertEqual(len(reopened.rows("SELECT * FROM jobs")), 3)
 
-    def test_attempted_but_empty_concurrency_listing_is_unknown_not_none(self):
-        # GitHub's own concurrency-groups listing is known (sampled by the
-        # since-deleted dispatch broker) to report zero
-        # group membership for a run even when a job genuinely holds a
-        # concurrency group. An empty-but-attempted listing (an empty list,
-        # as opposed to the "never attempted" None default) must not be
-        # false-labeled "none" -- that would systematically misreport every
-        # job caught by the endpoint's failure mode.
-        run = workflow_run(status="in_progress", conclusion=None)
+    def test_completed_run_does_not_export_an_active_job(self):
+        # The run's completion event can arrive before the job's own, or the
+        # job's can be lost. A finished run has no queued or running jobs.
+        run = workflow_run()
         job = workflow_job(
             status="queued", conclusion=None, started_at=None, completed_at=None
         )
         self.database.upsert_run("jlapenna/homelab", run)
-        self.database.upsert_jobs("jlapenna/homelab", run, [job], [])
+        self.store_jobs("jlapenna/homelab", run, [job])
 
-        metrics = self.metrics()
+        rows = self.database.rows("SELECT status FROM jobs WHERE id = ?", (job["id"],))
+        self.assertEqual([row["status"] for row in rows], ["orphaned"])
+        self.assertNotIn("github_actions_jobs_current{", self.metrics())
+        self.assertNotIn("github_actions_job_oldest_queued_seconds{", self.metrics())
+
+        self.store_jobs("jlapenna/homelab", run, [workflow_job()])
 
         self.assertIn(
-            'github_actions_jobs_current{concurrency_group="unknown",'
-            'job="repository validation",repository="jlapenna/homelab",'
-            'runner_group="Default",runs_on="",status="queued",workflow="validate"} 1.0',
-            metrics,
+            'github_actions_jobs_total{conclusion="success",execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
+            self.metrics(),
         )
-        self.assertNotIn('concurrency_group="none"', metrics)
 
-    def test_dynamic_concurrency_group_names_are_capped_per_workflow(self):
+    def test_run_completion_retires_jobs_it_finished_without(self):
         run = workflow_run(status="in_progress", conclusion=None)
-        with patch.object(exporter, "MAX_CONCURRENCY_GROUP_LABELS_PER_WORKFLOW", 2):
-            self.database.upsert_run("jlapenna/homelab", run)
-            self.database.upsert_jobs(
-                "jlapenna/homelab",
-                run,
-                [
-                    workflow_job(
-                        id=1,
-                        name="job one",
-                        status="queued",
-                        conclusion=None,
-                        started_at=None,
-                        completed_at=None,
-                    ),
-                    workflow_job(
-                        id=2,
-                        name="job two",
-                        status="queued",
-                        conclusion=None,
-                        started_at=None,
-                        completed_at=None,
-                    ),
-                    workflow_job(
-                        id=3,
-                        name="job three",
-                        status="queued",
-                        conclusion=None,
-                        started_at=None,
-                        completed_at=None,
-                    ),
-                ],
-                [
-                    {
-                        "group_name": "pr-1000000001",
-                        "group_members": [{"job_id": 1}],
-                    },
-                    {
-                        "group_name": "pr-1000000002",
-                        "group_members": [{"job_id": 2}],
-                    },
-                    {
-                        "group_name": "pr-1000000003",
-                        "group_members": [{"job_id": 3}],
-                    },
-                ],
+        job = workflow_job(
+            status="in_progress", conclusion=None, completed_at=None, runner_name=""
+        )
+        self.database.upsert_run("jlapenna/homelab", run)
+        self.store_jobs("jlapenna/homelab", run, [job])
+        self.assertIn("github_actions_jobs_current{", self.metrics())
+
+        self.database.upsert_run("jlapenna/homelab", workflow_run())
+
+        self.assertNotIn("github_actions_jobs_current{", self.metrics())
+
+    def test_startup_repairs_legacy_completed_run_with_active_job(self):
+        run = workflow_run()
+        job = workflow_job()
+        self.database.upsert_run("jlapenna/homelab", run)
+        self.store_jobs("jlapenna/homelab", run, [job])
+        with self.database.lock, self.database.connection:
+            self.database.connection.execute(
+                "UPDATE jobs SET status = 'queued', run_attempt = NULL WHERE id = ?",
+                (job["id"],),
             )
+        database_path = str(Path(self.temporary_directory.name) / "actions.db")
+        self.database.close()
+        self.database = exporter.Database(database_path)
+        self.addCleanup(self.database.close)
 
-        metrics = self.metrics()
-        self.assertIn('concurrency_group="pr-1000000001"', metrics)
-        self.assertIn('concurrency_group="pr-1000000002"', metrics)
-        self.assertIn('concurrency_group="__other__"', metrics)
-        self.assertNotIn('concurrency_group="pr-1000000003"', metrics)
+        rows = self.database.rows("SELECT status FROM jobs WHERE id = ?", (job["id"],))
+        self.assertEqual([row["status"] for row in rows], ["orphaned"])
+        self.assertNotIn("github_actions_jobs_current{", self.metrics())
 
-    def test_poller_fetches_concurrency_groups_only_for_active_runs(self):
-        repository = "jlapenna/homelab"
-        active_run = workflow_run(id=1, status="in_progress", conclusion=None)
-        completed_run = workflow_run(id=2)
-        api = Mock()
-        api.list_runs.return_value = [active_run, completed_run]
-        api.list_jobs.return_value = []
-        api.list_concurrency_groups.return_value = []
-        poller = exporter.Poller(
+
+class EventConsumerTests(unittest.TestCase):
+    """Webhook bodies fed through the Pub/Sub message handler."""
+
+    NOW = 1_800_000_000.0
+
+    def setUp(self):
+        # Failures below are logged on purpose; keep the test output readable.
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary_directory.cleanup)
+        self.database = exporter.Database(
+            str(Path(self.temporary_directory.name) / "actions.db")
+        )
+        self.addCleanup(self.database.close)
+        self.registry = CollectorRegistry()
+        self.state = exporter.ExporterState(self.registry)
+        self.collector = exporter.DatabaseMetrics(self.database)
+        self.registry.register(self.collector)
+        self.consumer = exporter.EventConsumer(
             exporter.Config(
-                credentials=exporter.StaticCredentials("test"),
-                repositories=(repository,),
+                repositories=("jlapenna/homelab",), subscription=SUBSCRIPTION
             ),
             self.database,
-            api,
-            FakeState(),
+            self.state,
+            self.collector,
+            clock=lambda: self.NOW,
         )
 
-        poller.refresh_repository(repository)
+    def deliver(self, *messages):
+        for message in messages:
+            self.consumer.handle_message(message)
+            self.assertEqual(
+                (message.acks, message.nacks), (1, 0), "message was not acknowledged"
+            )
 
-        api.list_concurrency_groups.assert_called_once_with(repository, 1)
+    def scrape(self):
+        self.consumer.refresh_snapshot_if_changed()
+        return generate_latest(self.registry).decode()
 
-    def test_optional_concurrency_group_failure_keeps_core_job_refresh(self):
-        repository = "jlapenna/agent-lcars"
-        first_run = workflow_run(id=1, status="in_progress", conclusion=None)
-        second_run = workflow_run(id=2, status="in_progress", conclusion=None)
-        running_job = workflow_job(
-            id=101,
-            status="in_progress",
-            conclusion=None,
-            started_at="2026-08-05T04:19:39Z",
-            completed_at=None,
+    def messages_total(self, event, outcome):
+        return self.registry.get_sample_value(
+            "github_actions_exporter_messages_total",
+            {"event": event, "outcome": outcome},
         )
-        queued_job = workflow_job(
-            id=102,
+
+    def test_run_and_job_events_export_what_stored_snapshots_did(self):
+        in_progress = workflow_run(
+            status="in_progress", conclusion=None, updated_at="2026-08-05T04:19:25Z"
+        )
+        queued = workflow_job(
             status="queued",
             conclusion=None,
             started_at=None,
             completed_at=None,
+            runner_group_name=None,
+            runner_name=None,
         )
-        self.database.upsert_run(repository, first_run)
-        self.database.upsert_jobs(
-            repository,
-            first_run,
-            [
-                workflow_job(
-                    id=101,
-                    status="queued",
+        running = workflow_job(status="in_progress", conclusion=None, completed_at=None)
+        self.deliver(
+            run_message(in_progress),
+            job_message(queued),
+            job_message(running),
+        )
+        metrics = self.scrape()
+        self.assertIn(
+            'github_actions_jobs_current{job="repository validation",repository="jlapenna/homelab",runner_group="Default",runs_on="",status="in_progress",workflow="validate"} 1.0',
+            metrics,
+        )
+        self.deliver(job_message(workflow_job()), run_message(workflow_run()))
+
+        # The same run and job stored directly in another database.
+        reference = exporter.Database(
+            str(Path(self.temporary_directory.name) / "reference.db")
+        )
+        self.addCleanup(reference.close)
+        reference.upsert_run("jlapenna/homelab", workflow_run())
+        reference.upsert_job("jlapenna/homelab", workflow_job())
+        reference_registry = CollectorRegistry()
+        reference_registry.register(exporter.DatabaseMetrics(reference))
+        expected = generate_latest(reference_registry).decode()
+
+        metrics = self.scrape()
+        for line in expected.splitlines():
+            if line.startswith("github_actions_"):
+                self.assertIn(line, metrics)
+        self.assertIn(
+            'github_actions_workflow_runs_total{conclusion="success",event="push",repository="jlapenna/homelab",workflow="validate"} 1.0',
+            metrics,
+        )
+        self.assertIn(
+            'github_actions_job_queue_duration_seconds_sum{execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 15.0',
+            metrics,
+        )
+        self.assertNotIn("github_actions_jobs_current{", metrics)
+        self.assertEqual(self.messages_total("workflow_run", "stored"), 2.0)
+        self.assertEqual(self.messages_total("workflow_job", "stored"), 3.0)
+        self.assertEqual(
+            self.registry.get_sample_value(
+                "github_actions_exporter_last_event_timestamp_seconds",
+                {"repository": "jlapenna/homelab"},
+            ),
+            self.NOW,
+        )
+        self.assertNotIn("runner-ephemeral", metrics)
+        self.assertNotIn("dynamic run name", metrics)
+
+    def test_job_before_its_run_is_labelled_once_the_run_arrives(self):
+        # A workflow_job payload names no workflow file, so the job waits for
+        # its run instead of being exported under a guessed label.
+        self.deliver(job_message(workflow_job()))
+        metrics = self.scrape()
+        self.assertNotIn("github_actions_jobs_total{", metrics)
+        self.assertEqual(len(self.database.rows("SELECT * FROM pending_jobs")), 1)
+
+        # An older duplicate of the pending job does not replace it.
+        self.deliver(
+            job_message(workflow_job(status="queued", conclusion=None)),
+            run_message(workflow_run()),
+        )
+
+        self.assertIn(
+            'github_actions_jobs_total{conclusion="success",execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
+            self.scrape(),
+        )
+        self.assertEqual(self.database.rows("SELECT * FROM pending_jobs"), [])
+
+    def test_job_of_a_new_attempt_uses_the_known_workflow(self):
+        self.deliver(run_message(workflow_run(conclusion="failure")))
+        self.deliver(
+            job_message(
+                workflow_job(id=789, run_attempt=2, status="queued", conclusion=None)
+            )
+        )
+        metrics = self.scrape()
+        self.assertIn(
+            'github_actions_jobs_current{job="repository validation",repository="jlapenna/homelab",runner_group="Default",runs_on="",status="queued",workflow="validate"} 1.0',
+            metrics,
+        )
+
+    def test_later_attempt_retires_a_job_whose_own_run_event_never_arrived(self):
+        # Attempt 1's run is known, so attempt 2's job is stored directly;
+        # attempt 3's run then arrives without attempt 2's ever arriving.
+        self.deliver(run_message(workflow_run(conclusion="failure")))
+        self.deliver(
+            job_message(
+                workflow_job(id=789, run_attempt=2, status="queued", conclusion=None)
+            )
+        )
+        self.deliver(
+            run_message(
+                workflow_run(
+                    run_attempt=3,
+                    status="in_progress",
                     conclusion=None,
-                    started_at=None,
-                    completed_at=None,
+                    updated_at="2026-08-05T05:00:00Z",
                 )
-            ],
-            [
-                {
-                    "group_name": "ci-main",
-                    "group_members": [{"job_id": 101}],
-                }
-            ],
+            )
         )
-        api = Mock()
-        api.list_runs.return_value = [first_run, second_run]
-        api.list_jobs.side_effect = [[running_job], [queued_job]]
-        response = Mock(status_code=403, headers={})
-        error = exporter.GitHubRequestError("concurrency_groups", response)
-        recovered_groups = [
-            {
-                "group_name": "ci-main",
-                "group_members": [{"job_id": 101}, {"job_id": 102}],
-            }
-        ]
-        api.list_concurrency_groups.side_effect = [
-            error,
-            recovered_groups,
-            recovered_groups,
-        ]
-        state = FakeState()
-        state.poll_errors = Mock()
-        poller = exporter.Poller(
+        self.assertEqual(
+            [
+                row["status"]
+                for row in self.database.rows("SELECT status FROM jobs WHERE id = 789")
+            ],
+            ["orphaned"],
+        )
+        self.assertNotIn('status="queued"', self.scrape())
+
+    def test_duplicate_deliveries_count_once(self):
+        for _ in range(3):
+            self.deliver(run_message(workflow_run()), job_message(workflow_job()))
+
+        metrics = self.scrape()
+        self.assertIn(
+            'github_actions_workflow_runs_total{conclusion="success",event="push",repository="jlapenna/homelab",workflow="validate"} 1.0',
+            metrics,
+        )
+        self.assertIn(
+            'github_actions_jobs_total{conclusion="success",execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
+            metrics,
+        )
+
+    def test_late_events_cannot_regress_stored_state(self):
+        self.deliver(run_message(workflow_run()), job_message(workflow_job()))
+        self.deliver(
+            run_message(
+                workflow_run(
+                    status="in_progress",
+                    conclusion=None,
+                    updated_at="2026-08-05T04:19:30Z",
+                )
+            ),
+            job_message(
+                workflow_job(status="in_progress", conclusion=None, completed_at=None)
+            ),
+            job_message(
+                workflow_job(
+                    status="queued", conclusion=None, started_at=None, completed_at=None
+                )
+            ),
+        )
+
+        rows = self.database.rows("SELECT status, conclusion FROM workflow_runs")
+        self.assertEqual([tuple(row) for row in rows], [("completed", "success")])
+        rows = self.database.rows("SELECT status, conclusion FROM jobs")
+        self.assertEqual([tuple(row) for row in rows], [("completed", "success")])
+        metrics = self.scrape()
+        self.assertNotIn("github_actions_workflow_runs_current{", metrics)
+        self.assertNotIn("github_actions_jobs_current{", metrics)
+
+        # At the same status, an older event does not replace a newer one.
+        self.deliver(
+            run_message(
+                workflow_run(
+                    id=200,
+                    status="in_progress",
+                    conclusion=None,
+                    updated_at="2026-08-05T05:00:00Z",
+                    run_started_at="2026-08-05T04:59:00Z",
+                )
+            ),
+            run_message(
+                workflow_run(
+                    id=200,
+                    status="in_progress",
+                    conclusion=None,
+                    updated_at="2026-08-05T04:50:00Z",
+                    run_started_at="2026-08-05T04:49:00Z",
+                )
+            ),
+        )
+        started = self.database.rows(
+            "SELECT started_at FROM workflow_runs WHERE id = 200"
+        )[0]["started_at"]
+        self.assertEqual(started, exporter.parse_timestamp("2026-08-05T04:59:00Z"))
+
+    def test_job_running_after_its_run_completed_waits_for_its_own_completion(self):
+        self.deliver(
+            run_message(workflow_run()),
+            job_message(
+                workflow_job(status="in_progress", conclusion=None, completed_at=None)
+            ),
+        )
+        self.assertNotIn("github_actions_jobs_current{", self.scrape())
+
+        self.deliver(job_message(workflow_job()))
+        self.assertIn(
+            'github_actions_jobs_total{conclusion="success",execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
+            self.scrape(),
+        )
+
+    def test_rerun_arrives_as_a_new_attempt(self):
+        labels = '{repository="jlapenna/homelab",workflow="validate"}'
+        name = "github_actions_workflow_pull_request_failing_branches"
+        for run_id, branch in ((1, "feature-a"), (2, "feature-b")):
+            started = recent(5 - run_id)
+            self.deliver(
+                run_message(
+                    workflow_run(
+                        id=run_id,
+                        event="pull_request",
+                        conclusion="failure",
+                        head_branch=branch,
+                        created_at=started,
+                        run_started_at=started,
+                        updated_at=started,
+                    )
+                ),
+                job_message(
+                    workflow_job(id=run_id * 10, run_id=run_id, conclusion="failure")
+                ),
+            )
+        self.assertEqual(exported_metric_value(self.scrape(), name, labels), 2.0)
+
+        # The rerun keeps its run's created_at but starts now.
+        rerun = workflow_run(
+            id=1,
+            run_attempt=2,
+            event="pull_request",
+            head_branch="feature-a",
+            created_at=recent(4),
+            run_started_at=recent(0.5),
+            updated_at=recent(0.5),
+        )
+        self.deliver(
+            run_message(dict(rerun, status="in_progress", conclusion=None)),
+            job_message(workflow_job(id=11, run_id=1, run_attempt=2)),
+            run_message(rerun),
+        )
+
+        metrics = self.scrape()
+        self.assertEqual(exported_metric_value(metrics, name, labels), 0.0)
+        # Both attempts' outcomes are kept.
+        self.assertIn(
+            'github_actions_workflow_runs_total{conclusion="failure",event="pull_request",repository="jlapenna/homelab",workflow="validate"} 2.0',
+            metrics,
+        )
+        self.assertIn(
+            'github_actions_workflow_runs_total{conclusion="success",event="pull_request",repository="jlapenna/homelab",workflow="validate"} 1.0',
+            metrics,
+        )
+        self.assertIn(
+            'github_actions_jobs_total{conclusion="failure",execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 2.0',
+            metrics,
+        )
+
+    def test_main_line_failures_are_counted_from_events(self):
+        for run_id, (hours_ago, conclusion) in enumerate(
+            ((3, "success"), (2, "failure"), (1, "failure")), start=1
+        ):
+            self.deliver(
+                run_message(
+                    workflow_run(
+                        id=run_id,
+                        conclusion=conclusion,
+                        created_at=recent(hours_ago),
+                        updated_at=recent(hours_ago),
+                    )
+                )
+            )
+
+        metrics = self.scrape()
+        self.assertEqual(
+            exported_metric_value(
+                metrics,
+                "github_actions_workflow_consecutive_failures",
+                '{repository="jlapenna/homelab",workflow="validate"}',
+            ),
+            2.0,
+        )
+
+    def test_full_suite_step_is_read_from_the_job_event(self):
+        self.deliver(run_message(workflow_run(path=".github/workflows/ci.yml")))
+        self.deliver(
+            job_message(
+                workflow_job(
+                    name="E2E",
+                    steps=[
+                        {"name": "Set up job", "conclusion": "success"},
+                        {
+                            "name": "Run console e2e suite [full-suite]",
+                            "conclusion": "success",
+                        },
+                    ],
+                )
+            )
+        )
+
+        self.assertIn(
+            'github_actions_job_duration_seconds_count{execution="full_suite",job="E2E",repository="jlapenna/homelab",runner_group="Default",workflow="ci"} 1.0',
+            self.scrape(),
+        )
+
+    def test_unconfigured_repository_is_acknowledged_and_ignored(self):
+        self.deliver(
+            run_message(workflow_run(), repository="someone/else"),
+            job_message(workflow_job(), repository="someone/else"),
+        )
+
+        self.assertEqual(self.database.rows("SELECT * FROM workflow_runs"), [])
+        self.assertEqual(self.database.rows("SELECT * FROM pending_jobs"), [])
+        self.assertEqual(self.messages_total("workflow_run", "ignored_repository"), 1.0)
+        self.assertEqual(self.messages_total("workflow_job", "ignored_repository"), 1.0)
+        self.assertIsNone(
+            self.registry.get_sample_value(
+                "github_actions_exporter_last_event_timestamp_seconds",
+                {"repository": "someone/else"},
+            )
+        )
+
+    def test_repository_names_match_case_insensitively(self):
+        self.deliver(run_message(workflow_run(), repository="JLaPenna/Homelab"))
+
+        self.assertEqual(
+            [
+                row["repository"]
+                for row in self.database.rows("SELECT * FROM workflow_runs")
+            ],
+            ["jlapenna/homelab"],
+        )
+
+    def test_malformed_messages_are_acknowledged_and_counted(self):
+        repository = {"full_name": "jlapenna/homelab"}
+        cases = {
+            "not json": FakeMessage("workflow_run", data=b"{not json"),
+            "not utf-8": FakeMessage("workflow_run", data=b"\xff\xfe"),
+            "not an object": FakeMessage("workflow_run", []),
+            "no repository": FakeMessage(
+                "workflow_run", {"workflow_run": workflow_run()}
+            ),
+            "no run": FakeMessage("workflow_run", {"repository": repository}),
+            "string id": FakeMessage(
+                "workflow_run",
+                {"repository": repository, "workflow_run": workflow_run(id="123")},
+            ),
+            "bad timestamp": FakeMessage(
+                "workflow_run",
+                {
+                    "repository": repository,
+                    "workflow_run": workflow_run(updated_at="yesterday"),
+                },
+            ),
+            "bad attempt": FakeMessage(
+                "workflow_run",
+                {"repository": repository, "workflow_run": workflow_run(run_attempt=0)},
+            ),
+            "job without run": FakeMessage(
+                "workflow_job",
+                {"repository": repository, "workflow_job": workflow_job(run_id=None)},
+            ),
+        }
+        for case, message in cases.items():
+            with self.subTest(case=case):
+                self.deliver(message)
+        unknown = FakeMessage("push", {"repository": repository})
+        self.deliver(unknown)
+
+        self.assertEqual(self.messages_total("workflow_run", "malformed"), 8.0)
+        self.assertEqual(self.messages_total("workflow_job", "malformed"), 1.0)
+        self.assertEqual(self.messages_total("unknown", "malformed"), 1.0)
+        self.assertEqual(self.database.rows("SELECT * FROM workflow_runs"), [])
+        self.assertEqual(
+            self.registry.get_sample_value(
+                "github_actions_exporter_last_event_timestamp_seconds",
+                {"repository": "jlapenna/homelab"},
+            ),
+            0.0,
+        )
+
+    def test_storage_failure_is_negatively_acknowledged_for_redelivery(self):
+        message = run_message(workflow_run())
+        with patch.object(
+            self.database,
+            "upsert_run",
+            side_effect=exporter.sqlite3.OperationalError("database is locked"),
+        ):
+            self.consumer.handle_message(message)
+
+        self.assertEqual((message.acks, message.nacks), (0, 1))
+        self.assertEqual(self.messages_total("workflow_run", "error"), 1.0)
+        self.assertEqual(
+            self.registry.get_sample_value(
+                "github_actions_exporter_last_event_timestamp_seconds",
+                {"repository": "jlapenna/homelab"},
+            ),
+            0.0,
+        )
+
+        # The redelivery succeeds.
+        self.deliver(run_message(workflow_run()))
+        self.assertEqual(self.messages_total("workflow_run", "stored"), 1.0)
+
+    def test_last_event_time_survives_a_restart(self):
+        self.deliver(run_message(workflow_run()))
+        registry = CollectorRegistry()
+        state = exporter.ExporterState(registry)
+
+        exporter.EventConsumer(
             exporter.Config(
-                credentials=exporter.StaticCredentials("test"),
-                repositories=(repository,),
+                repositories=("jlapenna/homelab", "jlapenna/idle"),
+                subscription=SUBSCRIPTION,
             ),
             self.database,
-            api,
             state,
+            self.collector,
         )
+
+        self.assertEqual(
+            registry.get_sample_value(
+                "github_actions_exporter_last_event_timestamp_seconds",
+                {"repository": "jlapenna/homelab"},
+            ),
+            self.NOW,
+        )
+        self.assertEqual(
+            registry.get_sample_value(
+                "github_actions_exporter_last_event_timestamp_seconds",
+                {"repository": "jlapenna/idle"},
+            ),
+            0.0,
+        )
+
+    def test_snapshot_is_rebuilt_only_after_a_change(self):
+        with patch.object(self.collector, "refresh") as refresh:
+            self.consumer.refresh_snapshot_if_changed()
+            refresh.assert_not_called()
+            self.deliver(run_message(workflow_run()))
+            self.consumer.refresh_snapshot_if_changed()
+            self.consumer.refresh_snapshot_if_changed()
+        refresh.assert_called_once_with()
+
+
+class FakeFuture:
+    """A streaming-pull future that plays back scripted result() outcomes."""
+
+    def __init__(self, *outcomes):
+        self.outcomes = list(outcomes)
+        self.cancelled = False
+
+    def result(self, timeout=None):
+        if self.cancelled and not self.outcomes:
+            # Like the real future: waiting on a cancelled stream reports the
+            # cancellation once its callbacks have drained.
+            raise concurrent.futures.CancelledError()
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    def done(self):
+        return not self.outcomes
+
+    def cancel(self):
+        self.cancelled = True
+
+
+class StopConsumer(Exception):
+    pass
+
+
+class StreamingPullTests(unittest.TestCase):
+    def setUp(self):
+        # Failures below are logged on purpose; keep the test output readable.
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+        self.registry = CollectorRegistry()
+        self.state = exporter.ExporterState(self.registry)
+        self.database = Mock()
+        self.database.last_event_at.return_value = None
+        self.metrics = Mock()
+        self.delays = []
+        self.clock = [0.0]
+
+    def consumer(self, sleeps_before_stop):
+        def sleep(delay):
+            self.delays.append(delay)
+            if len(self.delays) >= sleeps_before_stop:
+                raise StopConsumer
+
+        return exporter.EventConsumer(
+            exporter.Config(
+                repositories=("jlapenna/homelab",), subscription=SUBSCRIPTION
+            ),
+            self.database,
+            self.state,
+            self.metrics,
+            monotonic=lambda: self.clock[0],
+            sleep=sleep,
+        )
+
+    def running(self):
+        return self.registry.get_sample_value(
+            "github_actions_exporter_subscription_running"
+        )
+
+    def test_a_failed_stream_is_reopened_with_a_growing_bounded_delay(self):
+        seen_running = []
+        futures = [
+            FakeFuture(RuntimeError("403 permission denied")),
+            FakeFuture(TimeoutError(), TimeoutError(), RuntimeError("503")),
+            FakeFuture(RuntimeError("503")),
+        ]
+        subscriber = Mock()
+
+        def subscribe(
+            subscription, callback, flow_control, await_callbacks_on_shutdown
+        ):
+            self.assertIs(await_callbacks_on_shutdown, True)
+            self.assertEqual(subscription, SUBSCRIPTION)
+            self.assertEqual(callback, consumer.handle_message)
+            self.assertEqual(
+                flow_control.max_messages, exporter.MAX_OUTSTANDING_MESSAGES
+            )
+            seen_running.append(self.running())
+            return futures.pop(0)
+
+        subscriber.subscribe.side_effect = subscribe
+        consumer = self.consumer(sleeps_before_stop=3)
+        consumer._changed.set()
 
         with (
-            # One read to grant concurrency-group slots, one per run for the
-            # concurrency-group retry, then one for the pull-request rerun check.
-            patch.object(exporter.time, "monotonic", side_effect=[100, 100, 100, 100]),
-            self.assertLogs(exporter.LOGGER, level="WARNING") as logs,
+            patch.object(exporter, "SNAPSHOT_REFRESH_SECONDS", 0),
+            self.assertRaises(StopConsumer),
         ):
-            poller.refresh_repository(repository)
+            consumer.run_forever(subscriber)
 
-        self.assertTrue(self.database.backfill_complete(repository))
-        self.assertEqual(len(state.last_success.values), 2)
+        # Every scripted stream was actually opened and played back; a
+        # subscribe() signature mismatch would leave them unpopped.
+        self.assertEqual(futures, [])
+        self.assertEqual(self.delays, [1.0, 2.0, 4.0])
+        self.assertEqual(self.running(), 0.0)
         self.assertEqual(
-            [
-                (row["id"], row["status"], row["concurrency_group"])
-                for row in self.database.rows(
-                    "SELECT id, status, concurrency_group FROM jobs ORDER BY id"
-                )
-            ],
-            [(101, "in_progress", "ci-main"), (102, "queued", "unknown")],
-        )
-        api.list_jobs.assert_has_calls([call(repository, 1), call(repository, 2)])
-        api.list_concurrency_groups.assert_called_once_with(repository, 1)
-        state.poll_errors.labels.assert_called_once_with(
-            repository, "concurrency_groups"
-        )
-        state.poll_errors.labels.return_value.inc.assert_called_once_with()
-        self.assertIn(
-            "core job state retained with unknown concurrency metadata",
-            "\n".join(logs.output),
-        )
-
-        api.list_jobs.side_effect = [[running_job], [queued_job]]
-        with patch.object(exporter.time, "monotonic", side_effect=[401, 401, 401, 401]):
-            poller.refresh_repository(repository)
-
-        self.assertEqual(api.list_concurrency_groups.call_count, 3)
-        self.assertEqual(
-            [
-                (row["id"], row["concurrency_group"])
-                for row in self.database.rows(
-                    "SELECT id, concurrency_group FROM jobs WHERE repository = ? ORDER BY id",
-                    (repository,),
-                )
-            ],
-            [(101, "ci-main"), (102, "ci-main")],
-        )
-
-    def test_optional_metadata_rate_limit_still_aborts_core_refresh(self):
-        repository = "jlapenna/agent-lcars"
-        first_run = workflow_run(id=1, status="in_progress", conclusion=None)
-        second_run = workflow_run(id=2, status="in_progress", conclusion=None)
-        api = Mock()
-        api.list_runs.return_value = [first_run, second_run]
-        api.list_jobs.return_value = [workflow_job()]
-        response = Mock(
-            status_code=429,
-            headers={"x-ratelimit-remaining": "0", "x-github-request-id": "rate"},
-        )
-        error = exporter.GitHubRequestError("concurrency_groups", response)
-        api.list_concurrency_groups.side_effect = error
-        state = FakeState()
-        state.poll_errors = Mock()
-        poller = exporter.Poller(
-            exporter.Config(
-                credentials=exporter.StaticCredentials("test"),
-                repositories=(repository,),
+            self.registry.get_sample_value(
+                "github_actions_exporter_subscription_failures_total"
             ),
-            self.database,
-            api,
-            state,
+            3.0,
+        )
+        # While a stream was open the snapshot kept refreshing.
+        self.metrics.refresh.assert_called_once_with()
+
+    def test_stream_runs_while_open_and_is_cancelled_when_it_stops(self):
+        future = FakeFuture(TimeoutError(), RuntimeError("stream failed"))
+        observed = []
+        original = future.result
+
+        def result(timeout=None):
+            observed.append(self.running())
+            return original(timeout)
+
+        future.result = result
+        subscriber = Mock()
+        subscriber.subscribe.return_value = future
+        consumer = self.consumer(sleeps_before_stop=1)
+
+        with self.assertRaises(StopConsumer):
+            consumer.run_forever(subscriber)
+
+        # The last wait happens after cancel, with the stream already marked
+        # closed: it lets in-flight callbacks finish before main() can close
+        # the database under them.
+        self.assertEqual(observed, [1.0, 1.0, 0.0])
+        self.assertTrue(future.cancelled)
+        self.assertEqual(self.running(), 0.0)
+        self.assertIs(
+            subscriber.subscribe.call_args.kwargs["await_callbacks_on_shutdown"], True
         )
 
-        with self.assertRaises(exporter.GitHubRequestError) as raised:
-            poller.refresh_repository(repository)
+    def test_subscribe_errors_are_retried_and_long_streams_reset_the_delay(self):
+        subscriber = Mock()
+        long_lived = FakeFuture(RuntimeError("stream reset"))
 
-        self.assertIs(raised.exception, error)
-        self.assertFalse(self.database.backfill_complete(repository))
-        api.list_jobs.assert_called_once_with(repository, 1)
-        state.poll_errors.labels.assert_not_called()
+        def advance(timeout=None):
+            self.clock[0] += exporter.RECONNECT_RESET_SECONDS
+            raise RuntimeError("stream reset")
 
-    def test_unexpected_optional_metadata_bug_still_fails_refresh(self):
-        repository = "jlapenna/agent-lcars"
-        run = workflow_run(id=1, status="in_progress", conclusion=None)
-        api = Mock()
-        api.list_runs.return_value = [run]
-        api.list_jobs.return_value = [workflow_job()]
-        api.list_concurrency_groups.side_effect = RuntimeError("programming bug")
-        poller = exporter.Poller(
-            exporter.Config(
-                credentials=exporter.StaticCredentials("test"),
-                repositories=(repository,),
-            ),
-            self.database,
-            api,
-            FakeState(),
+        long_lived.result = advance
+        subscriber.subscribe.side_effect = [
+            RuntimeError("could not open"),
+            RuntimeError("could not open"),
+            long_lived,
+        ]
+        consumer = self.consumer(sleeps_before_stop=3)
+
+        with self.assertRaises(StopConsumer):
+            consumer.run_forever(subscriber)
+
+        self.assertEqual(self.delays, [1.0, 2.0, 1.0])
+
+    def test_snapshot_failure_is_not_mistaken_for_a_stream_failure(self):
+        subscriber = Mock()
+        subscriber.subscribe.return_value = FakeFuture(
+            TimeoutError(), RuntimeError("unreached")
         )
+        self.metrics.refresh.side_effect = exporter.sqlite3.OperationalError("disk")
+        consumer = self.consumer(sleeps_before_stop=1)
+        consumer._changed.set()
 
-        with self.assertRaisesRegex(RuntimeError, "programming bug"):
-            poller.refresh_repository(repository)
-
-        self.assertFalse(self.database.backfill_complete(repository))
-
-    def test_failed_initial_backfill_is_retried(self):
-        class FailingAPI(FakeAPI):
-            def list_jobs(self, _repository, _run_id):
-                raise RuntimeError("temporary GitHub failure")
-
-        run = workflow_run()
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=("jlapenna/homelab",),
-        )
-        state = FakeState()
-        poller = exporter.Poller(config, self.database, FailingAPI(run, []), state)
-
-        with self.assertRaises(RuntimeError):
-            poller.refresh_repository("jlapenna/homelab")
-
-        self.assertFalse(self.database.backfill_complete("jlapenna/homelab"))
-        self.assertEqual(state.backfill_in_progress.values, [0, 1, 0])
-
-    def test_deleted_active_run_is_retired_without_blocking_repository_refresh(self):
-        repository = "jlapenna/homelab"
-        run = workflow_run(status="in_progress", conclusion=None)
-        job = workflow_job(
-            status="queued", conclusion=None, started_at=None, completed_at=None
-        )
-        self.database.upsert_run(repository, run)
-        self.database.upsert_jobs(repository, run, [job])
-        response = Mock(status_code=404, headers={})
-        api = Mock()
-        api.list_runs.return_value = []
-        api.get_run.side_effect = exporter.GitHubRequestError("run", response)
-        poller = exporter.Poller(
-            exporter.Config(
-                credentials=exporter.StaticCredentials("test"),
-                repositories=(repository,),
-            ),
-            self.database,
-            api,
-            FakeState(),
-        )
-
-        poller.refresh_repository(repository)
-
-        self.assertTrue(self.database.backfill_complete(repository))
-        self.assertEqual(self.database.active_run_ids(repository), set())
-        self.assertEqual(
-            self.database.rows(
-                "SELECT status FROM workflow_runs WHERE repository = ? AND id = ?",
-                (repository, run["id"]),
-            )[0]["status"],
-            "missing",
-        )
-        self.assertEqual(
-            self.database.rows(
-                "SELECT status FROM jobs WHERE repository = ? AND run_id = ?",
-                (repository, run["id"]),
-            )[0]["status"],
-            "missing",
-        )
-
-    def test_missing_latest_attempt_does_not_retire_earlier_completion(self):
-        repository = "jlapenna/homelab"
-        earlier = workflow_run(run_attempt=1)
-        latest = workflow_run(
-            run_attempt=2,
-            status="in_progress",
-            conclusion=None,
-            updated_at="2026-08-05T04:21:23Z",
-        )
-        self.database.upsert_run(repository, earlier)
-        self.database.upsert_run(repository, latest)
-        self.database.upsert_jobs(
-            repository,
-            latest,
-            [
-                workflow_job(
-                    status="queued",
-                    conclusion=None,
-                    started_at=None,
-                    completed_at=None,
-                )
-            ],
-        )
-
-        self.database.mark_run_missing(repository, latest["id"])
-
-        rows = self.database.rows(
-            """
-            SELECT run_attempt, status FROM workflow_runs
-            WHERE repository = ? AND id = ? ORDER BY run_attempt
-            """,
-            (repository, latest["id"]),
-        )
-        self.assertEqual(
-            [(row["run_attempt"], row["status"]) for row in rows],
-            [(1, "completed"), (2, "missing")],
-        )
-
-    def test_active_run_server_error_still_fails_repository_refresh(self):
-        repository = "jlapenna/homelab"
-        run = workflow_run(status="in_progress", conclusion=None)
-        self.database.upsert_run(repository, run)
-        response = Mock(status_code=500, headers={})
-        api = Mock()
-        api.list_runs.return_value = []
-        api.get_run.side_effect = exporter.GitHubRequestError("run", response)
-        poller = exporter.Poller(
-            exporter.Config(
-                credentials=exporter.StaticCredentials("test"),
-                repositories=(repository,),
-            ),
-            self.database,
-            api,
-            FakeState(),
-        )
-
-        with self.assertRaises(exporter.GitHubRequestError):
-            poller.refresh_repository(repository)
-
-        self.assertFalse(self.database.backfill_complete(repository))
-        self.assertEqual(self.database.active_run_ids(repository), {run["id"]})
-
-    def test_refresh_after_outage_uses_persisted_last_success(self):
-        repository = "jlapenna/homelab"
-        previous_success = datetime.now(UTC) - timedelta(hours=2)
-        self.database.record_refresh_success(
-            repository,
-            initial=True,
-            timestamp=previous_success.timestamp(),
-        )
-        api = FakeAPI(workflow_run(), [workflow_job()])
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=(repository,),
-            overlap_minutes=15,
-        )
-        poller = exporter.Poller(config, self.database, api, FakeState())
-
-        poller.refresh_repository(repository)
-
-        expected_cutoff = previous_success - timedelta(minutes=15)
-        self.assertAlmostEqual(
-            api.cutoffs[0].timestamp(), expected_cutoff.timestamp(), delta=1
-        )
-
-    def test_new_repository_is_stale_until_its_first_success(self):
-        state = FakeState()
-
-        exporter.Poller(
-            exporter.Config(
-                credentials=exporter.StaticCredentials("test"),
-                repositories=("jlapenna/homelab",),
-            ),
-            self.database,
-            FakeAPI(workflow_run(), []),
-            state,
-        )
-
-        self.assertEqual(state.last_success.values, [0])
+        with self.assertRaisesRegex(exporter.sqlite3.OperationalError, "disk"):
+            consumer.run_forever(subscriber)
+        self.assertEqual(self.running(), 0.0)
 
 
 class ConfigTests(unittest.TestCase):
     def config(self, **environment):
         values = {
-            "GITHUB_TOKEN": "test",
             "GITHUB_REPOSITORIES": "jlapenna/homelab",
+            "GITHUB_ACTIONS_EVENTS_SUBSCRIPTION": SUBSCRIPTION,
         }
         values.update(environment)
         with patch.dict(os.environ, values, clear=True):
             return exporter.Config.from_environment()
 
-    def test_duplicate_repositories_are_polled_once(self):
+    def test_defaults(self):
+        config = self.config()
+
+        self.assertEqual(config.subscription, SUBSCRIPTION)
+        self.assertEqual(config.port, 9102)
+        self.assertEqual(
+            config.database_path, "/var/lib/github-actions-exporter/actions.db"
+        )
+
+    def test_duplicate_repositories_are_stored_once(self):
         config = self.config(
             GITHUB_REPOSITORIES=(
                 "JLaPenna/Homelab, supersprinklesracing/sprinkles,jlapenna/homelab"
@@ -1766,13 +1787,23 @@ class ConfigTests(unittest.TestCase):
             ):
                 self.config(GITHUB_REPOSITORIES=repository)
 
-    def test_polling_windows_must_be_positive(self):
-        for variable in ("BACKFILL_HOURS", "OVERLAP_MINUTES"):
+    def test_subscription_is_a_full_resource_path(self):
+        for subscription in (
+            "github-actions-exporter",
+            "projects/agent-lcars/topics/github-actions-events",
+            "projects/agent-lcars/subscriptions/",
+        ):
             with (
-                self.subTest(variable=variable),
-                self.assertRaisesRegex(ValueError, "at least 1"),
+                self.subTest(subscription=subscription),
+                self.assertRaisesRegex(ValueError, "projects/<project>"),
             ):
-                self.config(**{variable: "0"})
+                self.config(GITHUB_ACTIONS_EVENTS_SUBSCRIPTION=subscription)
+
+    def test_subscription_is_required(self):
+        with self.assertRaisesRegex(
+            ValueError, "GITHUB_ACTIONS_EVENTS_SUBSCRIPTION cannot be empty"
+        ):
+            self.config(GITHUB_ACTIONS_EVENTS_SUBSCRIPTION="")
 
     def test_port_must_be_in_the_tcp_port_range(self):
         for port in ("0", "65536"):
@@ -1782,307 +1813,71 @@ class ConfigTests(unittest.TestCase):
             ):
                 self.config(PORT=port)
 
-    def test_required_connection_settings_cannot_be_blank(self):
-        for variable in ("GITHUB_API_URL", "GITHUB_API_VERSION", "DATABASE_PATH"):
-            with (
-                self.subTest(variable=variable),
-                self.assertRaisesRegex(ValueError, f"{variable} cannot be empty"),
-            ):
-                self.config(**{variable: "  "})
-
-    def test_api_url_must_be_an_absolute_http_url(self):
-        for api_url in ("/", "api.github.com", "ftp://api.github.com"):
-            with (
-                self.subTest(api_url=api_url),
-                self.assertRaisesRegex(ValueError, "absolute HTTP"),
-            ):
-                self.config(GITHUB_API_URL=api_url)
-
-    def test_api_version_must_be_an_iso_date(self):
-        for api_version in ("latest", "2026-99-99"):
-            with (
-                self.subTest(api_version=api_version),
-                self.assertRaisesRegex(ValueError, "YYYY-MM-DD"),
-            ):
-                self.config(GITHUB_API_VERSION=api_version)
+    def test_database_path_cannot_be_blank(self):
+        with self.assertRaisesRegex(ValueError, "DATABASE_PATH cannot be empty"):
+            self.config(DATABASE_PATH="  ")
 
 
-class GitHubAPITests(unittest.TestCase):
-    def setUp(self):
-        self.api = exporter.GitHubAPI(
-            exporter.Config(
-                credentials=exporter.StaticCredentials("test"),
-                repositories=("jlapenna/homelab",),
-            ),
-            FakeState(),
-        )
-        self.addCleanup(self.api.close)
-
-    def test_rate_limit_headers_export_complete_quota_contract(self):
-        registry = CollectorRegistry()
-        state = exporter.ExporterState(registry)
-        state.record_response(
-            "test",
-            Mock(
-                status_code=200,
-                headers={
-                    "x-ratelimit-remaining": "42",
-                    "x-ratelimit-limit": "5000",
-                    "x-ratelimit-used": "4958",
-                    "x-ratelimit-reset": "1786500000",
-                },
-            ),
-            "jlapenna",
-        )
-        metrics = generate_latest(registry).decode()
-        owner = '{owner="jlapenna"}'
-        self.assertEqual(
-            exported_metric_value(
-                metrics, "github_actions_exporter_api_rate_limit_remaining", owner
-            ),
-            42,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics, "github_actions_exporter_api_rate_limit_limit", owner
-            ),
-            5000,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics, "github_actions_exporter_api_rate_limit_used", owner
-            ),
-            4958,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_api_rate_limit_reset_timestamp_seconds",
-                owner,
-            ),
-            1786500000,
-        )
-
-    def test_invalid_rate_limit_headers_do_not_replace_last_valid_values(self):
-        registry = CollectorRegistry()
-        state = exporter.ExporterState(registry)
-        headers = {
-            "x-ratelimit-remaining": ("42", "api_rate_limit_remaining", 42),
-            "x-ratelimit-limit": ("5000", "api_rate_limit_limit", 5000),
-            "x-ratelimit-used": ("4958", "api_rate_limit_used", 4958),
-            "x-ratelimit-reset": (
-                "1786500000",
-                "api_rate_limit_reset_timestamp_seconds",
-                1786500000,
-            ),
-        }
-        state.record_response(
-            "test",
-            Mock(
-                status_code=200,
-                headers={header: value[0] for header, value in headers.items()},
-            ),
-            "jlapenna",
-        )
-
-        for header, (_valid, suffix, expected) in headers.items():
-            for value in ("nan", "inf", "1.5", "-1"):
-                with self.subTest(header=header, value=value):
-                    state.record_response(
-                        "test",
-                        Mock(status_code=200, headers={header: value}),
-                        "jlapenna",
-                    )
-                    self.assertEqual(
-                        exported_metric_value(
-                            generate_latest(registry).decode(),
-                            f"github_actions_exporter_{suffix}",
-                            '{owner="jlapenna"}',
-                        ),
-                        expected,
-                    )
-
-    def test_run_searches_are_partitioned_before_githubs_thousand_result_cap(self):
-        start = datetime(2026, 8, 8, 0, 0, tzinfo=UTC)
-        end = datetime(2026, 8, 8, 1, 0, tzinfo=UTC)
-        page_requests = []
-
-        def get(_path, *, endpoint, params):
-            self.assertEqual(endpoint, "runs")
-            page_requests.append(params.copy())
-            created = params["created"]
-            page = params["page"]
-            if created == "2026-08-08T00:00:00+00:00..2026-08-08T01:00:00+00:00":
-                return {"total_count": 1100, "workflow_runs": []}
-
-            newer = created.startswith("2026-08-08T00:30:01")
-            first_id = 601 if newer else 1
-            total = 500 if newer else 600
-            offset = (page - 1) * 100
-            batch_size = min(100, max(0, total - offset))
-            return {
-                "total_count": total,
-                "workflow_runs": [
-                    workflow_run(id=first_id + offset + index)
-                    for index in range(batch_size)
-                ],
-            }
-
-        with patch.object(self.api, "get", side_effect=get):
-            runs = self.api.list_runs("jlapenna/homelab", start, end)
-
-        self.assertEqual({run["id"] for run in runs}, set(range(1, 1101)))
-        self.assertFalse(any(request["page"] > 6 for request in page_requests))
-
-    def test_http_response_is_closed_after_success(self):
-        response = Mock(status_code=200, headers={})
-        response.json.return_value = {"ok": True}
-        self.api.state = Mock()
-        self.api.session.get = Mock(return_value=response)
-
-        self.assertEqual(
-            self.api.get("/repos/jlapenna/homelab/test", endpoint="test"), {"ok": True}
-        )
-
-        response.close.assert_called_once_with()
-
-    def test_http_response_is_closed_after_failure(self):
-        response = Mock(status_code=500, headers={})
-        response.raise_for_status.side_effect = exporter.requests.HTTPError("failed")
-        self.api.state = Mock()
-        self.api.session.get = Mock(return_value=response)
-
-        with self.assertRaises(exporter.GitHubRequestError) as raised:
-            self.api.get("/repos/jlapenna/homelab/test", endpoint="test")
-
-        self.assertEqual(raised.exception.status_code, 500)
-        response.close.assert_called_once_with()
-
-    def test_run_search_fails_closed_if_one_second_exceeds_githubs_cap(self):
-        instant = datetime(2026, 8, 8, tzinfo=UTC)
-        payload = {"total_count": 1000, "workflow_runs": []}
-
-        with (
-            patch.object(self.api, "get", return_value=payload),
-            self.assertRaisesRegex(RuntimeError, "one-second window"),
-        ):
-            self.api.list_runs("jlapenna/homelab", instant, instant)
-
-    def test_job_pagination_does_not_silently_stop_at_one_thousand(self):
-        pages = [
-            {
-                "total_count": 1100,
-                "jobs": [
-                    workflow_job(id=page * 100 + index + 1) for index in range(100)
-                ],
-            }
-            for page in range(11)
-        ]
-
-        with patch.object(self.api, "get", side_effect=pages) as get:
-            jobs = self.api.list_jobs("jlapenna/homelab", 123)
-
-        self.assertEqual(len(jobs), 1100)
-        self.assertEqual(get.call_count, 11)
-
-    def test_paginated_responses_require_a_valid_total_and_object_items(self):
-        invalid_payloads = (
-            ({"jobs": []}, "total_count"),
-            ({"total_count": -1, "jobs": []}, "total_count"),
-            ({"total_count": True, "jobs": []}, "total_count"),
-            ({"total_count": 1, "jobs": {}}, "not a list"),
-            ({"total_count": 1, "jobs": [None]}, "non-object"),
-            ({"total_count": 1, "jobs": [{}]}, "invalid id"),
-            ({"total_count": 1, "jobs": [{"id": True}]}, "invalid id"),
-            ({"total_count": 1, "jobs": [{"id": 0}]}, "invalid id"),
-        )
-        for payload, message in invalid_payloads:
-            with (
-                self.subTest(payload=payload),
-                patch.object(self.api, "get", return_value=payload),
-                self.assertRaisesRegex((TypeError, ValueError), message),
-            ):
-                self.api.list_jobs("jlapenna/homelab", 123)
-
-    def test_duplicate_ids_cannot_hide_an_omitted_paginated_item(self):
-        payload = {
-            "total_count": 2,
-            "jobs": [workflow_job(id=456), workflow_job(id=456)],
-        }
-
-        with (
-            patch.object(self.api, "get", return_value=payload),
-            self.assertRaisesRegex(RuntimeError, "duplicate id"),
-        ):
-            self.api.list_jobs("jlapenna/homelab", 123)
-
-    def test_short_page_cannot_silently_omit_reported_results(self):
-        payload = {"total_count": 2, "jobs": [workflow_job()]}
-
-        with (
-            patch.object(self.api, "get", return_value=payload),
-            self.assertRaisesRegex(RuntimeError, "returned 1 of 2"),
-        ):
-            self.api.list_jobs("jlapenna/homelab", 123)
+def main_config(**overrides):
+    return exporter.Config(
+        repositories=("jlapenna/homelab",), subscription=SUBSCRIPTION, **overrides
+    )
 
 
 class MainTests(unittest.TestCase):
-    def test_startup_failure_closes_database_and_api_session(self):
+    def test_startup_failure_closes_database_and_subscriber(self):
         database = Mock()
-        database.last_success_at.return_value = None
+        database.last_event_at.return_value = None
         database.rows.return_value = []
         database.histogram_rows.return_value = []
-        api = Mock()
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=("jlapenna/homelab",),
-        )
+        subscriber = Mock()
 
         with (
-            patch.object(exporter.Config, "from_environment", return_value=config),
+            patch.object(
+                exporter.Config, "from_environment", return_value=main_config()
+            ),
             patch.object(exporter, "Database", return_value=database),
-            patch.object(exporter, "GitHubAPI", return_value=api),
+            patch.object(exporter, "SubscriberClient", return_value=subscriber),
             patch.object(exporter, "start_http_server", side_effect=OSError("in use")),
             self.assertRaisesRegex(OSError, "in use"),
         ):
             exporter.main()
 
         database.close.assert_called_once_with()
-        api.close.assert_called_once_with()
+        subscriber.close.assert_called_once_with()
 
     def test_runtime_failure_stops_metrics_server_and_closes_resources(self):
         database = Mock()
-        database.last_success_at.return_value = None
+        database.last_event_at.return_value = None
         database.rows.return_value = []
         database.histogram_rows.return_value = []
-        api = Mock()
-        poller = Mock()
-        poller.run_forever.side_effect = RuntimeError("polling stopped")
+        subscriber = Mock()
+        consumer = Mock()
+        consumer.run_forever.side_effect = RuntimeError("consumer stopped")
         http_server = Mock()
         http_thread = Mock()
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=("jlapenna/homelab",),
-        )
 
         with (
-            patch.object(exporter.Config, "from_environment", return_value=config),
+            patch.object(
+                exporter.Config, "from_environment", return_value=main_config()
+            ),
             patch.object(exporter, "Database", return_value=database),
-            patch.object(exporter, "GitHubAPI", return_value=api),
-            patch.object(exporter, "Poller", return_value=poller),
+            patch.object(exporter, "SubscriberClient", return_value=subscriber),
+            patch.object(exporter, "EventConsumer", return_value=consumer),
             patch.object(
                 exporter,
                 "start_http_server",
                 return_value=(http_server, http_thread),
             ),
-            self.assertRaisesRegex(RuntimeError, "polling stopped"),
+            self.assertRaisesRegex(RuntimeError, "consumer stopped"),
         ):
             exporter.main()
 
+        consumer.run_forever.assert_called_once_with(subscriber)
         http_server.shutdown.assert_called_once_with()
         http_thread.join.assert_called_once_with()
         http_server.server_close.assert_called_once_with()
-        api.close.assert_called_once_with()
+        subscriber.close.assert_called_once_with()
         database.close.assert_called_once_with()
 
 
@@ -2147,11 +1942,7 @@ class HealthEndpointServingTests(unittest.TestCase):
 
     def test_main_serves_health_and_metrics_on_the_real_server(self):
         port = self.free_port()
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=("jlapenna/homelab",),
-            port=port,
-        )
+        config = main_config(port=port)
         # main() registers DatabaseMetrics, which the /metrics request below
         # actually collects -- so this needs a real (empty) database, not a
         # Mock standing in for one.
@@ -2171,7 +1962,7 @@ class HealthEndpointServingTests(unittest.TestCase):
 
         seen = {}
 
-        def probe_then_stop(after_refresh):
+        def probe_then_stop(_subscriber):
             with urllib.request.urlopen(
                 f"http://127.0.0.1:{port}{exporter.HEALTH_PATH}", timeout=5
             ) as response:
@@ -2182,18 +1973,18 @@ class HealthEndpointServingTests(unittest.TestCase):
             ) as response:
                 seen["metrics_status"] = response.status
             seen["collected_after_metrics"] = len(collected)
-            raise RuntimeError("polling stopped")
+            raise RuntimeError("consumer stopped")
 
-        poller = Mock()
-        poller.run_forever.side_effect = probe_then_stop
+        consumer = Mock()
+        consumer.run_forever.side_effect = probe_then_stop
 
         with (
             patch.object(exporter.Config, "from_environment", return_value=config),
             patch.object(exporter, "CollectorRegistry", return_value=registry),
             patch.object(exporter, "Database", return_value=database),
-            patch.object(exporter, "GitHubAPI", return_value=Mock()),
-            patch.object(exporter, "Poller", return_value=poller),
-            self.assertRaisesRegex(RuntimeError, "polling stopped"),
+            patch.object(exporter, "SubscriberClient", return_value=Mock()),
+            patch.object(exporter, "EventConsumer", return_value=consumer),
+            self.assertRaisesRegex(RuntimeError, "consumer stopped"),
         ):
             exporter.main()
 
@@ -2206,2029 +1997,3 @@ class HealthEndpointServingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-def requests_error(status_code):
-    """An HTTPError shaped like the ones the App endpoints actually raise."""
-    import requests as _requests
-
-    response = Mock(status_code=status_code)
-    return _requests.HTTPError(f"{status_code}", response=response)
-
-
-def _test_private_key_pem() -> bytes:
-    from cryptography.hazmat.primitives import serialization as _serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
-
-    key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    return key.private_bytes(
-        encoding=_serialization.Encoding.PEM,
-        format=_serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=_serialization.NoEncryption(),
-    )
-
-
-class OwnerOfTests(unittest.TestCase):
-    def test_owner_is_the_account_segment(self):
-        self.assertEqual(
-            exporter.owner_of("/repos/supersprinklesracing/www/actions/runs"),
-            "supersprinklesracing",
-        )
-
-    def test_non_repository_path_is_rejected(self):
-        # Guessing here would authenticate as whichever installation happened
-        # to be cached, so the wrong-account failure must be loud.
-        for path in (
-            "/test",
-            "/rate_limit",
-            "/orgs/jlapenna/installation",
-            "/repos//homelab/actions/runs",
-        ):
-            with self.subTest(path=path), self.assertRaises(ValueError):
-                exporter.owner_of(path)
-
-
-class AppCredentialsTests(unittest.TestCase):
-    def setUp(self):
-        self.pem = _test_private_key_pem()
-
-    def credentials(self):
-        return exporter.AppCredentials("Iv23test", self.pem, "https://api.github.com")
-
-    @staticmethod
-    def expiry(seconds_ahead):
-        moment = datetime.now(UTC) + timedelta(seconds=seconds_ahead)
-        return moment.isoformat().replace("+00:00", "Z")
-
-    def test_each_owner_gets_its_own_installation_token(self):
-        credentials = self.credentials()
-        responses = {
-            ("GET", "/orgs/jlapenna/installation"): requests_error(404),
-            ("GET", "/users/jlapenna/installation"): {"id": 1},
-            ("GET", "/orgs/supersprinklesracing/installation"): {"id": 2},
-            ("POST", "/app/installations/1/access_tokens"): {
-                "token": "personal",
-                "expires_at": self.expiry(3600),
-            },
-            ("POST", "/app/installations/2/access_tokens"): {
-                "token": "organization",
-                "expires_at": self.expiry(3600),
-            },
-        }
-
-        def request(method, path, bearer):
-            result = responses[(method, path)]
-            if isinstance(result, Exception):
-                raise result
-            return result
-
-        with patch.object(credentials, "_request", side_effect=request):
-            personal = credentials.authorization("jlapenna")
-            organization = credentials.authorization("supersprinklesracing")
-
-        # The whole point of the App over a PAT: one process, two accounts.
-        self.assertEqual(personal, "Bearer personal")
-        self.assertEqual(organization, "Bearer organization")
-
-    def test_live_token_is_reused_and_a_near_expiry_one_is_replaced(self):
-        credentials = self.credentials()
-        minted = []
-
-        def request(method, path, bearer):
-            if method == "GET":
-                return {"id": 1}
-            minted.append(path)
-            return {"token": f"token-{len(minted)}", "expires_at": self.expiry(3600)}
-
-        with patch.object(credentials, "_request", side_effect=request):
-            first = credentials.authorization("jlapenna")
-            second = credentials.authorization("jlapenna")
-            self.assertEqual(first, second)
-            self.assertEqual(len(minted), 1)
-
-            # Age the cached token to inside the refresh margin: it must be
-            # replaced before it can expire mid-sweep, not after it 401s.
-            token, _ = credentials._tokens["jlapenna"]
-            credentials._tokens["jlapenna"] = (
-                token,
-                time.time() + exporter.APP_TOKEN_REFRESH_MARGIN_SECONDS - 1,
-            )
-            third = credentials.authorization("jlapenna")
-
-        self.assertEqual(third, "Bearer token-2")
-        self.assertEqual(len(minted), 2)
-
-    def test_owner_with_no_installation_is_reported(self):
-        credentials = self.credentials()
-        with (
-            patch.object(credentials, "_request", side_effect=requests_error(404)),
-            self.assertRaises(RuntimeError),
-        ):
-            credentials.authorization("someone-else")
-
-
-class CredentialSelectionTests(unittest.TestCase):
-    def environment(self, **values):
-        base = {"GITHUB_REPOSITORIES": "jlapenna/homelab"}
-        base.update(values)
-        return patch.dict(os.environ, base, clear=True)
-
-    def test_personal_access_token_is_the_fallback(self):
-        with self.environment(GITHUB_TOKEN="test"):
-            config = exporter.Config.from_environment()
-        self.assertIsInstance(config.credentials, exporter.StaticCredentials)
-        self.assertEqual(config.credentials.authorization("jlapenna"), "Bearer test")
-
-    def test_app_is_preferred_over_a_token_when_both_are_present(self):
-        with tempfile.NamedTemporaryFile(suffix=".pem") as key_file:
-            key_file.write(_test_private_key_pem())
-            key_file.flush()
-            with self.environment(
-                GITHUB_TOKEN="test",
-                GITHUB_APP_CLIENT_ID="Iv23test",
-                GITHUB_APP_PRIVATE_KEY_FILE=key_file.name,
-            ):
-                config = exporter.Config.from_environment()
-        self.assertIsInstance(config.credentials, exporter.AppCredentials)
-
-    def test_half_configured_app_is_rejected_rather_than_ignored(self):
-        # Silently falling back to the PAT here would reproduce the exact
-        # outage this replaces: a partial rollout that looks configured.
-        with (
-            self.environment(GITHUB_TOKEN="test", GITHUB_APP_CLIENT_ID="Iv23test"),
-            self.assertRaises(ValueError),
-        ):
-            exporter.Config.from_environment()
-
-
-class PerRequestAuthorizationTests(unittest.TestCase):
-    def test_request_carries_the_owning_account_token(self):
-        credentials = Mock()
-        credentials.authorization.return_value = "Bearer scoped"
-        config = exporter.Config(
-            credentials=credentials, repositories=("supersprinklesracing/www",)
-        )
-        api = exporter.GitHubAPI(config, Mock())
-        response = Mock(status_code=200, headers={})
-        response.json.return_value = {"ok": True}
-        api.session.get = Mock(return_value=response)
-
-        api.get("/repos/supersprinklesracing/www/actions/runs", endpoint="runs")
-
-        credentials.authorization.assert_called_once_with("supersprinklesracing")
-        self.assertEqual(
-            api.session.get.call_args.kwargs["headers"],
-            {"Authorization": "Bearer scoped"},
-        )
-        # A stale session-level header would silently win over the per-request
-        # one for some owners, so it must not exist at all.
-        self.assertNotIn("Authorization", api.session.headers)
-
-
-class PerOwnerQuotaTests(unittest.TestCase):
-    def setUp(self):
-        self.temporary_directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary_directory.cleanup)
-        self.database = exporter.Database(
-            str(Path(self.temporary_directory.name) / "actions.db")
-        )
-        self.addCleanup(self.database.close)
-        self.now_epoch = 1_794_700_000.0
-        self.now_monotonic = 1_000.0
-
-    def advance(self, seconds: float) -> None:
-        self.now_epoch += seconds
-        self.now_monotonic += seconds
-
-    @staticmethod
-    def json_response(payload, *, status_code=200, headers=None):
-        response = Mock(status_code=status_code, headers=dict(headers or {}))
-        if status_code >= 400:
-            response.raise_for_status.side_effect = requests.HTTPError(
-                f"{status_code}", response=response
-            )
-        else:
-            response.json.return_value = payload
-            response.content = json.dumps(payload).encode()
-        return response
-
-    def conditional_api(self, registry=None):
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=("jlapenna/homelab",),
-        )
-        api = exporter.GitHubAPI(
-            config,
-            exporter.ExporterState(registry or CollectorRegistry()),
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-        return api
-
-    def test_unchanged_resource_is_reread_with_a_free_conditional_request(self):
-        # GitHub does not charge a 304 Not Modified against the rate limit,
-        # so runs that never change (including ones GitHub leaves stuck for
-        # weeks) cost nothing to re-read.
-        registry = CollectorRegistry()
-        api = self.conditional_api(registry)
-        path = "/repos/jlapenna/homelab/actions/runs/7"
-        quota = {"x-ratelimit-remaining": "4000", "x-ratelimit-reset": "9999999999"}
-        api.session.get = Mock(
-            side_effect=[
-                self.json_response(
-                    {"id": 7, "status": "queued"}, headers={"ETag": '"e1"', **quota}
-                ),
-                self.json_response(
-                    None,
-                    status_code=304,
-                    headers={"ETag": '"e1"', **quota, "x-ratelimit-remaining": "499"},
-                ),
-                self.json_response(
-                    {"id": 7, "status": "completed"},
-                    headers={"ETag": '"e2"', **quota},
-                ),
-                self.json_response(None, status_code=304, headers={"ETag": '"e2"'}),
-            ]
-        )
-
-        first = api.get(path, endpoint="run")
-        second = api.get(path, endpoint="run")
-        self.assertEqual(second, {"id": 7, "status": "queued"})
-        # Each call gets its own payload; callers may mutate what they read.
-        self.assertIsNot(second, first)
-        self.assertNotIn(
-            "If-None-Match", api.session.get.call_args_list[0].kwargs["headers"]
-        )
-        self.assertEqual(
-            api.session.get.call_args_list[1].kwargs["headers"]["If-None-Match"], '"e1"'
-        )
-        # A 304 still carries quota headers, and they still gate optional calls.
-        self.assertFalse(api.has_optional_quota("jlapenna"))
-
-        self.assertEqual(
-            api.get(path, endpoint="run"), {"id": 7, "status": "completed"}
-        )
-        self.assertEqual(
-            api.get(path, endpoint="run"), {"id": 7, "status": "completed"}
-        )
-        self.assertEqual(
-            api.session.get.call_args_list[3].kwargs["headers"]["If-None-Match"], '"e2"'
-        )
-        self.assertEqual(
-            registry.get_sample_value(
-                "github_actions_exporter_api_requests_total",
-                {"owner": "jlapenna", "endpoint": "run", "status": "304"},
-            ),
-            2.0,
-        )
-
-    def test_conditional_requests_are_keyed_by_path_and_params(self):
-        api = self.conditional_api()
-        path = "/repos/jlapenna/homelab/actions/runs"
-        api.session.get = Mock(
-            side_effect=[
-                self.json_response({"page": 1}, headers={"ETag": '"p1"'}),
-                self.json_response({"page": 2}, headers={"ETag": '"p2"'}),
-                self.json_response(None, status_code=304),
-            ]
-        )
-        api.get(path, endpoint="runs", params={"page": 1})
-        api.get(path, endpoint="runs", params={"page": 2})
-        self.assertNotIn(
-            "If-None-Match", api.session.get.call_args_list[1].kwargs["headers"]
-        )
-        self.assertEqual(
-            api.get(path, endpoint="runs", params={"page": 2}), {"page": 2}
-        )
-        self.assertEqual(
-            api.session.get.call_args_list[2].kwargs["headers"]["If-None-Match"], '"p2"'
-        )
-
-    def test_response_without_etag_stays_unconditional_and_stray_304_fails(self):
-        api = self.conditional_api()
-        path = "/repos/jlapenna/homelab/actions/runs/8"
-        api.session.get = Mock(
-            side_effect=[
-                self.json_response({"id": 8}),
-                self.json_response(None, status_code=304),
-            ]
-        )
-        self.assertEqual(api.get(path, endpoint="run"), {"id": 8})
-        with self.assertRaises(exporter.GitHubPayloadError):
-            api.get(path, endpoint="run")
-        self.assertNotIn(
-            "If-None-Match", api.session.get.call_args_list[1].kwargs["headers"]
-        )
-
-    def test_run_list_windows_are_not_cached(self):
-        api = self.conditional_api()
-        path = "/repos/jlapenna/homelab/actions/runs"
-        api.session.get = Mock(
-            return_value=self.json_response(
-                {"workflow_runs": []}, headers={"ETag": '"w"'}
-            )
-        )
-        api.get(path, endpoint="runs", params={"created": "2026-01-01..2026-01-02"})
-        self.assertEqual(len(api._conditional), 0)
-
-    def test_conditional_cache_drops_least_recently_used_entries(self):
-        api = self.conditional_api()
-        paths = [f"/repos/jlapenna/homelab/actions/runs/{n}" for n in (1, 2, 3)]
-        api.session.get = Mock(
-            side_effect=lambda url, **_: self.json_response(
-                {"url": url}, headers={"ETag": f'"{url[-1]}"'}
-            )
-        )
-        with patch.object(exporter, "CONDITIONAL_CACHE_ENTRIES", 2):
-            for path in paths:
-                api.get(path, endpoint="run")
-            api.get(paths[0], endpoint="run")
-        self.assertNotIn(
-            "If-None-Match", api.session.get.call_args_list[3].kwargs["headers"]
-        )
-
-    def test_one_owners_quota_does_not_overwrite_anothers(self):
-        # GitHub meters each installation against its own core quota. A single
-        # unlabelled gauge meant whichever repository was polled last decided
-        # what the quota panels and the exhaustion alert saw.
-        registry = CollectorRegistry()
-        state = exporter.ExporterState(registry)
-        for owner, remaining in (("jlapenna", "4200"), ("supersprinklesracing", "17")):
-            state.record_response(
-                "runs",
-                Mock(status_code=200, headers={"x-ratelimit-remaining": remaining}),
-                owner,
-            )
-
-        metrics = generate_latest(registry).decode()
-        name = "github_actions_exporter_api_rate_limit_remaining"
-        self.assertEqual(
-            exported_metric_value(metrics, name, '{owner="jlapenna"}'), 4200
-        )
-        self.assertEqual(
-            exported_metric_value(metrics, name, '{owner="supersprinklesracing"}'), 17
-        )
-
-    def test_api_requests_counter_records_owner_endpoint_and_status_independently(self):
-        registry = CollectorRegistry()
-        state = exporter.ExporterState(registry)
-        state.record_response("runs", Mock(status_code=200, headers={}), "jlapenna")
-        state.record_response("runs", Mock(status_code=403, headers={}), "jlapenna")
-        state.record_response("jobs", Mock(status_code=200, headers={}), "jlapenna")
-        state.record_response(
-            "runs", Mock(status_code=200, headers={}), "supersprinklesracing"
-        )
-
-        metrics = generate_latest(registry).decode()
-        counter = "github_actions_exporter_api_requests_total"
-        self.assertEqual(
-            exported_metric_value(
-                metrics, counter, '{endpoint="runs",owner="jlapenna",status="200"}'
-            ),
-            1.0,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics, counter, '{endpoint="runs",owner="jlapenna",status="403"}'
-            ),
-            1.0,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics, counter, '{endpoint="jobs",owner="jlapenna",status="200"}'
-            ),
-            1.0,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                counter,
-                '{endpoint="runs",owner="supersprinklesracing",status="200"}',
-            ),
-            1.0,
-        )
-
-    def test_exhausted_owner_backs_off_across_repos_and_cycles_until_reset_then_backfills(
-        self,
-    ):
-        repositories = (
-            "jlapenna/agent-lcars",
-            "jlapenna/homelab",
-            "supersprinklesracing/sprinkles",
-        )
-        registry = CollectorRegistry()
-        state = exporter.ExporterState(registry)
-        db_metrics = exporter.DatabaseMetrics(self.database)
-        registry.register(db_metrics)
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=repositories,
-            overlap_minutes=15,
-        )
-        api = exporter.GitHubAPI(
-            config,
-            state,
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-        poller = exporter.Poller(
-            config,
-            self.database,
-            api,
-            state,
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-
-        calls: list[tuple[str, dict]] = []
-        reset_epoch = int(self.now_epoch + 240)
-        mode = "healthy"
-        missed_run = workflow_run(
-            id=901,
-            created_at=datetime.fromtimestamp(self.now_epoch + 90, UTC).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            ),
-            run_started_at=datetime.fromtimestamp(self.now_epoch + 92, UTC).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            ),
-            updated_at=datetime.fromtimestamp(self.now_epoch + 120, UTC).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            ),
-        )
-
-        def fake_get(url, *, params=None, timeout=None, headers=None):
-            path = url.removeprefix(config.api_url)
-            calls.append((path, dict(params or {})))
-            owner = exporter.owner_of(path)
-            if owner == "supersprinklesracing":
-                return self.json_response(
-                    {"total_count": 0, "workflow_runs": []},
-                    headers={
-                        "x-ratelimit-remaining": "2422",
-                        "x-ratelimit-limit": "5000",
-                        "x-ratelimit-reset": str(reset_epoch + 1800),
-                    },
-                )
-            if mode == "healthy":
-                return self.json_response(
-                    {"total_count": 0, "workflow_runs": []},
-                    headers={
-                        "x-ratelimit-remaining": "1000",
-                        "x-ratelimit-limit": "5850",
-                        "x-ratelimit-reset": str(reset_epoch),
-                    },
-                )
-            if mode == "exhausted":
-                return self.json_response(
-                    {},
-                    status_code=403,
-                    headers={
-                        "x-ratelimit-remaining": "0",
-                        "x-ratelimit-limit": "5850",
-                        "x-ratelimit-used": "5850",
-                        "x-ratelimit-reset": str(reset_epoch),
-                        "x-github-request-id": "exhausted-jlapenna",
-                    },
-                )
-            if path == "/repos/jlapenna/agent-lcars/actions/runs":
-                return self.json_response(
-                    {"total_count": 1, "workflow_runs": [missed_run]},
-                    headers={
-                        "x-ratelimit-remaining": "5849",
-                        "x-ratelimit-limit": "5850",
-                        "x-ratelimit-reset": str(reset_epoch + 3600),
-                    },
-                )
-            if path == "/repos/jlapenna/agent-lcars/actions/runs/901/jobs":
-                return self.json_response(
-                    {"total_count": 1, "jobs": [workflow_job(id=902)]},
-                    headers={
-                        "x-ratelimit-remaining": "5848",
-                        "x-ratelimit-limit": "5850",
-                        "x-ratelimit-reset": str(reset_epoch + 3600),
-                    },
-                )
-            return self.json_response(
-                {"total_count": 0, "workflow_runs": []},
-                headers={
-                    "x-ratelimit-remaining": "5847",
-                    "x-ratelimit-limit": "5850",
-                    "x-ratelimit-reset": str(reset_epoch + 3600),
-                },
-            )
-
-        api.session.get = Mock(side_effect=fake_get)
-
-        initial_epoch = self.now_epoch
-        poller.refresh_all()
-        self.assertEqual(len(calls), 3)
-
-        # Cycle 2 (T+60): jlapenna/agent-lcars hits HTTP 403 Remaining=0;
-        # jlapenna/homelab skips with zero HTTP calls; supersprinklesracing refreshes.
-        calls.clear()
-        self.advance(60)
-        mode = "exhausted"
-        with self.assertLogs(exporter.LOGGER, level="WARNING") as logs:
-            poller.refresh_all()
-
-        self.assertEqual(
-            [path for path, _ in calls],
-            [
-                "/repos/jlapenna/agent-lcars/actions/runs",
-                "/repos/supersprinklesracing/sprinkles/actions/runs",
-            ],
-        )
-        self.assertTrue(
-            any("skipping jlapenna/homelab" in line for line in logs.output)
-        )
-        metrics = generate_latest(registry).decode()
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_last_success_timestamp_seconds",
-                '{repository="jlapenna/agent-lcars"}',
-            ),
-            initial_epoch,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_last_success_timestamp_seconds",
-                '{repository="jlapenna/homelab"}',
-            ),
-            initial_epoch,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_last_success_timestamp_seconds",
-                '{repository="supersprinklesracing/sprinkles"}',
-            ),
-            initial_epoch + 60,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_poll_errors_total",
-                '{repository="jlapenna/agent-lcars",stage="rate_limit"}',
-            ),
-            1.0,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_poll_errors_total",
-                '{repository="jlapenna/homelab",stage="rate_limit"}',
-            ),
-            1.0,
-        )
-
-        # Cycle 3 (T+120, still before reset T+240): zero HTTP calls for jlapenna/*.
-        calls.clear()
-        self.advance(60)
-        with self.assertLogs(exporter.LOGGER, level="WARNING"):
-            poller.refresh_all()
-
-        self.assertEqual(
-            [path for path, _ in calls],
-            ["/repos/supersprinklesracing/sprinkles/actions/runs"],
-        )
-        metrics = generate_latest(registry).decode()
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_api_requests_total",
-                '{endpoint="runs",owner="jlapenna",status="403"}',
-            ),
-            1.0,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_last_success_timestamp_seconds",
-                '{repository="jlapenna/agent-lcars"}',
-            ),
-            initial_epoch,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_last_success_timestamp_seconds",
-                '{repository="supersprinklesracing/sprinkles"}',
-            ),
-            initial_epoch + 120,
-        )
-
-        # Cycle 4 (T+241, past reset): jlapenna resumes, backfills from
-        # initial_epoch - 15m, and advances last_success_timestamp_seconds.
-        calls.clear()
-        self.advance(121)
-        mode = "recovered"
-        poller.refresh_all()
-        db_metrics.refresh()
-
-        expected_cutoff = datetime.fromtimestamp(initial_epoch - 15 * 60, UTC).replace(
-            microsecond=0
-        )
-        lcars_runs_params = next(
-            params
-            for path, params in calls
-            if path == "/repos/jlapenna/agent-lcars/actions/runs"
-        )
-        self.assertTrue(
-            lcars_runs_params["created"].startswith(
-                expected_cutoff.isoformat(timespec="seconds") + ".."
-            )
-        )
-        metrics = generate_latest(registry).decode()
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_last_success_timestamp_seconds",
-                '{repository="jlapenna/agent-lcars"}',
-            ),
-            self.now_epoch,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_last_success_timestamp_seconds",
-                '{repository="jlapenna/homelab"}',
-            ),
-            self.now_epoch,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_workflow_runs_total",
-                '{conclusion="success",event="push",repository="jlapenna/agent-lcars",workflow="validate"}',
-            ),
-            1.0,
-        )
-
-    def test_zero_remaining_on_200_response_arms_backoff_before_403_and_casefolds_owner(
-        self,
-    ):
-        repositories = ("JLaPenna/Homelab", "jlapenna/agent-lcars")
-        registry = CollectorRegistry()
-        state = exporter.ExporterState(registry)
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=repositories,
-        )
-        api = exporter.GitHubAPI(
-            config,
-            state,
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-        poller = exporter.Poller(
-            config,
-            self.database,
-            api,
-            state,
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        api.session.get = Mock(
-            return_value=self.json_response(
-                {"total_count": 0, "workflow_runs": []},
-                headers={
-                    "X-RateLimit-Remaining": "0",
-                    "X-RateLimit-Reset": str(int(self.now_epoch + 180)),
-                },
-            )
-        )
-
-        with self.assertLogs(exporter.LOGGER, level="WARNING"):
-            poller.refresh_all()
-
-        # First repo spent the final allowed token on HTTP 200 and succeeded;
-        # second repo under the same account (different casing) backed off locally
-        # without issuing a doomed HTTP 403.
-        self.assertEqual(api.session.get.call_count, 1)
-        metrics = generate_latest(registry).decode()
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_last_success_timestamp_seconds",
-                '{repository="JLaPenna/Homelab"}',
-            ),
-            self.now_epoch,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_last_success_timestamp_seconds",
-                '{repository="jlapenna/agent-lcars"}',
-            ),
-            0.0,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_api_requests_total",
-                '{endpoint="runs",owner="jlapenna",status="200"}',
-            ),
-            1.0,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_api_rate_limit_remaining",
-                '{owner="jlapenna"}',
-            ),
-            0.0,
-        )
-        self.assertNotIn('owner="JLaPenna"', metrics)
-
-    def test_retry_after_delta_http_date_clock_skew_fallback_and_ceiling(self):
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=("jlapenna/homelab",),
-        )
-        api = exporter.GitHubAPI(
-            config,
-            exporter.ExporterState(CollectorRegistry()),
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-
-        # 1. Secondary rate limit: Remaining > 0 with Retry-After=90 must wait
-        # 90s rather than locking out until the 40-minute primary reset window.
-        api.session.get = Mock(
-            side_effect=[
-                self.json_response(
-                    {},
-                    status_code=403,
-                    headers={
-                        "X-RateLimit-Remaining": "3500",
-                        "X-RateLimit-Reset": str(int(self.now_epoch + 2400)),
-                        "Retry-After": "90",
-                    },
-                ),
-                self.json_response({"ok": True}),
-            ]
-        )
-        with self.assertRaises(exporter.GitHubRequestError):
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.advance(89)
-        with self.assertRaises(exporter.GitHubRateLimitBackoffError):
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.advance(2)
-        self.assertEqual(
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs"),
-            {"ok": True},
-        )
-        self.assertEqual(api.session.get.call_count, 2)
-
-        # 2. RFC 7231 HTTP-date Retry-After on HTTP 429.
-        target = datetime.fromtimestamp(int(self.now_epoch) + 150, UTC)
-        http_date = target.strftime("%a, %d %b %Y %H:%M:%S GMT")
-        self.now_epoch = float(int(self.now_epoch))
-        api.session.get = Mock(
-            side_effect=[
-                self.json_response(
-                    {},
-                    status_code=429,
-                    headers={"Retry-After": http_date},
-                ),
-                self.json_response({"ok": True}),
-            ]
-        )
-        with self.assertRaises(exporter.GitHubRequestError):
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.advance(149)
-        with self.assertRaises(exporter.GitHubRateLimitBackoffError):
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.advance(2)
-        self.assertEqual(
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs"),
-            {"ok": True},
-        )
-
-        # 3. Clock skew (reset <= now on rate-limited 403) uses bounded minimum
-        # backoff, and runaway Retry-After is capped at MAX_RATE_LIMIT_BACKOFF_SECONDS.
-        api.session.get = Mock(
-            side_effect=[
-                self.json_response(
-                    {},
-                    status_code=403,
-                    headers={
-                        "x-ratelimit-remaining": "0",
-                        "x-ratelimit-reset": str(int(self.now_epoch - 5)),
-                    },
-                ),
-                self.json_response(
-                    {},
-                    status_code=429,
-                    headers={"Retry-After": "999999"},
-                ),
-                self.json_response({"ok": True}),
-            ]
-        )
-        with self.assertRaises(exporter.GitHubRequestError):
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        # Documented contract: 60-second fallback, one-hour ceiling. Literal
-        # values so a changed constant fails here instead of moving the test.
-        self.advance(59)
-        with self.assertRaises(exporter.GitHubRateLimitBackoffError):
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.advance(2)
-        with self.assertRaises(exporter.GitHubRequestError):
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.advance(3599)
-        with self.assertRaises(exporter.GitHubRateLimitBackoffError):
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.advance(2)
-        self.assertEqual(
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs"),
-            {"ok": True},
-        )
-
-    def test_optional_metadata_throttles_caps_and_skips_below_quota_reserve(self):
-        repositories = ("jlapenna/agent-lcars", "supersprinklesracing/sprinkles")
-        registry = CollectorRegistry()
-        state = exporter.ExporterState(registry)
-        db_metrics = exporter.DatabaseMetrics(self.database)
-        registry.register(db_metrics)
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=repositories,
-        )
-        api = exporter.GitHubAPI(
-            config,
-            state,
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-        poller = exporter.Poller(
-            config,
-            self.database,
-            api,
-            state,
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-
-        # Seed a failed pull_request run older than overlap on both owners so PR
-        # rerun rechecks would normally query get_run on each eligible cycle.
-        old_pr_time = datetime.fromtimestamp(self.now_epoch - 3600, UTC).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        for repo, run_id in (
-            ("jlapenna/agent-lcars", 500),
-            ("supersprinklesracing/sprinkles", 600),
-        ):
-            failed_pr = workflow_run(
-                id=run_id,
-                event="pull_request",
-                conclusion="failure",
-                head_branch="feature-x",
-                created_at=old_pr_time,
-                run_started_at=old_pr_time,
-                updated_at=old_pr_time,
-            )
-            self.database.upsert_run(repo, failed_pr)
-            self.database.upsert_jobs(repo, failed_pr, [])
-
-        jlapenna_remaining = "2000"
-        active_lcars = workflow_run(id=1, status="in_progress", conclusion=None)
-        active_sprinkles = workflow_run(id=2, status="in_progress", conclusion=None)
-        concurrency_calls: list[str] = []
-        pr_recheck_calls: list[str] = []
-
-        def fake_get(url, *, params=None, timeout=None, headers=None):
-            path = url.removeprefix(config.api_url)
-            owner = exporter.owner_of(path)
-            rem = jlapenna_remaining if owner == "jlapenna" else "2422"
-            rate_headers = {
-                "x-ratelimit-remaining": rem,
-                "x-ratelimit-reset": str(int(self.now_epoch + 1800)),
-            }
-            if path.endswith("/actions/runs"):
-                run = active_lcars if owner == "jlapenna" else active_sprinkles
-                return self.json_response(
-                    {"total_count": 1, "workflow_runs": [run]}, headers=rate_headers
-                )
-            if path.endswith("/jobs"):
-                job_id = 101 if owner == "jlapenna" else 202
-                return self.json_response(
-                    {
-                        "total_count": 1,
-                        "jobs": [
-                            workflow_job(
-                                id=job_id,
-                                status="queued",
-                                conclusion=None,
-                                started_at=None,
-                                completed_at=None,
-                            )
-                        ],
-                    },
-                    headers=rate_headers,
-                )
-            if path.endswith("/concurrency_groups"):
-                concurrency_calls.append(path)
-                job_id = 101 if owner == "jlapenna" else 202
-                return self.json_response(
-                    {
-                        "concurrency_groups": [
-                            {
-                                "group_name": "ci-main",
-                                "group_members": [{"job_id": job_id}],
-                            }
-                        ]
-                    },
-                    headers=rate_headers,
-                )
-            pr_recheck_calls.append(path)
-            return self.json_response({}, status_code=404, headers=rate_headers)
-
-        api.session.get = Mock(side_effect=fake_get)
-
-        # Cycle 1 (healthy quota): both owners resolve concurrency_groups & recheck PRs.
-        poller.refresh_all()
-        self.assertEqual(
-            concurrency_calls,
-            [
-                "/repos/jlapenna/agent-lcars/actions/runs/1/concurrency_groups",
-                "/repos/supersprinklesracing/sprinkles/actions/runs/2/concurrency_groups",
-            ],
-        )
-        self.assertEqual(
-            pr_recheck_calls,
-            [
-                "/repos/jlapenna/agent-lcars/actions/runs/500",
-                "/repos/supersprinklesracing/sprinkles/actions/runs/600",
-            ],
-        )
-
-        # Cycle 2 (T+60, inside 300s per-run throttle): active runs do NOT re-query
-        # concurrency_groups, and SQLite preserves confirmed "ci-main".
-        concurrency_calls.clear()
-        pr_recheck_calls.clear()
-        self.advance(60)
-        poller.refresh_all()
-        self.assertEqual(concurrency_calls, [])
-        self.assertEqual(
-            self.database.rows(
-                "SELECT concurrency_group FROM jobs WHERE repository = 'jlapenna/agent-lcars' AND id = 101"
-            )[0]["concurrency_group"],
-            "ci-main",
-        )
-
-        # Cycle 3 (T+361, past 300s throttle, but jlapenna drops below 500 reserve):
-        # jlapenna skips BOTH concurrency_groups and PR rerun recheck while keeping
-        # "ci-main" intact; supersprinklesracing runs both normally!
-        jlapenna_remaining = "499"
-        self.advance(301)
-        poller.refresh_all()
-        self.assertEqual(
-            concurrency_calls,
-            ["/repos/supersprinklesracing/sprinkles/actions/runs/2/concurrency_groups"],
-        )
-        self.assertEqual(
-            pr_recheck_calls,
-            ["/repos/supersprinklesracing/sprinkles/actions/runs/600"],
-        )
-        self.assertEqual(
-            self.database.rows(
-                "SELECT concurrency_group FROM jobs WHERE repository = 'jlapenna/agent-lcars' AND id = 101"
-            )[0]["concurrency_group"],
-            "ci-main",
-        )
-
-        # Per-cycle cap: with 3 active runs and cap=2, at most 2 concurrency_groups
-        # calls fire in one cycle, and the unqueried active job stays "unknown" (not "none").
-        jlapenna_remaining = "2000"
-        burst_runs = [
-            workflow_run(id=10 + idx, status="queued", conclusion=None)
-            for idx in range(3)
-        ]
-
-        def burst_get(url, *, params=None, timeout=None, headers=None):
-            path = url.removeprefix(config.api_url)
-            rate_headers = {
-                "x-ratelimit-remaining": "2000",
-                "x-ratelimit-reset": str(int(self.now_epoch + 1800)),
-            }
-            if path == "/repos/jlapenna/agent-lcars/actions/runs":
-                return self.json_response(
-                    {"total_count": 3, "workflow_runs": burst_runs},
-                    headers=rate_headers,
-                )
-            if path.endswith("/jobs"):
-                run_id = int(path.split("/")[-2])
-                return self.json_response(
-                    {
-                        "total_count": 1,
-                        "jobs": [
-                            workflow_job(
-                                id=1000 + run_id,
-                                status="queued",
-                                conclusion=None,
-                                started_at=None,
-                                completed_at=None,
-                            )
-                        ],
-                    },
-                    headers=rate_headers,
-                )
-            if path.endswith("/concurrency_groups"):
-                concurrency_calls.append(path)
-                run_id = int(path.split("/")[-2])
-                return self.json_response(
-                    {
-                        "concurrency_groups": [
-                            {
-                                "group_name": f"group-{run_id}",
-                                "group_members": [{"job_id": 1000 + run_id}],
-                            }
-                        ]
-                    },
-                    headers=rate_headers,
-                )
-            return self.json_response({}, status_code=404, headers=rate_headers)
-
-        api.session.get = Mock(side_effect=burst_get)
-        concurrency_calls.clear()
-        self.advance(301)
-        with patch.object(exporter, "CONCURRENCY_GROUPS_PER_CYCLE_LIMIT", 2):
-            poller.refresh_repository("jlapenna/agent-lcars")
-
-        self.assertEqual(len(concurrency_calls), 2)
-        stored = {
-            row["id"]: row["concurrency_group"]
-            for row in self.database.rows(
-                "SELECT id, concurrency_group FROM jobs WHERE id >= 1010"
-            )
-        }
-        self.assertEqual(
-            stored,
-            {1010: "group-10", 1011: "group-11", 1012: "unknown"},
-        )
-
-    def test_saturated_concurrency_group_cap_preserves_confirmed_and_sentinels(self):
-        repository = "jlapenna/agent-lcars"
-        active_run = workflow_run(id=77, status="in_progress", conclusion=None)
-        self.database.upsert_run(repository, active_run)
-
-        # Seed sentinel rows first, reload from SQLite to prove _initialize_schema
-        # does not count "none"/"unknown" against MAX_CONCURRENCY_GROUP_LABELS_PER_WORKFLOW,
-        # then saturate all 100 dynamic slots (ci-pr-1 .. ci-pr-100).
-        self.database.upsert_jobs(
-            repository,
-            active_run,
-            [
-                workflow_job(
-                    id=900,
-                    status="queued",
-                    conclusion=None,
-                    started_at=None,
-                    completed_at=None,
-                )
-            ],
-            [],
-        )
-        completed_seed = workflow_run(id=76)
-        self.database.upsert_run(repository, completed_seed)
-        self.database.upsert_jobs(
-            repository, completed_seed, [workflow_job(id=901)], None
-        )
-
-        database_path = str(Path(self.temporary_directory.name) / "actions.db")
-        self.database.close()
-        self.database = exporter.Database(database_path)
-        self.addCleanup(self.database.close)
-
-        saturated_jobs = [
-            workflow_job(
-                id=idx,
-                status="queued",
-                conclusion=None,
-                started_at=None,
-                completed_at=None,
-            )
-            for idx in range(1, 101)
-        ]
-        saturated_groups = [
-            {"group_name": f"ci-pr-{idx}", "group_members": [{"job_id": idx}]}
-            for idx in range(1, 101)
-        ]
-        self.database.upsert_jobs(
-            repository, active_run, saturated_jobs, saturated_groups
-        )
-        self.assertEqual(
-            self.database.rows(
-                "SELECT concurrency_group FROM jobs WHERE repository = ? AND id = 100",
-                (repository,),
-            )[0]["concurrency_group"],
-            "ci-pr-100",
-        )
-
-        # Throttled/skipped optional poll (`groups=[]`) after cap saturation:
-        # confirmed "ci-pr-1" stays "ci-pr-1" (not overwritten with "__other__")
-        # and newly seen active job 200 gets "unknown" (not "__other__").
-        self.database.upsert_jobs(
-            repository,
-            active_run,
-            [
-                workflow_job(
-                    id=1,
-                    status="in_progress",
-                    conclusion=None,
-                    started_at="2026-08-05T04:19:39Z",
-                    completed_at=None,
-                ),
-                workflow_job(
-                    id=200,
-                    status="queued",
-                    conclusion=None,
-                    started_at=None,
-                    completed_at=None,
-                ),
-            ],
-            [],
-        )
-        # Explicit 101st dynamic group still maps to "__other__".
-        self.database.upsert_jobs(
-            repository,
-            active_run,
-            [
-                workflow_job(
-                    id=201,
-                    status="queued",
-                    conclusion=None,
-                    started_at=None,
-                    completed_at=None,
-                )
-            ],
-            [{"group_name": "ci-pr-101", "group_members": [{"job_id": 201}]}],
-        )
-        active_groups = {
-            row["id"]: row["concurrency_group"]
-            for row in self.database.rows(
-                "SELECT id, concurrency_group FROM jobs WHERE repository = ? AND id IN (1, 200, 201)",
-                (repository,),
-            )
-        }
-        self.assertEqual(
-            active_groups,
-            {1: "ci-pr-1", 200: "unknown", 201: "__other__"},
-        )
-
-        # Completion poll (`groups=None`) after cap saturation: confirmed "ci-pr-1"
-        # stays "ci-pr-1", while unresolved/new completed jobs record "none" (not "__other__").
-        completed_run = workflow_run(id=77)
-        self.database.upsert_run(repository, completed_run)
-        self.database.upsert_jobs(
-            repository,
-            completed_run,
-            [
-                workflow_job(id=1),
-                workflow_job(id=200),
-                workflow_job(id=202),
-            ],
-            None,
-        )
-        final_groups = {
-            row["id"]: row["concurrency_group"]
-            for row in self.database.rows(
-                "SELECT id, concurrency_group FROM jobs WHERE repository = ? AND id IN (1, 200, 202)",
-                (repository,),
-            )
-        }
-        self.assertEqual(
-            final_groups,
-            {1: "ci-pr-1", 200: "none", 202: "none"},
-        )
-
-    def test_zero_remaining_200_with_skewed_or_missing_reset_applies_minimum_backoff(
-        self,
-    ):
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=("jlapenna/homelab",),
-        )
-        api = exporter.GitHubAPI(
-            config,
-            exporter.ExporterState(CollectorRegistry()),
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-        api.session.get = Mock(
-            side_effect=[
-                self.json_response(
-                    {"ok": True},
-                    status_code=200,
-                    headers={
-                        "X-RateLimit-Remaining": "0",
-                        "X-RateLimit-Reset": str(int(self.now_epoch - 10)),
-                    },
-                ),
-                self.json_response({"ok": True}),
-            ]
-        )
-
-        self.assertEqual(
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs"),
-            {"ok": True},
-        )
-        self.advance(59)
-        with self.assertRaises(exporter.GitHubRateLimitBackoffError):
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.assertEqual(api.session.get.call_count, 1)
-
-        self.advance(2)
-        self.assertEqual(
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs"),
-            {"ok": True},
-        )
-        self.assertEqual(api.session.get.call_count, 2)
-
-    def test_503_retry_after_does_not_arm_owner_quota_backoff_unless_zero_remaining(
-        self,
-    ):
-        repositories = ("jlapenna/agent-lcars", "jlapenna/homelab")
-        registry = CollectorRegistry()
-        state = exporter.ExporterState(registry)
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=repositories,
-        )
-        api = exporter.GitHubAPI(
-            config,
-            state,
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-        poller = exporter.Poller(
-            config,
-            self.database,
-            api,
-            state,
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-
-        active_run = workflow_run(id=1, status="in_progress", conclusion=None)
-        calls: list[str] = []
-
-        def fake_get(url, *, params=None, timeout=None, headers=None):
-            path = url.removeprefix(config.api_url)
-            calls.append(path)
-            rate_headers = {
-                "X-RateLimit-Remaining": "4000",
-                "X-RateLimit-Reset": str(int(self.now_epoch + 1800)),
-            }
-            if path == "/repos/jlapenna/agent-lcars/actions/runs":
-                return self.json_response(
-                    {"total_count": 1, "workflow_runs": [active_run]},
-                    headers=rate_headers,
-                )
-            if path == "/repos/jlapenna/agent-lcars/actions/runs/1/jobs":
-                return self.json_response(
-                    {
-                        "total_count": 1,
-                        "jobs": [
-                            workflow_job(
-                                id=101,
-                                status="queued",
-                                conclusion=None,
-                                started_at=None,
-                                completed_at=None,
-                            )
-                        ],
-                    },
-                    headers=rate_headers,
-                )
-            if path == "/repos/jlapenna/agent-lcars/actions/runs/1/concurrency_groups":
-                return self.json_response(
-                    {"message": "Service Unavailable"},
-                    status_code=503,
-                    headers={**rate_headers, "Retry-After": "300"},
-                )
-            return self.json_response(
-                {"total_count": 0, "workflow_runs": []},
-                headers=rate_headers,
-            )
-
-        api.session.get = Mock(side_effect=fake_get)
-        with self.assertLogs(exporter.LOGGER, level="WARNING"):
-            poller.refresh_all()
-
-        # Both jlapenna repositories completed their core refresh; the 503 on
-        # optional concurrency_groups did not block homelab or record rate_limit.
-        self.assertIn("/repos/jlapenna/homelab/actions/runs", calls)
-        metrics = generate_latest(registry).decode()
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_last_success_timestamp_seconds",
-                '{repository="jlapenna/agent-lcars"}',
-            ),
-            self.now_epoch,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_last_success_timestamp_seconds",
-                '{repository="jlapenna/homelab"}',
-            ),
-            self.now_epoch,
-        )
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_poll_errors_total",
-                '{repository="jlapenna/agent-lcars",stage="concurrency_groups"}',
-            ),
-            1.0,
-        )
-        self.assertNotIn('stage="rate_limit"', metrics)
-
-        # Independent zero-quota handling still arms backoff even on a 503.
-        api.session.get = Mock(
-            return_value=self.json_response(
-                {},
-                status_code=503,
-                headers={
-                    "X-RateLimit-Remaining": "0",
-                    "X-RateLimit-Reset": str(int(self.now_epoch + 120)),
-                },
-            )
-        )
-        with self.assertRaises(exporter.GitHubRequestError) as raised:
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.assertTrue(raised.exception.rate_limited)
-        with self.assertRaises(exporter.GitHubRateLimitBackoffError):
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-
-    def test_secondary_rate_limit_403_without_retry_after_backs_off_while_permission_403_does_not(
-        self,
-    ):
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=("jlapenna/homelab",),
-        )
-        api = exporter.GitHubAPI(
-            config,
-            exporter.ExporterState(CollectorRegistry()),
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-
-        permission_403 = Mock(
-            status_code=403,
-            headers={
-                "X-RateLimit-Remaining": "4000",
-                "X-RateLimit-Reset": str(int(self.now_epoch + 2400)),
-            },
-        )
-        permission_403.raise_for_status.side_effect = requests.HTTPError(
-            "403", response=permission_403
-        )
-        permission_403.json.return_value = {
-            "message": "Resource not accessible by integration",
-            "documentation_url": "https://docs.github.com/rest/actions/workflow-runs",
-        }
-
-        secondary_403 = Mock(
-            status_code=403,
-            headers={
-                "X-RateLimit-Remaining": "4000",
-                "X-RateLimit-Reset": str(int(self.now_epoch + 2400)),
-            },
-        )
-        secondary_403.raise_for_status.side_effect = requests.HTTPError(
-            "403", response=secondary_403
-        )
-        secondary_403.json.return_value = {
-            "message": (
-                "You have exceeded a secondary rate limit. Please wait a few "
-                "minutes before you try again."
-            ),
-            "documentation_url": (
-                "https://docs.github.com/rest/overview/resources-in-the-rest-api"
-                "#secondary-rate-limits"
-            ),
-        }
-
-        api.session.get = Mock(
-            side_effect=[
-                permission_403,
-                secondary_403,
-                self.json_response({"ok": True}),
-            ]
-        )
-
-        # Ordinary permission 403 is not rate-limited and leaves the owner unblocked.
-        with self.assertRaises(exporter.GitHubRequestError) as perm_err:
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.assertFalse(perm_err.exception.rate_limited)
-
-        # Secondary-limit 403 without Retry-After is recognized and arms the 60s fallback.
-        with self.assertRaises(exporter.GitHubRequestError) as sec_err:
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.assertTrue(sec_err.exception.rate_limited)
-
-        self.advance(59)
-        with self.assertRaises(exporter.GitHubRateLimitBackoffError):
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
-        self.assertEqual(api.session.get.call_count, 2)
-
-        self.advance(2)
-        self.assertEqual(
-            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs"),
-            {"ok": True},
-        )
-
-    def test_rerun_probes_recheck_quota_reserve_per_probe_and_keep_deferred_order(
-        self,
-    ):
-        repository = "jlapenna/agent-lcars"
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=(repository,),
-        )
-        api = exporter.GitHubAPI(
-            config,
-            exporter.ExporterState(CollectorRegistry()),
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-        poller = exporter.Poller(
-            config,
-            self.database,
-            api,
-            exporter.ExporterState(CollectorRegistry()),
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-
-        # Seed 3 failed PR runs older than overlap (newest first: 503, 502, 501)
-        # plus a core run-attempt gap (700 attempt 2 missing attempt 1).
-        for offset_hours, run_id, branch in (
-            (3, 501, "pr-1"),
-            (2, 502, "pr-2"),
-            (1, 503, "pr-3"),
-        ):
-            ts = datetime.fromtimestamp(
-                self.now_epoch - offset_hours * 3600, UTC
-            ).strftime("%Y-%m-%dT%H:%M:%SZ")
-            pr_run = workflow_run(
-                id=run_id,
-                event="pull_request",
-                conclusion="failure",
-                head_branch=branch,
-                created_at=ts,
-                run_started_at=ts,
-                updated_at=ts,
-            )
-            self.database.upsert_run(repository, pr_run)
-            self.database.upsert_jobs(repository, pr_run, [])
-
-        gap_ts = datetime.fromtimestamp(self.now_epoch - 3600, UTC).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        gap_run = workflow_run(
-            id=700,
-            run_attempt=2,
-            created_at=gap_ts,
-            run_started_at=gap_ts,
-            updated_at=gap_ts,
-        )
-        self.database.upsert_run(repository, gap_run)
-        self.database.upsert_jobs(repository, gap_run, [])
-
-        probed_reruns: list[int] = []
-        attempt_calls: list[tuple[int, int]] = []
-        remaining_values = iter(["500", "499", "498"])
-
-        def first_cycle_get(url, *, params=None, timeout=None, headers=None):
-            path = url.removeprefix(config.api_url)
-            rate_headers = {
-                "X-RateLimit-Remaining": next(remaining_values),
-                "X-RateLimit-Reset": str(int(self.now_epoch + 1800)),
-            }
-            if path.endswith("/actions/runs"):
-                return self.json_response(
-                    {"total_count": 0, "workflow_runs": []}, headers=rate_headers
-                )
-            if "/attempts/" in path:
-                parts = path.split("/")
-                attempt_calls.append((int(parts[-3]), int(parts[-1])))
-                return self.json_response(
-                    workflow_run(
-                        id=700,
-                        run_attempt=1,
-                        conclusion="failure",
-                        created_at=gap_ts,
-                        run_started_at=gap_ts,
-                        updated_at=gap_ts,
-                    ),
-                    headers=rate_headers,
-                )
-            run_id = int(path.split("/")[-1])
-            probed_reruns.append(run_id)
-            return self.json_response({}, status_code=404, headers=rate_headers)
-
-        api.session.get = Mock(side_effect=first_cycle_get)
-        poller.refresh_repository(repository)
-
-        # Probe 1 (503) dropped remaining to 499, halting 502 and 501 immediately
-        # while still completing core attempt-gap collection.
-        self.assertEqual(probed_reruns, [503])
-        self.assertEqual(attempt_calls, [(700, 1)])
-
-        # Once quota recovers, deferred 502 and 501 are probed ahead of 503.
-        probed_reruns.clear()
-        self.advance(60)
-
-        def recovered_get(url, *, params=None, timeout=None, headers=None):
-            path = url.removeprefix(config.api_url)
-            rate_headers = {
-                "X-RateLimit-Remaining": "5000",
-                "X-RateLimit-Reset": str(int(self.now_epoch + 3600)),
-            }
-            if path.endswith("/actions/runs"):
-                return self.json_response(
-                    {"total_count": 0, "workflow_runs": []}, headers=rate_headers
-                )
-            run_id = int(path.split("/")[-1])
-            probed_reruns.append(run_id)
-            return self.json_response({}, status_code=404, headers=rate_headers)
-
-        api.session.get = Mock(side_effect=recovered_get)
-        poller.refresh_repository(repository)
-        self.assertEqual(probed_reruns, [502, 501, 503])
-
-    def test_failed_pr_rerun_probe_503_preserves_core_collection_and_five_minute_cooldown(
-        self,
-    ):
-        repository = "jlapenna/agent-lcars"
-        registry = CollectorRegistry()
-        state = exporter.ExporterState(registry)
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=(repository,),
-        )
-        api = exporter.GitHubAPI(
-            config,
-            state,
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-        poller = exporter.Poller(
-            config,
-            self.database,
-            api,
-            state,
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-
-        old_ts = datetime.fromtimestamp(self.now_epoch - 3600, UTC).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        failed_pr = workflow_run(
-            id=501,
-            event="pull_request",
-            conclusion="failure",
-            head_branch="pr-1",
-            created_at=old_ts,
-            run_started_at=old_ts,
-            updated_at=old_ts,
-        )
-        self.database.upsert_run(repository, failed_pr)
-        self.database.upsert_jobs(repository, failed_pr, [])
-
-        gap_run = workflow_run(
-            id=700,
-            run_attempt=2,
-            created_at=old_ts,
-            run_started_at=old_ts,
-            updated_at=old_ts,
-        )
-        self.database.upsert_run(repository, gap_run)
-        self.database.upsert_jobs(repository, gap_run, [])
-
-        rerun_probes: list[int] = []
-        attempt_repairs: list[tuple[int, int]] = []
-
-        def fake_get(url, *, params=None, timeout=None, headers=None):
-            path = url.removeprefix(config.api_url)
-            rate_headers = {
-                "X-RateLimit-Remaining": "4000",
-                "X-RateLimit-Reset": str(int(self.now_epoch + 1800)),
-            }
-            if path.endswith("/actions/runs"):
-                return self.json_response(
-                    {"total_count": 0, "workflow_runs": []}, headers=rate_headers
-                )
-            if "/attempts/" in path:
-                parts = path.split("/")
-                attempt_repairs.append((int(parts[-3]), int(parts[-1])))
-                return self.json_response(
-                    workflow_run(
-                        id=700,
-                        run_attempt=1,
-                        conclusion="failure",
-                        created_at=old_ts,
-                        run_started_at=old_ts,
-                        updated_at=old_ts,
-                    ),
-                    headers=rate_headers,
-                )
-            run_id = int(path.split("/")[-1])
-            rerun_probes.append(run_id)
-            return self.json_response(
-                {"message": "Service Unavailable"},
-                status_code=503,
-                headers=rate_headers,
-            )
-
-        api.session.get = Mock(side_effect=fake_get)
-
-        # Across five 60-second polls, the optional rerun 503 never aborts core
-        # attempt-gap repair or freshness, and respects the 5-minute cooldown.
-        for poll_index in range(5):
-            if poll_index > 0:
-                self.advance(60)
-            if poll_index == 0:
-                with self.assertLogs(exporter.LOGGER, level="WARNING"):
-                    poller.refresh_all()
-            else:
-                poller.refresh_all()
-            metrics = generate_latest(registry).decode()
-            self.assertEqual(
-                exported_metric_value(
-                    metrics,
-                    "github_actions_exporter_last_success_timestamp_seconds",
-                    f'{{repository="{repository}"}}',
-                ),
-                self.now_epoch,
-            )
-
-        self.assertEqual(attempt_repairs, [(700, 1)])
-        self.assertEqual(rerun_probes, [501])
-        metrics = generate_latest(registry).decode()
-        self.assertEqual(
-            exported_metric_value(
-                metrics,
-                "github_actions_exporter_poll_errors_total",
-                f'{{repository="{repository}",stage="pull_request_recheck"}}',
-            ),
-            1.0,
-        )
-
-        # Once the 5-minute cooldown elapses, the candidate is probed again.
-        self.advance(61)
-        with self.assertLogs(exporter.LOGGER, level="WARNING"):
-            poller.refresh_all()
-        self.assertEqual(rerun_probes, [501, 501])
-
-    def test_later_same_owner_repository_gets_fair_and_rotating_concurrency_group_share(
-        self,
-    ):
-        repositories = ("jlapenna/busy-repo", "jlapenna/later-repo")
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=repositories,
-        )
-        api = exporter.GitHubAPI(
-            config,
-            exporter.ExporterState(CollectorRegistry()),
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-        poller = exporter.Poller(
-            config,
-            self.database,
-            api,
-            exporter.ExporterState(CollectorRegistry()),
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-
-        busy_runs = [
-            workflow_run(id=100 + idx, status="in_progress", conclusion=None)
-            for idx in range(20)
-        ]
-        later_runs = [
-            workflow_run(id=300 + idx, status="in_progress", conclusion=None)
-            for idx in range(2)
-        ]
-        group_calls_by_repo: dict[str, list[int]] = {
-            "jlapenna/busy-repo": [],
-            "jlapenna/later-repo": [],
-        }
-
-        def fair_get(url, *, params=None, timeout=None, headers=None):
-            path = url.removeprefix(config.api_url)
-            rate_headers = {
-                "X-RateLimit-Remaining": "4000",
-                "X-RateLimit-Reset": str(int(self.now_epoch + 1800)),
-            }
-            repo = "/".join(path.split("/")[2:4])
-            if path.endswith("/actions/runs"):
-                runs = busy_runs if repo == "jlapenna/busy-repo" else later_runs
-                return self.json_response(
-                    {"total_count": len(runs), "workflow_runs": runs},
-                    headers=rate_headers,
-                )
-            if path.endswith("/jobs"):
-                run_id = int(path.split("/")[-2])
-                return self.json_response(
-                    {
-                        "total_count": 1,
-                        "jobs": [
-                            workflow_job(
-                                id=run_id * 10,
-                                status="queued",
-                                conclusion=None,
-                                started_at=None,
-                                completed_at=None,
-                            )
-                        ],
-                    },
-                    headers=rate_headers,
-                )
-            if path.endswith("/concurrency_groups"):
-                run_id = int(path.split("/")[-2])
-                group_calls_by_repo[repo].append(run_id)
-                return self.json_response(
-                    {
-                        "concurrency_groups": [
-                            {
-                                "group_name": f"cg-{run_id}",
-                                "group_members": [{"job_id": run_id * 10}],
-                            }
-                        ]
-                    },
-                    headers=rate_headers,
-                )
-            return self.json_response({}, status_code=404, headers=rate_headers)
-
-        api.session.get = Mock(side_effect=fair_get)
-        poller.refresh_all()
-
-        # busy-repo gets its 10-slot share rather than all 20, so later-repo
-        # resolves both of its active runs on the very first cycle.
-        self.assertEqual(len(group_calls_by_repo["jlapenna/busy-repo"]), 10)
-        self.assertEqual(group_calls_by_repo["jlapenna/later-repo"], [300, 301])
-
-        # With limit=1 across 2 repositories, remainder priority rotates each
-        # cycle so later-repo gets the slot on the second cycle even while busy-repo
-        # still has unresolved active runs.
-        group_calls_by_repo["jlapenna/busy-repo"].clear()
-        group_calls_by_repo["jlapenna/later-repo"].clear()
-        later_runs.append(workflow_run(id=302, status="in_progress", conclusion=None))
-        self.advance(60)
-        with patch.object(exporter, "CONCURRENCY_GROUPS_PER_CYCLE_LIMIT", 1):
-            poller.refresh_all()
-            self.assertEqual(len(group_calls_by_repo["jlapenna/busy-repo"]), 0)
-            self.assertEqual(group_calls_by_repo["jlapenna/later-repo"], [302])
-
-    def test_concurrency_group_slots_reach_oldest_active_run_before_repeats(self):
-        repository = "jlapenna/busy-repo"
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=(repository,),
-        )
-        api = exporter.GitHubAPI(
-            config,
-            exporter.ExporterState(CollectorRegistry()),
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-        poller = exporter.Poller(
-            config,
-            self.database,
-            api,
-            exporter.ExporterState(CollectorRegistry()),
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        # 101 active runs listed newest-first, more than five polls of slots.
-        runs = [
-            workflow_run(id=1000 - idx, status="in_progress", conclusion=None)
-            for idx in range(101)
-        ]
-        oldest = runs[-1]["id"]
-        probed: list[int] = []
-
-        def busy_get(url, *, params=None, timeout=None, headers=None):
-            path = url.removeprefix(config.api_url)
-            rate_headers = {
-                "X-RateLimit-Remaining": "4000",
-                "X-RateLimit-Reset": str(int(self.now_epoch + 1800)),
-            }
-            if path.endswith("/actions/runs"):
-                return self.json_response(
-                    {"total_count": len(runs), "workflow_runs": runs},
-                    headers=rate_headers,
-                )
-            run_id = int(path.split("/")[-2])
-            if path.endswith("/jobs"):
-                return self.json_response(
-                    {
-                        "total_count": 1,
-                        "jobs": [
-                            workflow_job(
-                                id=run_id * 10,
-                                status="queued",
-                                conclusion=None,
-                                started_at=None,
-                                completed_at=None,
-                            )
-                        ],
-                    },
-                    headers=rate_headers,
-                )
-            if path.endswith("/concurrency_groups"):
-                probed.append(run_id)
-                return self.json_response(
-                    {
-                        "concurrency_groups": [
-                            {
-                                "group_name": "ci-main",
-                                "group_members": [{"job_id": run_id * 10}],
-                            }
-                        ]
-                    },
-                    headers=rate_headers,
-                )
-            return self.json_response({}, status_code=404, headers=rate_headers)
-
-        api.session.get = Mock(side_effect=busy_get)
-        per_poll: list[list[int]] = []
-        for _ in range(12):
-            probed.clear()
-            poller.refresh_all()
-            per_poll.append(list(probed))
-            self.advance(60)
-
-        self.assertTrue(all(len(calls) == 20 for calls in per_poll))
-        # Every active run gets a lookup before any run repeats one: the
-        # oldest is reached by the sixth one-minute poll, not starved by the
-        # newest runs whose five-minute timers keep expiring first.
-        first_five = [run_id for calls in per_poll[:5] for run_id in calls]
-        self.assertEqual(len(set(first_five)), 100)
-        self.assertNotIn(oldest, first_five)
-        self.assertIn(oldest, per_poll[5])
-        rows = self.database.connection.execute(
-            "SELECT concurrency_group FROM jobs WHERE id = ?", (oldest * 10,)
-        ).fetchall()
-        self.assertEqual([row["concurrency_group"] for row in rows], ["ci-main"])
-
-    def test_fresh_low_remaining_without_reset_header_respects_optional_reserve(
-        self,
-    ):
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=("jlapenna/homelab",),
-        )
-        api = exporter.GitHubAPI(
-            config,
-            exporter.ExporterState(CollectorRegistry()),
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-        path = "/repos/jlapenna/homelab/actions/runs"
-        api.session.get = Mock(
-            side_effect=[
-                self.json_response(
-                    {"ok": True},
-                    headers={
-                        "x-ratelimit-remaining": "4000",
-                        "x-ratelimit-reset": str(int(self.now_epoch + 60)),
-                    },
-                ),
-                # The old window has reset; the next count is fresh and low
-                # but its reset header is missing or malformed.
-                self.json_response(
-                    {"ok": True}, headers={"x-ratelimit-remaining": "499"}
-                ),
-                self.json_response(
-                    {"ok": True},
-                    headers={
-                        "x-ratelimit-remaining": "499",
-                        "x-ratelimit-reset": "not-a-number",
-                    },
-                ),
-            ]
-        )
-        api.get(path, endpoint="runs")
-        self.assertTrue(api.has_optional_quota("jlapenna"))
-        self.advance(120)
-        api.get(path, endpoint="runs")
-        self.assertFalse(api.has_optional_quota("jlapenna"))
-        api.get(path, endpoint="runs")
-        self.assertFalse(api.has_optional_quota("jlapenna"))
-
-    def test_out_of_range_reset_header_still_raises_backoff_error(self):
-        config = exporter.Config(
-            credentials=exporter.StaticCredentials("test"),
-            repositories=("jlapenna/homelab",),
-        )
-        api = exporter.GitHubAPI(
-            config,
-            exporter.ExporterState(CollectorRegistry()),
-            clock=lambda: self.now_epoch,
-            monotonic=lambda: self.now_monotonic,
-        )
-        self.addCleanup(api.close)
-        path = "/repos/jlapenna/homelab/actions/runs"
-        api.session.get = Mock(
-            return_value=self.json_response(
-                {},
-                status_code=403,
-                headers={
-                    "x-ratelimit-remaining": "0",
-                    "x-ratelimit-reset": str(10**12),
-                },
-            )
-        )
-        with self.assertRaises(exporter.GitHubRequestError):
-            api.get(path, endpoint="runs")
-        with self.assertRaises(exporter.GitHubRateLimitBackoffError) as raised:
-            api.get(path, endpoint="runs")
-        self.assertIn(f"epoch {10**12}", str(raised.exception))
-        api.session.get.assert_called_once()
-
-
-class InstallationReinstallTests(unittest.TestCase):
-    """A reinstall issues a new installation id; the process can outlive it."""
-
-    def setUp(self):
-        self.pem = _test_private_key_pem()
-
-    def credentials(self):
-        return exporter.AppCredentials("Iv23test", self.pem, "https://api.github.com")
-
-    @staticmethod
-    def expiry(seconds_ahead):
-        moment = datetime.now(UTC) + timedelta(seconds=seconds_ahead)
-        return moment.isoformat().replace("+00:00", "Z")
-
-    def test_a_stale_installation_id_is_looked_up_again(self):
-        credentials = self.credentials()
-        installation_ids = [1, 2]
-        posts = []
-
-        def request(method, path, bearer):
-            if method == "GET":
-                return {"id": installation_ids[0]}
-            posts.append(path)
-            if path == "/app/installations/1/access_tokens":
-                raise requests_error(404)
-            return {"token": "fresh", "expires_at": self.expiry(3600)}
-
-        with patch.object(credentials, "_request", side_effect=request):
-            credentials._installations["jlapenna"] = 1
-            installation_ids[0] = 2
-            header = credentials.authorization("jlapenna")
-
-        self.assertEqual(header, "Bearer fresh")
-        self.assertEqual(
-            posts,
-            [
-                "/app/installations/1/access_tokens",
-                "/app/installations/2/access_tokens",
-            ],
-        )
-
-    def test_a_genuinely_broken_app_is_not_retried_forever(self):
-        # One re-lookup, then the error propagates: a tight retry loop against
-        # a dead App would burn quota and hide the real failure.
-        credentials = self.credentials()
-        attempts = []
-
-        def request(method, path, bearer):
-            if method == "GET":
-                return {"id": 1}
-            attempts.append(path)
-            raise requests_error(404)
-
-        with (
-            patch.object(credentials, "_request", side_effect=request),
-            self.assertRaises(requests.HTTPError),
-        ):
-            credentials.authorization("jlapenna")
-
-        self.assertEqual(len(attempts), 2)
