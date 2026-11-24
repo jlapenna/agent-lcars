@@ -13,6 +13,7 @@ import {
 import { logger } from '@agent-lcars/logging';
 import {
   type GithubAnchor,
+  type GithubAnchorProjection,
   isLive,
   type Orchestrator,
   type OrchestratorStore,
@@ -36,6 +37,14 @@ import {
   type DrainOutboxResult,
   wakeDeliveryMonitor,
 } from './orchestrator-dispatch';
+import {
+  PR_REMEDIATION_STALL_AFTER_MS,
+  prRemediationErrorReason,
+  PrRemediationGraphqlError,
+  type PrRemediationTrigger,
+  recordPrRemediationCensus,
+  recordPrRemediationOutcome,
+} from './pr-remediation-observability';
 import {
   detectPullRequestAuthorPipeline,
   isAutomatedReviewExcludedAuthor,
@@ -254,16 +263,24 @@ async function graphql<T>(
   if (!response.ok) {
     throw new Error(`PR remediation GraphQL read failed (${response.status})`);
   }
-  const payload = z
+  // GitHub answers rate limits and query errors with HTTP 200, an `errors`
+  // array and no `data`; report those before validating `data`.
+  const envelope = z
     .object({
-      errors: z.array(z.unknown()).optional(),
-      data: schema,
+      errors: z
+        .array(z.object({ type: z.string().max(64).optional() }).loose())
+        .optional(),
+      data: z.unknown().optional(),
     })
     .parse(await response.json());
-  if (payload.errors?.length) {
-    throw new Error('PR remediation GraphQL read returned errors');
+  if (envelope.errors?.length) {
+    throw new PrRemediationGraphqlError([
+      ...new Set(
+        envelope.errors.slice(0, 10).map((error) => error.type ?? 'unknown'),
+      ),
+    ]);
   }
-  return payload.data;
+  return schema.parse(envelope.data);
 }
 
 const PR_SNAPSHOT_QUERY = `
@@ -555,11 +572,51 @@ function buildRemediationContext(input: {
 export async function reconcilePullRequestRemediation(
   deps: PrRemediationDeps,
   anchor: GithubAnchor,
-  options?: {
-    afterRun?: Run;
-    waitForMergeability?: boolean;
-    wakeDelivery?: boolean;
-  },
+  options?: PrRemediationOptions,
+): Promise<PrRemediationResult> {
+  const trigger: PrRemediationTrigger =
+    options?.trigger ??
+    (options?.afterRun === undefined ? 'webhook' : 'run-settled');
+  let result: PrRemediationResult;
+  try {
+    result = await reconcilePullRequestRemediationOnce(deps, anchor, options);
+  } catch (error) {
+    recordPrRemediationOutcome({
+      trigger,
+      outcome: 'error',
+      reason: prRemediationErrorReason(error),
+      repo: anchor.repo,
+      number: anchor.issue,
+      ...(error instanceof PrRemediationGraphqlError
+        ? { graphqlErrorTypes: error.types }
+        : {}),
+    });
+    throw error;
+  }
+  // Out-of-scope repositories are not remediation checks.
+  if (result.action !== 'ignored' || result.reason !== 'wrong-repo') {
+    recordPrRemediationOutcome({
+      trigger,
+      outcome: result.action === 'ignored' ? 'skipped' : result.action,
+      reason: result.action === 'ignored' ? result.reason : result.outcome.kind,
+      repo: anchor.repo,
+      number: anchor.issue,
+    });
+  }
+  return result;
+}
+
+interface PrRemediationOptions {
+  afterRun?: Run;
+  waitForMergeability?: boolean;
+  wakeDelivery?: boolean;
+  trigger?: PrRemediationTrigger;
+}
+
+async function reconcilePullRequestRemediationOnce(
+  deps: PrRemediationDeps,
+  anchor: GithubAnchor,
+  options?: PrRemediationOptions,
 ): Promise<PrRemediationResult> {
   if (!isControlPlaneRepository(anchor.repo)) {
     return { action: 'ignored', reason: 'wrong-repo' };
@@ -956,7 +1013,10 @@ export async function reconcileMergedPullRequestConflicts(
       await reconcilePullRequestRemediation(
         deps,
         { repo: input.repo, issue: pr.number },
-        { waitForMergeability: pr.mergeable === 'UNKNOWN' },
+        {
+          waitForMergeability: pr.mergeable === 'UNKNOWN',
+          trigger: 'merge-sweep',
+        },
       );
     } catch (error) {
       logger.warn(
@@ -983,6 +1043,7 @@ export async function reconcileOpenPullRequestRemediations(
   const projections: Awaited<
     ReturnType<OrchestratorStore['listOpenGithubAnchorProjections']>
   > = [];
+  let projectionsComplete = false;
   try {
     let cursor: Parameters<
       OrchestratorStore['listOpenGithubAnchorProjectionPage']
@@ -994,7 +1055,10 @@ export async function reconcileOpenPullRequestRemediations(
         cursor,
       });
       projections.push(...page.projections);
-      if (page.nextCursor === undefined) break;
+      if (page.nextCursor === undefined) {
+        projectionsComplete = true;
+        break;
+      }
       cursor = page.nextCursor;
     }
   } catch (error) {
@@ -1002,6 +1066,15 @@ export async function reconcileOpenPullRequestRemediations(
       'agent-lcars: open PR remediation sweep could not read projections:',
       error,
     );
+    recordPrRemediationCensus({
+      complete: false,
+      blocked: 0,
+      running: 0,
+      deliveryOwned: 0,
+      stalled: 0,
+      oldestStalledSeconds: 0,
+      stalledPullRequests: [],
+    });
     return;
   }
 
@@ -1052,6 +1125,17 @@ export async function reconcileOpenPullRequestRemediations(
       (hasConcreteRemediationSignal(right) ? 0 : 1),
   );
 
+  await recordBlockedPullRequestCensus(
+    deps,
+    eligible.filter(
+      (projection) =>
+        projection.mergeableState === 'dirty' ||
+        (projection.unresolvedReviewThreadCount ?? 0) > 0,
+    ),
+    projectionsComplete,
+    deadlineMs,
+  );
+
   // Enqueue only: `handleReconcile`'s single outbox drain runs immediately
   // afterward and owns outbox claims, backoff, and response accounting.
   const enqueueOnlyDeps: PrRemediationDeps = {
@@ -1074,7 +1158,7 @@ export async function reconcileOpenPullRequestRemediations(
       await reconcilePullRequestRemediation(
         enqueueOnlyDeps,
         projection.anchor,
-        { wakeDelivery: false },
+        { wakeDelivery: false, trigger: 'open-sweep' },
       );
     } catch (error) {
       logger.warn(
@@ -1085,4 +1169,79 @@ export async function reconcileOpenPullRequestRemediations(
       );
     }
   }
+}
+
+/** Census cap: beyond this many blocked PRs the census reports incomplete. */
+const CENSUS_MAX_BLOCKED = 50;
+
+/**
+ * Counts blocked PRs (merge conflict or unresolved review threads) and which
+ * of them nothing is working: no live run on the PR, no waiting delivery
+ * binding, and no PR or run activity within `PR_REMEDIATION_STALL_AFTER_MS`.
+ * Read-only; it never admits work.
+ */
+async function recordBlockedPullRequestCensus(
+  deps: PrRemediationDeps,
+  blocked: readonly GithubAnchorProjection[],
+  projectionsComplete: boolean,
+  deadlineMs: number,
+): Promise<void> {
+  const nowMs = Date.parse(deps.now?.() ?? new Date().toISOString());
+  let complete = projectionsComplete && blocked.length <= CENSUS_MAX_BLOCKED;
+  let running = 0;
+  let deliveryOwned = 0;
+  const stalled: { ref: string; idleMs: number }[] = [];
+  for (const projection of blocked.slice(0, CENSUS_MAX_BLOCKED)) {
+    if (Date.now() + 10_000 >= deadlineMs) {
+      complete = false;
+      break;
+    }
+    try {
+      const runs = await deps.store.listRuns(projection.anchor);
+      if (runs.some((run) => isLive(run.state))) {
+        running += 1;
+        continue;
+      }
+      const waiting = await deps.store.readWaitingDeliveryTasks({
+        repo: projection.anchor.repo,
+        number: projection.anchor.issue,
+      });
+      if (waiting.length > 0) {
+        deliveryOwned += 1;
+        continue;
+      }
+      const lastActivityMs = Math.max(
+        Date.parse(projection.sourceUpdatedAt),
+        ...runs.map((run) => Date.parse(run.updatedAt)),
+      );
+      const idleMs = nowMs - lastActivityMs;
+      if (idleMs >= PR_REMEDIATION_STALL_AFTER_MS) {
+        stalled.push({
+          ref: `${projection.anchor.repo}#${projection.anchor.issue}`,
+          idleMs,
+        });
+      }
+    } catch (error) {
+      complete = false;
+      logger.warn(
+        'agent-lcars: PR remediation census read failed for %s#%s:',
+        projection.anchor.repo,
+        projection.anchor.issue,
+        error,
+      );
+    }
+  }
+  stalled.sort(
+    (left, right) =>
+      right.idleMs - left.idleMs || left.ref.localeCompare(right.ref),
+  );
+  recordPrRemediationCensus({
+    complete,
+    blocked: blocked.length,
+    running,
+    deliveryOwned,
+    stalled: stalled.length,
+    oldestStalledSeconds: Math.floor((stalled[0]?.idleMs ?? 0) / 1000),
+    stalledPullRequests: stalled.map((entry) => entry.ref),
+  });
 }
