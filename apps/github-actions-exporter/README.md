@@ -290,6 +290,15 @@ Missing or malformed rate-limit headers leave the previous valid observation
 intact. This makes the metrics safe for projected-exhaustion alerts while an
 individual GitHub response is incomplete or otherwise malformed.
 
+Repeated reads use GitHub's
+[conditional requests](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate):
+`GitHubAPI` remembers the `ETag` and body of the last 1024 responses and sends
+`If-None-Match`; a `304 Not Modified` reuses the stored body and does not count
+against the rate limit. This is what keeps runs GitHub leaves `queued` or
+`in_progress` for weeks, and completed runs whose jobs listing still shows an
+unfinished job, from consuming quota on every poll. A `304` is still counted as
+`status="304"`, so quota projections must exclude it.
+
 When an owner's installation hits `X-RateLimit-Remaining: 0` (including on a
 `200` response carrying the final allowed request) or returns a rate-limited
 `403`/`429` (including secondary-limit `403` responses without `Retry-After`,
