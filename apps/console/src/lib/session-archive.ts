@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { logger } from '@agent-lcars/logging';
-import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
+import type { GithubAnchorMergeEvidence } from '@agent-lcars/orchestrator';
 import type {
   SessionAgent,
   SessionDoc,
@@ -468,12 +468,13 @@ export async function getSessionArchive(
   ];
   let spend: SessionSpend | undefined;
   if (options.includeSpend) {
-    let projections = new Map<string, GithubAnchorProjection>();
+    let projections = new Map<string, GithubAnchorMergeEvidence>();
     try {
       const store = createOrchestratorRuntime().store;
       const result = await loadSpendProjections(
         docs,
-        (anchors) => store.readGithubAnchorProjections(anchors),
+        // Only the fields that decide a merge, not each PR's body (#3539).
+        (anchors) => store.readGithubAnchorMergeEvidence(anchors),
         5000,
         getWatchedRepos(),
       );

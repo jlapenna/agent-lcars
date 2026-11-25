@@ -11,6 +11,7 @@ import type {
   LifecycleMetricRecords,
 } from './lifecycle-metrics';
 import type {
+  GithubAnchorMergeEvidence,
   GithubAnchorProjection,
   LeasedOutboxEntry,
   OutboxSettlement,
@@ -431,6 +432,12 @@ export interface OrchestratorStore {
   listGithubAnchorsMergedSince(
     since: string,
   ): Promise<GithubAnchorProjection['anchor'][]>;
+
+  /** `readGithubAnchorProjections` limited to the merge-evidence fields,
+   * aligned with `anchors`, undefined where an anchor has no projection. */
+  readGithubAnchorMergeEvidence(
+    anchors: readonly GithubAnchorProjection['anchor'][],
+  ): Promise<(GithubAnchorMergeEvidence | undefined)[]>;
 
   /** Every currently-open GitHub anchor known to the control plane, newest
    * source update first. Phase 2 will use this bounded server-owned feed for

@@ -1,4 +1,4 @@
-import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
+import type { GithubAnchorMergeEvidence } from '@agent-lcars/orchestrator';
 import type { QualifiedSessionPR, SessionDoc } from '@agent-lcars/telemetry';
 import {
   isCanonicalSessionRepository,
@@ -78,7 +78,7 @@ export function sessionPRCandidates(doc: SessionDoc): QualifiedSessionPR[] {
  * Missing/legacy/offline facts fail closed; no shell parser is involved. */
 export function sessionPRReferences(
   doc: SessionDoc,
-  projections: ReadonlyMap<string, GithubAnchorProjection> = new Map(),
+  projections: ReadonlyMap<string, GithubAnchorMergeEvidence> = new Map(),
 ): QualifiedSessionPR[] {
   const literal = new Set(
     (doc.deliverables.qualifiedPRs ?? [])
@@ -173,7 +173,7 @@ export function sessionPRReferences(
 
 export function sessionPRKeys(
   doc: SessionDoc,
-  projections: ReadonlyMap<string, GithubAnchorProjection> = new Map(),
+  projections: ReadonlyMap<string, GithubAnchorMergeEvidence> = new Map(),
 ): string[] {
   return [
     ...new Set(
@@ -186,7 +186,7 @@ export function sessionPRKeys(
 
 function unqualifiedReferences(
   doc: SessionDoc,
-  projections: ReadonlyMap<string, GithubAnchorProjection>,
+  projections: ReadonlyMap<string, GithubAnchorMergeEvidence>,
 ): number {
   const qualifiedNumbers = new Set(
     sessionPRReferences(doc, projections).map((pr) => pr.number),
@@ -211,7 +211,7 @@ function emptyTotals(): SpendTotals {
 function addSession(
   totals: SpendTotals,
   doc: SessionDoc,
-  projections: ReadonlyMap<string, GithubAnchorProjection>,
+  projections: ReadonlyMap<string, GithubAnchorMergeEvidence>,
 ) {
   const cost = docCost(doc);
   totals.sessions++;
@@ -249,7 +249,7 @@ type Bucket = SpendTotals & { prs: Set<string> };
  * regardless of merge date. Unknown projections never count as merges. */
 export function aggregateSessionSpend(
   docs: SessionDoc[],
-  projections: ReadonlyMap<string, GithubAnchorProjection> = new Map(),
+  projections: ReadonlyMap<string, GithubAnchorMergeEvidence> = new Map(),
   coverageLimited = false,
   pipelineGrouping: SpendPipelineGrouping = 'adapter',
 ): SessionSpend {

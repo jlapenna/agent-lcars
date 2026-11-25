@@ -1,4 +1,7 @@
-import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
+import type {
+  GithubAnchorMergeEvidence,
+  GithubAnchorProjection,
+} from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 
 import { sessionPRCandidates, spendPRKey } from './session-spend';
@@ -13,7 +16,7 @@ export async function loadSpendProjections(
   docs: SessionDoc[],
   readMany: (
     anchors: GithubAnchorProjection['anchor'][],
-  ) => Promise<(GithubAnchorProjection | undefined)[]>,
+  ) => Promise<(GithubAnchorMergeEvidence | undefined)[]>,
   timeoutMs = 5000,
   canonicalRepositories: readonly { owner: string; name: string }[] = [],
   batchSize = 100,
@@ -37,7 +40,7 @@ export async function loadSpendProjections(
   const batches: (typeof selected)[] = [];
   for (let offset = 0; offset < selected.length; offset += batchSize)
     batches.push(selected.slice(offset, offset + batchSize));
-  const projections = new Map<string, GithubAnchorProjection>();
+  const projections = new Map<string, GithubAnchorMergeEvidence>();
   let incomplete = false;
   let cursor = 0;
   const deadline = performance.now() + timeoutMs;

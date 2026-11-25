@@ -154,7 +154,7 @@ describe('canonical stored projection identities (#2303)', () => {
         [canonicalSession],
         (
           await loadSpendProjections([canonicalSession], (targets) =>
-            store.readGithubAnchorProjections(targets),
+            store.readGithubAnchorMergeEvidence(targets),
           )
         ).projections,
       ).mergedPRs,
