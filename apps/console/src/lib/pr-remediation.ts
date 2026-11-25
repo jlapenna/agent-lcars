@@ -1297,7 +1297,9 @@ async function reconcilePullRequestRemediationOnce(
   const buildAnchorWork = (pipeline: AgentPipeline) => {
     const derived = workPayloadFromGithub({
       title: snapshot.title,
-      body: snapshot.body,
+      // A dependency bot's body quotes upstream release notes: untrusted
+      // third-party text must never become the agent's task description.
+      body: isAutomatedReviewExcludedAuthor(author) ? null : snapshot.body,
       pipeline,
       repo: anchor.repo,
       actor: author,

@@ -21,8 +21,8 @@ const AUTOMATED_BOT_LOGINS = new Set([
 
 /**
  * Renovate groups in `jlapenna/agent-lcars` whose updates change executable
- * review/runtime pins and require explicit review + qualification once a
- * maintainer marks their draft PR ready for review (`renovate.json`).
+ * review/runtime pins and require explicit review + qualification. The fleet
+ * qualifies the draft, then marks it ready for review (`renovate.json`).
  */
 const QUALIFICATION_REQUIRED_RENOVATE_REF_RE =
   /^renovate\/(?:major-)?(?:runner-cli-runtimes|anthropic-review-workflow)$/iu;

@@ -1127,13 +1127,17 @@ describe('automatic pull-request review & conflict remediation', () => {
       await reconcilePullRequestRemediation(f.remediationDeps, anchor);
       await f.orchestrator.report(`${REPO}#4040/r1`, { ok: true });
 
-      f.setPr(REPO, 4040, draft(conflicted));
+      const UPSTREAM = 'UPSTREAM-RELEASE-NOTES-SENTINEL';
+      f.setPr(REPO, 4040, draft({ ...conflicted, body: UPSTREAM }));
       expect(
         await reconcilePullRequestRemediation(f.remediationDeps, anchor),
       ).toMatchObject({
         action: 'remediated',
         outcome: { kind: 'accepted', runId: `${REPO}#4040/r2` },
       });
+      // The bot's body quotes upstream text and must not become the task.
+      const task = await f.store.readTask(anchor);
+      expect(JSON.stringify(task?.task.work)).not.toContain(UPSTREAM);
     });
   });
 
