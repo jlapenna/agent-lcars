@@ -886,7 +886,9 @@ function newestRemediationRoundWasNoOp(
 
 /** Counts consecutive distinct automatic PR remediation rounds since the last
  * human/operator request, ignoring fallback/retry attempts within one round
- * and conflict-only rounds caused by the base branch moving. */
+ * and conflict-only rounds caused by the base branch moving. An event-resume
+ * run (#3570) is neither: it does not count, and it does not reset the
+ * count the way a human reply does. */
 function countConsecutiveAutoRemediations(runs: readonly Run[]): {
   counted: number;
   total: number;
@@ -899,7 +901,8 @@ function countConsecutiveAutoRemediations(runs: readonly Run[]): {
   const distinctRounds = new Set<string>();
   const allRounds = new Set<string>();
   for (const run of sorted) {
-    if (run.params?.['mode'] === 'review') continue;
+    if (run.params?.['mode'] === 'review' || run.requestSource === 'event')
+      continue;
     if (
       run.params?.['mode'] === 'reply' ||
       (run.requestSource === 'caller' &&

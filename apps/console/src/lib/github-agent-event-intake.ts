@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { logger } from '@agent-lcars/logging';
+import type { Orchestrator } from '@agent-lcars/orchestrator';
 import { subscriptionMatches } from '@agent-lcars/work';
 import { z } from 'zod';
 
@@ -27,6 +28,7 @@ import {
   enqueueGitHubAgentEvents,
   type GitHubWebhookEnvelope,
 } from './hosted-webhook-queue';
+import { queueWorkEventResume } from './work-event-resume';
 
 /**
  * Delivery of GitHub App webhooks to subscribed agents (#3569). The webhook
@@ -128,13 +130,25 @@ export const githubAgentEventReads: GithubAgentEventReads = {
 
 export interface GithubAgentEventDeps extends AgentEventRoutingDeps {
   reads: GithubAgentEventReads;
+  /** Drains the orchestrator outbox, so a Work an event resumed (#3570)
+   * starts now rather than at the next maintenance drain. */
+  drain?: () => Promise<unknown>;
 }
 
-const defaultDeps: GithubAgentEventDeps = {
-  store: agentEventSubscriptionStore,
-  publisher: defaultAgentEventPublisher,
-  reads: githubAgentEventReads,
-};
+/** The production dependencies, recording Work-target events through the
+ * given orchestrator. */
+export function defaultGithubAgentEventDeps(runtime: {
+  orchestrator: Pick<Orchestrator, 'queueEventResume'>;
+  drain: () => Promise<unknown>;
+}): GithubAgentEventDeps {
+  return {
+    store: agentEventSubscriptionStore,
+    publisher: defaultAgentEventPublisher,
+    resumeWork: queueWorkEventResume(runtime.orchestrator),
+    reads: githubAgentEventReads,
+    drain: runtime.drain,
+  };
+}
 
 export type GithubAgentEventOutcome =
   /** The delivery stands for no event, or its actor is not trusted. */
@@ -200,7 +214,7 @@ async function derive(
  */
 export async function routeGithubAgentEvents(
   delivery: GithubWebhookDelivery,
-  deps: GithubAgentEventDeps = defaultDeps,
+  deps: GithubAgentEventDeps,
 ): Promise<GithubAgentEventResult> {
   const candidates = githubAgentEventCandidates(delivery);
   const subscriptionsByKey = new Map<string, StoredAgentEventSubscription[]>();
@@ -209,6 +223,7 @@ export async function routeGithubAgentEvents(
 
   const events: GithubAgentEventResult['events'][number][] = [];
   const failures: unknown[] = [];
+  let resumeQueued = false;
   for (const candidate of candidates) {
     const { key, kind } = candidate;
     const subscriptions = (subscriptionsByKey.get(key) ?? []).filter(
@@ -234,6 +249,12 @@ export async function routeGithubAgentEvents(
         subscriptions,
         deps,
       );
+      if (
+        routed.deliveries.some(
+          (delivery) => delivery.outcome === 'resume-queued',
+        )
+      )
+        resumeQueued = true;
       events.push({
         key,
         kind,
@@ -247,6 +268,18 @@ export async function routeGithubAgentEvents(
       failures.push(error);
     }
   }
+  // A queued resume is durable already; draining only starts it sooner,
+  // so a drain failure is logged, never a reason to redeliver.
+  if (resumeQueued && deps.drain !== undefined)
+    await deps
+      .drain()
+      .catch((error: unknown) =>
+        logger.warn(
+          'agent-lcars: outbox drain after GitHub delivery %s failed; the maintenance drain resumes the Work',
+          delivery.deliveryId,
+          error,
+        ),
+      );
   if (failures.length > 0)
     throw new AggregateError(
       failures,

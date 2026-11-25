@@ -4,6 +4,10 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 
 import {
+  EVENT_RESUME_MEMORY,
+  type EventResumeState,
+  MAX_EVENT_RESUMES,
+  MAX_PENDING_EVENT_RESUMES,
   RECIPE_EXIT_PENDING_CREDENTIAL_CLEANUP,
   usesCodexCredentials,
 } from './model';
@@ -78,7 +82,11 @@ export interface Refusal {
     | 'stale-issue-source'
     | 'not-native' // closeTask on a GitHub anchor: closedAt is native-only
     | 'credential-operation-pending' // external CAS must be resolved before replacement
-    | 'not-claimant'; // exit report from a principal/runner that did not claim the run
+    | 'not-claimant' // exit report from a principal/runner that did not claim the run
+    | 'event-resume-limit' // MAX_EVENT_RESUMES resumes in a row without a human reply
+    | 'event-resume-full' // MAX_PENDING_EVENT_RESUMES already wait; transient
+    | 'work-canceled' // an operator canceled the item; no event reopens it
+    | 'no-pending-event'; // event-resume admission found nothing waiting
   /** For `duplicate-request`, the run the request already maps to. */
   readonly existingRun?: Run;
 }
@@ -188,6 +196,18 @@ export function claimQueuedRun(
  *  retry). A task's total attempts before parking is `MAX_AUTO_RETRIES + 1`
  *  (the original request plus this many retries). */
 export const MAX_AUTO_RETRIES = 2;
+
+/** Prefix of the `event-resume` outbox entries: `<prefix><runId>` when a run
+ * settles with events waiting, `<prefix><taskKey>/e<seq>` when an event
+ * arrives for an idle Work. */
+export const EVENT_RESUME_OUTBOX_PREFIX = 'event-resume/';
+
+const EMPTY_EVENT_RESUMES: EventResumeState = {
+  received: 0,
+  admitted: 0,
+  pending: [],
+  recent: [],
+};
 
 /** Pipelines whose attempts may already have performed external effects.
  *  Their lost and failed attempts settle terminally: no automatic rerun of
@@ -346,6 +366,20 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     ...(input.task?.providerRouting === undefined
       ? {}
       : { providerRouting: input.task.providerRouting }),
+    // Waiting events survive every admission. A human reply is the turn that
+    // restarts the event-resume budget, as it restarts remediation rounds;
+    // any caller request (reply or redispatch) reopens a canceled item to
+    // events.
+    ...(input.task?.eventResumes === undefined
+      ? {}
+      : {
+          eventResumes: reopenedEventResumes(
+            input.task.eventResumes,
+            input.params?.mode === 'reply' &&
+              input.params.replyPrincipal !== undefined,
+            (input.requestSource ?? 'caller') === 'caller',
+          ),
+        }),
     updatedAt: now,
   };
   return mintRun({
@@ -968,7 +1002,20 @@ export function cancelRun(input: {
     ],
     updatedAt: now,
   };
-  const released = resetLossBudgets(releaseLock(task, run.runId, now));
+  const lockReleased = resetLossBudgets(releaseLock(task, run.runId, now));
+  // Canceling the item drops the events waiting on it and refuses later
+  // ones, so no event restarts what an operator stopped.
+  const released =
+    input.nativeTask === undefined
+      ? lockReleased
+      : {
+          ...lockReleased,
+          eventResumes: {
+            ...(lockReleased.eventResumes ?? EMPTY_EVENT_RESUMES),
+            pending: [],
+            canceledAt: now,
+          },
+        };
   const closeDelivery = input.nativeTask !== undefined && deliveryWaiting(task);
   return settle(
     closeDelivery ? { ...released, closedAt: now } : released,
@@ -1351,13 +1398,26 @@ export function updateTaskWork(input: {
   return { task: { ...task, work, updatedAt: now }, outbox: [] };
 }
 
-/** Shared tail of every settle path. */
+/** Shared tail of every settle path. Events that arrived while this run held
+ * the Work are handed to the drain now that the lock is released; if another
+ * run took the lock in the same decision, that run's settlement hands them on
+ * instead. */
 function settle(releasedTask: Task, settledRun: Run, now: string): Decision {
   return {
     task: releasedTask,
     run: settledRun,
     outbox: [
       outcomeEntry(settledRun, now),
+      ...((releasedTask.eventResumes?.pending.length ?? 0) > 0 &&
+      releasedTask.closedAt === undefined
+        ? [
+            {
+              ...outcomeEntry(settledRun, now),
+              entryId: `${EVENT_RESUME_OUTBOX_PREFIX}${settledRun.runId}`,
+              kind: 'event-resume' as const,
+            },
+          ]
+        : []),
       ...(settledRun.state === 'finished' &&
       settledRun.result?.ok &&
       settledRun.triagePublication?.state === 'pending'
@@ -1432,4 +1492,156 @@ export function finalDeliveryOutbox(
       updatedAt: now,
     },
   ];
+}
+
+/** The request id of the run that resumes a Work for the events starting
+ * with `seq`. Unique per Work, so the durable request history makes the
+ * admission idempotent. */
+export function eventResumeRequestId(seq: number): string {
+  return `event:e${seq}`;
+}
+
+/**
+ * Accepts an event for a native Work that a dispatched run subscribed it to
+ * (#3570). The event waits on the task until a run can take it:
+ *
+ * - a repeated delivery id is a `duplicate-request`;
+ * - the Work must exist, be native and not be closed;
+ * - an item an operator canceled refuses every event (`work-canceled`);
+ * - `MAX_EVENT_RESUMES` resume runs in a row without a human reply refuse
+ *   further events (`event-resume-limit`), so a subscription cannot wake
+ *   its Work forever; `MAX_PENDING_EVENT_RESUMES` events already waiting
+ *   refuse one more (`event-resume-full`) until a run takes them;
+ * - while a run holds the Work the event only waits: that run's settlement
+ *   hands it to the drain (`settle`). Otherwise an `event-resume` outbox
+ *   entry hands it to the drain now. Both are writes to the task under its
+ *   revision, so an event that arrives while the subscribing run is still
+ *   finishing is never lost and never resumes the Work twice.
+ */
+export function queueEventResume(input: {
+  now: string;
+  task: Task | undefined;
+  activeRun: Run | undefined;
+  event: { deliveryId: string; notice: string };
+}): Decision | Refusal {
+  const { now, task, activeRun, event } = input;
+  if (task === undefined || task.runCount === 0) return refused('unknown-task');
+  if (!isWorkAnchor(task.task)) return refused('not-native');
+  if (task.closedAt !== undefined) return refused('task-closed');
+  const state = task.eventResumes ?? EMPTY_EVENT_RESUMES;
+  if (state.canceledAt !== undefined) return refused('work-canceled');
+  if (state.recent.includes(event.deliveryId))
+    return refused('duplicate-request');
+  if (state.admitted >= MAX_EVENT_RESUMES) return refused('event-resume-limit');
+  if (state.pending.length >= MAX_PENDING_EVENT_RESUMES)
+    return refused('event-resume-full');
+  const seq = state.received + 1;
+  const next: EventResumeState = {
+    ...state,
+    received: seq,
+    pending: [
+      ...state.pending,
+      {
+        seq,
+        deliveryId: event.deliveryId,
+        notice: event.notice,
+        receivedAt: now,
+      },
+    ],
+    recent: [...state.recent, event.deliveryId].slice(-EVENT_RESUME_MEMORY),
+  };
+  const busy = activeRun !== undefined && isLive(activeRun.state);
+  return {
+    task: { ...task, eventResumes: next, updatedAt: now },
+    outbox: busy
+      ? []
+      : [
+          {
+            entryId: `${EVENT_RESUME_OUTBOX_PREFIX}${taskKey(task.task)}/e${seq}`,
+            kind: 'event-resume',
+            task: task.task,
+            runId: `${taskKey(task.task)}/r${task.runCount}`,
+            state: 'pending',
+            attempts: 0,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+  };
+}
+
+/** The input of a resume run: every waiting notice, oldest first. */
+export function eventResumeNotice(state: EventResumeState): string {
+  return state.pending.map((event) => event.notice).join('\n\n');
+}
+
+/**
+ * Starts the run that resumes a Work for every event waiting on it, and
+ * clears them, in one transaction. `requestId` names the oldest waiting event
+ * (`eventResumeRequestId`); a stale read, a live run, or nothing waiting is
+ * refused and changes nothing. A waiting delivery binding does not block it:
+ * like a human reply, the resume continues the same Work.
+ */
+export function admitEventResume(input: {
+  now: string;
+  task: Task | undefined;
+  activeRun: Run | undefined;
+  previousRun: Run | undefined;
+  requestId: string;
+  pipeline: string;
+  priority?: QueuePriority;
+  /** Resume-session params chosen by the caller, e.g. `resumeSessionId`. */
+  params?: Record<string, string>;
+}): Decision | Refusal {
+  const { now, task, activeRun, previousRun, requestId } = input;
+  if (previousRun !== undefined)
+    return refused('duplicate-request', previousRun);
+  if (task === undefined) return refused('unknown-task');
+  if (!isWorkAnchor(task.task)) return refused('not-native');
+  if (task.closedAt !== undefined) return refused('task-closed');
+  const state = task.eventResumes;
+  const oldest = state?.pending[0];
+  if (state?.canceledAt !== undefined) return refused('work-canceled');
+  if (state === undefined || oldest === undefined)
+    return refused('no-pending-event');
+  if (eventResumeRequestId(oldest.seq) !== requestId)
+    return refused('stale-lease');
+  if (activeRun !== undefined && isLive(activeRun.state))
+    return refused('task-busy', activeRun);
+  if (state.admitted >= MAX_EVENT_RESUMES) return refused('event-resume-limit');
+  const params = {
+    ...input.params,
+    mode: 'event',
+    eventNotice: eventResumeNotice(state),
+    eventDeliveries: state.pending.map((event) => event.deliveryId).join(','),
+  };
+  if (!runParamsSchema.safeParse(params).success)
+    return refused('params-too-large');
+  return mintRun({
+    now,
+    taskId: task.task,
+    task: {
+      ...task,
+      eventResumes: { ...state, admitted: state.admitted + 1, pending: [] },
+      updatedAt: now,
+    },
+    requestId,
+    requestSource: 'event',
+    pipeline: input.pipeline,
+    priority: input.priority,
+    params,
+  });
+}
+
+/** The event-resume state a new caller request leaves: a human reply
+ * restarts the resume budget, and any caller request reopens a canceled
+ * item to events. */
+function reopenedEventResumes(
+  state: EventResumeState,
+  humanReply: boolean,
+  callerRequest: boolean,
+): EventResumeState {
+  const { canceledAt: _canceledAt, ...open } = state;
+  const next = callerRequest ? open : state;
+  return humanReply ? { ...next, admitted: 0 } : next;
 }

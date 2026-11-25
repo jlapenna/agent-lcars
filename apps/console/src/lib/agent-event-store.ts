@@ -34,6 +34,8 @@ export interface AgentEventSubscriptionStore {
     sessionId?: string,
   ): Promise<StoredAgentEventSubscription[]>;
   countForSession(sessionId: string): Promise<number>;
+  /** Subscriptions a dispatched run made on behalf of one native Work. */
+  listForWork(workId: string): Promise<StoredAgentEventSubscription[]>;
   listForKey(key: string): Promise<StoredAgentEventSubscription[]>;
   /** Whether a document was removed. */
   delete(id: string): Promise<boolean>;
@@ -123,6 +125,13 @@ export class FirestoreAgentEventSubscriptionStore implements AgentEventSubscript
     return result.data().count;
   }
 
+  async listForWork(workId: string) {
+    const result = await this.collection()
+      .where('target.workId', '==', workId)
+      .get();
+    return result.docs.map((doc) => doc.data() as StoredAgentEventSubscription);
+  }
+
   async listForKey(key: string) {
     const result = await this.collection().where('key', '==', key).get();
     return result.docs.map((doc) => doc.data() as StoredAgentEventSubscription);
@@ -191,6 +200,14 @@ export class MemoryAgentEventSubscriptionStore implements AgentEventSubscription
       ({ target }) =>
         target.type === 'session' && target.sessionId === sessionId,
     ).length;
+  }
+
+  async listForWork(workId: string) {
+    return [...this.documents.values()]
+      .filter(
+        ({ target }) => target.type === 'work' && target.workId === workId,
+      )
+      .map((doc) => structuredClone(doc));
   }
 
   async listForKey(key: string) {

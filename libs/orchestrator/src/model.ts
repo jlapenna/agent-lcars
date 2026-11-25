@@ -269,6 +269,8 @@ export const requestSourceSchema = z.enum([
   'auto-retry',
   'provider-fallback',
   'delivery-correction',
+  // An event a dispatched run subscribed to resumed its Work (#3570).
+  'event',
 ]);
 export type RequestSource = z.infer<typeof requestSourceSchema>;
 
@@ -649,6 +651,52 @@ export function runRequestHistoryKey(
   return requestHistoryKey(run.requestSource, run.requestId);
 }
 
+/**
+ * Event-resume (#3570): a dispatched run subscribes to an event on behalf of
+ * its native Work and ends its turn; the event later resumes the Work with a
+ * new run whose input is the event's notice. This is distinct from a human
+ * reply: it carries no principal, never resets PR remediation rounds, and an
+ * event that arrives while a run holds the Work waits here instead of being
+ * refused.
+ *
+ * At most this many event-resume runs in a row without a human reply; a
+ * reply resets the count. Bounds a subscription that keeps waking its own
+ * Work (for example one that subscribes to its own `lcars:work` state).
+ */
+export const MAX_EVENT_RESUMES = 10;
+/** At most this many events wait for one busy Work; they resume it together. */
+export const MAX_PENDING_EVENT_RESUMES = 8;
+/** How many accepted event ids a Work remembers, so a repeat is dropped. */
+export const EVENT_RESUME_MEMORY = 32;
+/** The longest notice one waiting event carries (the router's own bound). */
+export const EVENT_RESUME_NOTICE_MAX = 4_096;
+
+export const pendingEventResumeSchema = z.strictObject({
+  /** Position in the Work's sequence of accepted events; names the run. */
+  seq: z.number().int().positive(),
+  /** The router's delivery id, `<subscriptionId>:<eventId>`. */
+  deliveryId: z.string().min(1).max(400),
+  /** LCARS-generated notice text; never third-party content. */
+  notice: z.string().min(1).max(EVENT_RESUME_NOTICE_MAX),
+  receivedAt: isoUtc,
+});
+export type PendingEventResume = z.infer<typeof pendingEventResumeSchema>;
+
+export const eventResumeStateSchema = z.strictObject({
+  /** Events ever accepted for this Work; the next one's `seq` is this + 1. */
+  received: z.number().int().nonnegative(),
+  /** Event-resume runs admitted since the last human reply. */
+  admitted: z.number().int().nonnegative(),
+  /** Accepted events not yet handed to a run, oldest first. */
+  pending: z.array(pendingEventResumeSchema).max(MAX_PENDING_EVENT_RESUMES),
+  /** The most recently accepted delivery ids, so a repeat is a no-op. */
+  recent: z.array(z.string().min(1).max(400)).max(EVENT_RESUME_MEMORY),
+  /** An operator canceled the item: no event resumes it until a caller
+   * request (a human reply or a redispatch) reopens it. */
+  canceledAt: isoUtc.optional(),
+});
+export type EventResumeState = z.infer<typeof eventResumeStateSchema>;
+
 export const taskSchema = z.strictObject({
   task: taskIdSchema,
   delivery: deliveryBindingSchema.optional(),
@@ -673,6 +721,8 @@ export const taskSchema = z.strictObject({
   desiredRevision: workRevisionSchema.optional(),
   sourceObservedAt: z.record(z.string(), z.iso.datetime()).optional(),
   providerRouting: providerRoutingSchema.optional(),
+  /** Native anchors only: events waiting to resume this Work (#3570). */
+  eventResumes: eventResumeStateSchema.optional(),
   /** Native anchors only: set by `closeTask` when an operator closes an
    *  item that has no live run. A closed task refuses further requests. */
   closedAt: isoUtc.optional(),
@@ -735,6 +785,7 @@ const outboxEntryBaseSchema = z.strictObject({
     'publish-triage',
     'publish-issue-start',
     'agent-event',
+    'event-resume',
   ]),
   task: taskIdSchema,
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),

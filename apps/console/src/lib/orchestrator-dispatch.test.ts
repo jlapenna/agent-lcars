@@ -25,6 +25,7 @@ import type {
 
 // Work state changes queue agent events; these tests do not cover routing.
 vi.mock('./agent-event-routing', () => ({
+  defaultAgentEventPublisher: { publish: vi.fn() },
   routeAgentEvent: vi.fn(async () => ({ eventId: 'unused', deliveries: [] })),
 }));
 
@@ -676,6 +677,114 @@ describe.each([
       );
     },
   );
+});
+
+describe('drainOutbox event-resume (#3570)', () => {
+  const WORK_ID = '01J5Z3K9QX8F0N2B4V6C8D1E5B';
+  const origin = { principal: 'test:events', channel: 'api' } as const;
+  const silentFetch = vi.fn(
+    async () => new Response(null, { status: 204 }),
+  ) as typeof fetch;
+
+  function deps(
+    f: ReturnType<typeof fixture>,
+    sessionDocsForRuns = vi.fn(async () => []),
+  ) {
+    return {
+      store: f.store,
+      orchestrator: f.orchestrator,
+      tokens,
+      fetchImpl: silentFetch,
+      routeAgentEvent: vi.fn(async () => ({})),
+      sessionDocsForRuns,
+      now: () => NOW,
+    };
+  }
+
+  it('resumes an idle Work with the notice, continuing its own session', async () => {
+    const f = fixture();
+    const first = await requestedWithOrigin(f.orchestrator, origin, WORK_ID);
+    await f.orchestrator.report(first.runId, { ok: true, summary: 'park' });
+    await drainOutbox(deps(f));
+
+    await f.orchestrator.queueEventResume(
+      { workId: WORK_ID },
+      {
+        deliveryId: 'sub:ev-1',
+        notice: '[lcars-event] github:run:o/r/1 completed',
+      },
+    );
+    const sessionDocsForRuns = vi.fn(async () => [
+      {
+        sessionId: 'sess-1',
+        source: 'issue-agent',
+        agent: 'codex',
+        intentId: first.runId,
+        transcriptGcsUri: 'gs://bucket/runs/r1/codex/sess-1.jsonl',
+        lastActivityAt: NOW,
+      },
+    ]);
+    const result = await drainOutbox(
+      deps(f, sessionDocsForRuns as unknown as ReturnType<typeof vi.fn>),
+    );
+    expect(result.failed).toEqual([]);
+    const resumed = await f.store.readActiveRun({ workId: WORK_ID });
+    expect(resumed).toMatchObject({
+      requestSource: 'event',
+      pipeline: 'codex',
+      params: {
+        mode: 'event',
+        eventNotice: '[lcars-event] github:run:o/r/1 completed',
+        resumeSessionId: 'sess-1',
+        resumeTranscriptGcsUri: 'gs://bucket/runs/r1/codex/sess-1.jsonl',
+      },
+    });
+    // Dispatched in the same drain, like any admitted run.
+    expect(result.dispatched).toContain(resumed!.runId);
+  });
+
+  it('clears session expiry when an event reopens a closed item', async () => {
+    const f = fixture();
+    const first = await requestedWithOrigin(f.orchestrator, origin, WORK_ID);
+    await f.orchestrator.report(first.runId, { ok: false, summary: 'failed' });
+    await drainOutbox(deps(f));
+    await f.orchestrator.queueEventResume(
+      { workId: WORK_ID },
+      { deliveryId: 'sub:ev-1', notice: 'notice' },
+    );
+    const expireItemSessions = vi.fn(async () => undefined);
+    expect(
+      (await drainOutbox({ ...deps(f), expireItemSessions })).failed,
+    ).toEqual([]);
+    expect(expireItemSessions).toHaveBeenCalledWith(WORK_ID);
+  });
+
+  it('settles the entry while the Work is busy and resumes after the run settles', async () => {
+    const f = fixture();
+    const first = await requestedWithOrigin(f.orchestrator, origin, WORK_ID);
+    await drainOutbox(deps(f));
+    await f.orchestrator.queueEventResume(
+      { workId: WORK_ID },
+      { deliveryId: 'sub:ev-1', notice: 'notice' },
+    );
+    expect((await drainOutbox(deps(f))).failed).toEqual([]);
+    expect((await f.store.readActiveRun({ workId: WORK_ID }))?.runId).toBe(
+      first.runId,
+    );
+
+    await f.orchestrator.report(first.runId, { ok: true, summary: 'park' });
+    expect((await drainOutbox(deps(f))).failed).toEqual([]);
+    const resumed = await f.store.readActiveRun({ workId: WORK_ID });
+    expect(resumed).toMatchObject({
+      requestSource: 'event',
+      params: { mode: 'event', eventNotice: 'notice' },
+    });
+    expect(resumed?.params?.['resumeSessionId']).toBeUndefined();
+    // Nothing is left to resume.
+    expect(
+      (await f.store.readTask({ workId: WORK_ID }))?.task.eventResumes?.pending,
+    ).toEqual([]);
+  });
 });
 
 describe('drainOutbox Work agent events', () => {

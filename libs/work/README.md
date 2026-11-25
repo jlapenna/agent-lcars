@@ -59,13 +59,18 @@ maintainer's Google account may impersonate it; see
 ## Agent event subscriptions
 
 `POST`, `GET` and `DELETE /api/work/v1/events/subscriptions[/{id}]` manage
-the subscriptions that route events to agents (#3538). Only a host's
-delivery agent calls them, as `svc:agent-events-<host>` with the
-`events.deliver` scope and no other. The host is read from that verified
-service-account email, never from the request. A subscribe is accepted only
-when the session's CLI telemetry reports the same host and the session has
-not ended; list and delete see only that host's subscriptions. Work targets
-are refused until #3570.
+the subscriptions that route events to agents (#3538). A host's delivery
+agent calls them as `svc:agent-events-<host>` with the `events.deliver`
+scope and no other. The host is read from that verified service-account
+email, never from the request. A subscribe is accepted only when the
+session's CLI telemetry reports the same host and the session has not
+ended; list and delete see only that host's subscriptions.
+
+A dispatched run of native Work calls them with its run token as the bearer
+and its `runId` in the request (#3570). Its subscriptions target its own
+Work, a `workId` naming any other is refused, and it sees and removes only
+its Work's. A matching event resumes the Work with a new run; see
+[event-resume](../../docs/lifecycle-systems.md#event-resume-for-dispatched-work).
 
 The console's `routeAgentEvent` publishes one message per matching
 subscription to `AGENT_LCARS_AGENT_EVENTS_TOPIC`, with `host` and

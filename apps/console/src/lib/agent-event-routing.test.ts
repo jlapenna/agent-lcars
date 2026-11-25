@@ -1,4 +1,11 @@
 import {
+  decidedRun,
+  isRefusal,
+  MAX_PENDING_EVENT_RESUMES,
+  MemoryStore,
+  Orchestrator,
+} from '@agent-lcars/orchestrator';
+import {
   agentEventDeliverySchema,
   type AgentEventSubscription,
 } from '@agent-lcars/work';
@@ -9,6 +16,10 @@ import {
   MemoryAgentEventSubscriptionStore,
   ROUTED_EVENT_MEMORY,
 } from './agent-event-store';
+import {
+  admitWorkEventResume,
+  queueWorkEventResume,
+} from './work-event-resume';
 
 function subscription(
   id: string,
@@ -38,7 +49,13 @@ async function seeded(...subscriptions: AgentEventSubscription[]) {
   for (const s of subscriptions) await store.create(s);
   let n = 0;
   const publish = vi.fn(async () => `message-${++n}`);
-  return { store, publish, deps: { store, publisher: { publish } } };
+  const resumeWork = vi.fn(async () => ({ outcome: 'queued' as const }));
+  return {
+    store,
+    publish,
+    resumeWork,
+    deps: { store, publisher: { publish }, resumeWork },
+  };
 }
 
 function published(publish: ReturnType<typeof vi.fn>) {
@@ -186,18 +203,113 @@ describe('routeAgentEvent', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
-  it('skips Work targets until they are supported', async () => {
-    const { publish, deps } = await seeded(
-      subscription('w', { target: { type: 'work', workId: 'W1' } }),
+  it('records an event on a subscribed Work instead of publishing it (#3570)', async () => {
+    const { store, publish, resumeWork, deps } = await seeded(
+      subscription('w', {
+        target: { type: 'work', workId: 'W1' },
+        until: 'review',
+      }),
     );
     expect((await routeAgentEvent(review, deps)).deliveries).toEqual([
       {
         subscriptionId: 'w',
         deliveryId: 'w:gh-delivery-1',
-        outcome: 'unsupported-target',
+        outcome: 'resume-queued',
+        workId: 'W1',
+        ended: true,
       },
     ]);
+    expect(resumeWork).toHaveBeenCalledWith({
+      workId: 'W1',
+      deliveryId: 'w:gh-delivery-1',
+      notice: expect.stringContaining(
+        '[lcars-event] github:pr:jlapenna/homelab#3827 review by jlapenna',
+      ),
+    });
+    expect(
+      (resumeWork.mock.calls[0] as unknown as [{ notice: string }])[0].notice,
+    ).toContain('Subscription w has ended.');
     expect(publish).not.toHaveBeenCalled();
+    // Ended by its until kind, so a repeat finds nothing.
+    expect(await store.get('w')).toBeUndefined();
+  });
+
+  it('remembers a Work delivery and reports a repeat the Work already has as a duplicate', async () => {
+    const { store, resumeWork, deps } = await seeded(
+      subscription('w', { target: { type: 'work', workId: 'W1' } }),
+    );
+    await routeAgentEvent(review, deps);
+    expect((await store.get('w'))?.routedEventIds).toEqual(['gh-delivery-1']);
+    expect((await routeAgentEvent(review, deps)).deliveries).toEqual([
+      {
+        subscriptionId: 'w',
+        deliveryId: 'w:gh-delivery-1',
+        outcome: 'duplicate',
+      },
+    ]);
+    expect(resumeWork).toHaveBeenCalledTimes(1);
+
+    resumeWork.mockResolvedValueOnce({ outcome: 'duplicate' } as never);
+    expect(
+      (await routeAgentEvent({ ...review, id: 'gh-delivery-2' }, deps))
+        .deliveries,
+    ).toEqual([
+      {
+        subscriptionId: 'w',
+        deliveryId: 'w:gh-delivery-2',
+        outcome: 'duplicate',
+      },
+    ]);
+  });
+
+  it('removes a Work subscription whose Work refuses the event', async () => {
+    const { store, resumeWork, deps } = await seeded(
+      subscription('w', { target: { type: 'work', workId: 'W1' } }),
+    );
+    resumeWork.mockResolvedValueOnce({
+      outcome: 'refused',
+      reason: 'task-closed',
+    } as never);
+    expect((await routeAgentEvent(review, deps)).deliveries).toEqual([
+      {
+        subscriptionId: 'w',
+        deliveryId: 'w:gh-delivery-1',
+        outcome: 'resume-refused',
+        workId: 'W1',
+        reason: 'task-closed',
+      },
+    ]);
+    expect(await store.get('w')).toBeUndefined();
+  });
+
+  it('keeps a Work subscription when one event is dropped from a full waiting list', async () => {
+    const { store, deps, resumeWork } = await seeded(
+      subscription('w', { target: { type: 'work', workId: 'W1' } }),
+    );
+    resumeWork.mockResolvedValueOnce({ outcome: 'dropped' } as never);
+    expect((await routeAgentEvent(review, deps)).deliveries).toEqual([
+      {
+        subscriptionId: 'w',
+        deliveryId: 'w:gh-delivery-1',
+        outcome: 'resume-dropped',
+        workId: 'W1',
+      },
+    ]);
+    expect((await store.get('w'))?.routedEventIds).toEqual(['gh-delivery-1']);
+  });
+
+  it('retries a Work target whose resume could not be recorded', async () => {
+    const { store, resumeWork, deps } = await seeded(
+      subscription('w', { target: { type: 'work', workId: 'W1' } }),
+    );
+    resumeWork.mockRejectedValueOnce(new Error('firestore unavailable'));
+    await expect(routeAgentEvent(review, deps)).rejects.toThrow(
+      '1 of 1 deliveries for event gh-delivery-1 failed',
+    );
+    expect((await store.get('w'))?.routedEventIds).toBeUndefined();
+    expect(
+      (await routeAgentEvent(review, deps)).deliveries.map((d) => d.outcome),
+    ).toEqual(['resume-queued']);
   });
 
   it('routes the rest when one publish fails, then throws so a retry sends only the failed one', async () => {
@@ -224,5 +336,117 @@ describe('routeAgentEvent', () => {
     ]);
     expect(await store.get('a')).toBeUndefined();
     expect(publish).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('routing to a real Work (#3570)', () => {
+  const WORK_ID = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
+
+  async function workWithLiveRun() {
+    const orchestratorStore = new MemoryStore();
+    const orchestrator = new Orchestrator(orchestratorStore, {
+      now: () => '2026-11-25T12:00:00.000Z',
+    });
+    const first = await orchestrator.request({
+      taskId: { workId: WORK_ID },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      work: { spec: { title: 'waits on a PR' } },
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(first)) throw new Error(first.reason);
+    const { store, deps } = await seeded(
+      subscription('w', {
+        target: { type: 'work', workId: WORK_ID },
+        kinds: ['review', 'merged'],
+        until: 'merged',
+      }),
+    );
+    return {
+      orchestrator,
+      orchestratorStore,
+      store,
+      firstRunId: decidedRun(first).runId,
+      deps: { ...deps, resumeWork: queueWorkEventResume(orchestrator) },
+    };
+  }
+
+  it(`keeps the subscription past ${MAX_PENDING_EVENT_RESUMES} events while a run holds the Work, and a later merged still resumes it`, async () => {
+    const f = await workWithLiveRun();
+    const outcomes: string[] = [];
+    for (let n = 1; n <= MAX_PENDING_EVENT_RESUMES + 1; n += 1) {
+      const routed = await routeAgentEvent(
+        { ...review, id: `review-${n}` },
+        f.deps,
+      );
+      outcomes.push(routed.deliveries[0]!.outcome);
+    }
+    expect(outcomes).toEqual([
+      ...Array(MAX_PENDING_EVENT_RESUMES).fill('resume-queued'),
+      'resume-dropped',
+    ]);
+    expect(await f.store.get('w')).toBeDefined();
+
+    // The run settles; the drain resumes the Work with the eight notices.
+    await f.orchestrator.report(f.firstRunId, { ok: true, summary: 'park' });
+    const admitDeps = {
+      store: f.orchestratorStore,
+      orchestrator: f.orchestrator,
+    };
+    expect(await admitWorkEventResume(admitDeps, { workId: WORK_ID })).toBe(
+      'admitted',
+    );
+    const resume = (await f.orchestratorStore.readActiveRun({
+      workId: WORK_ID,
+    }))!;
+    await f.orchestrator.report(resume.runId, { ok: true, summary: 'park' });
+
+    const merged = await routeAgentEvent(
+      { ...review, id: 'merged-1', kind: 'merged' },
+      f.deps,
+    );
+    expect(merged.deliveries[0]).toMatchObject({
+      outcome: 'resume-queued',
+      ended: true,
+    });
+    expect(await admitWorkEventResume(admitDeps, { workId: WORK_ID })).toBe(
+      'admitted',
+    );
+    expect(
+      (await f.orchestratorStore.readActiveRun({ workId: WORK_ID }))?.params?.[
+        'eventNotice'
+      ],
+    ).toContain('github:pr:jlapenna/homelab#3827 merged');
+    // Ended by its until kind.
+    expect(await f.store.get('w')).toBeUndefined();
+  });
+
+  it('removes the subscription when an event arrives after the item was canceled', async () => {
+    const f = await workWithLiveRun();
+    await routeAgentEvent(review, f.deps);
+    const canceled = await f.orchestrator.cancel(
+      f.firstRunId,
+      'canceled by operator',
+      { workId: WORK_ID },
+    );
+    if (isRefusal(canceled)) throw new Error(canceled.reason);
+    expect(
+      await admitWorkEventResume(
+        { store: f.orchestratorStore, orchestrator: f.orchestrator },
+        { workId: WORK_ID },
+      ),
+    ).toBe('nothing');
+    const after = await routeAgentEvent(
+      { ...review, id: 'review-after-cancel' },
+      f.deps,
+    );
+    expect(after.deliveries[0]).toMatchObject({
+      outcome: 'resume-refused',
+      reason: 'work-canceled',
+    });
+    expect(await f.store.get('w')).toBeUndefined();
+    expect(
+      await f.orchestratorStore.readActiveRun({ workId: WORK_ID }),
+    ).toBeUndefined();
   });
 });

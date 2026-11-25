@@ -2,6 +2,12 @@ import 'server-only';
 
 import { createHash } from 'node:crypto';
 
+import {
+  isLive,
+  isWorkAnchor,
+  type Run,
+  runRecoveryDeadline,
+} from '@agent-lcars/orchestrator';
 import { displayLiveness, type SessionDoc } from '@agent-lcars/telemetry';
 import {
   type AgentEvent,
@@ -14,10 +20,16 @@ import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
 import type { AgentEventSubscriptionStore } from './agent-event-store';
+import { runTokenMatches } from './run-token';
 import type { WorkPrincipal } from './work-auth';
 
 export interface AgentEventsContext {
   principal?: WorkPrincipal;
+  /** The raw `Authorization: Bearer` value, checked as a run token only
+   * when it did not verify as a principal. */
+  bearerToken?: string;
+  /** One run document, for a run-token caller (#3570). */
+  readRun: (runId: string) => Promise<Run | undefined>;
   store: AgentEventSubscriptionStore;
   /** One telemetry session document, or `undefined` when it cannot be read. */
   getSessionDoc: (sessionId: string) => Promise<SessionDoc | undefined>;
@@ -31,6 +43,24 @@ export interface AgentEventsContext {
 /** At most this many subscriptions per session; a runaway loop in one
  * session cannot fill the collection. */
 export const MAX_SUBSCRIPTIONS_PER_SESSION = 64;
+
+/** At most this many subscriptions per native Work, made by its runs. */
+export const MAX_SUBSCRIPTIONS_PER_WORK = 16;
+
+/** Pipelines whose runs an event can resume: the agent CLIs the direct
+ * runner starts in `event` mode. Recipes and claw agents run their own
+ * modes and cannot be resumed this way. */
+const EVENT_RESUMABLE_PIPELINES: ReadonlySet<string> = new Set([
+  'claude',
+  'codex',
+  'opencode',
+  'agy',
+]);
+const EVENT_RESUMABLE_MODES: ReadonlySet<string> = new Set([
+  'implement',
+  'reply',
+  'event',
+]);
 
 /** The host a delivery agent's verified service-account email names:
  * `agent-events-<host>@<project>.iam.gserviceaccount.com`. The account ids
@@ -127,14 +157,28 @@ function view(
 
 const os = implement(agentEventsContract).$context<AgentEventsContext>();
 
-/** Every procedure is built from `delivery`: the caller must hold
- * `events.deliver` and be a host's delivery identity. It runs before input
- * validation, like the Work API's other scope gates. */
-const delivery = os.use(async ({ context, next }) => {
+/** Who is calling: a host's delivery identity, or a dispatched run whose
+ * token is checked against the run named in the request. */
+type Caller =
+  | { readonly kind: 'host'; readonly host: string }
+  | { readonly kind: 'run'; readonly token: string };
+
+/** Every procedure is built from `authenticated`: the caller holds
+ * `events.deliver` as a host's delivery identity, or presents a bearer that
+ * verified as no principal at all, which each handler then checks as the
+ * token of the run its input names. It runs before input validation, like
+ * the Work API's other scope gates. */
+const authenticated = os.use(async ({ context, next }) => {
   const { principal } = context;
+  if (principal === undefined && context.bearerToken !== undefined)
+    return next({
+      context: {
+        caller: { kind: 'run', token: context.bearerToken } as Caller,
+      },
+    });
   if (!principal?.scopes.has('events.deliver'))
     throw new ORPCError('UNAUTHORIZED', {
-      message: 'events.deliver scope required',
+      message: 'events.deliver scope or a run token required',
     });
   const host = deliveryHost(principal);
   // A grant carrying the scope for any other subject is a configuration
@@ -143,65 +187,174 @@ const delivery = os.use(async ({ context, next }) => {
     throw new ORPCError('UNAUTHORIZED', {
       message: 'Only a host delivery identity may manage event subscriptions',
     });
-  return next({ context: { host } });
+  return next({ context: { caller: { kind: 'host', host } as Caller } });
 });
 
-export const agentEventsRouter = os.router({
-  subscribe: delivery.subscribe.handler(async ({ input, context, errors }) => {
-    if (input.workId !== undefined)
-      throw errors.BAD_REQUEST({
-        message:
-          'Work targets are not supported yet (#3570); subscribe a session with sessionId',
-      });
-    if (input.sessionId === undefined)
-      throw errors.BAD_REQUEST({ message: 'sessionId is required' });
-    const validated = validateSubscriptionRequest({
-      key: input.key,
-      ...(input.kinds === undefined ? {} : { kinds: input.kinds }),
-      ...(input.until === undefined ? {} : { until: input.until }),
+/** The run a run-token caller acts as: its token must match the run's
+ * claim, and the run must still be live within its lease -- the same checks
+ * every run-token route makes. One answer for each failure. */
+async function runCaller(
+  context: AgentEventsContext & { caller: Caller },
+  runId: string | undefined,
+): Promise<Run> {
+  if (context.caller.kind !== 'run')
+    throw new ORPCError('BAD_REQUEST', {
+      message: 'runId is only for a dispatched run calling with its run token',
     });
-    if (!validated.ok) throw errors.BAD_REQUEST({ message: validated.error });
-    const { host } = context;
-    const now = context.now();
-    // One answer for a missing session, a session on another host, and an
-    // ended one: a host learns nothing about sessions it does not run.
-    if (
-      !sessionLiveOnHost(
-        await context.getSessionDoc(input.sessionId),
-        host,
-        now,
+  // A bearer that verified as no principal and names no run is judged as
+  // an unauthenticated caller, so a host whose ID token failed verification
+  // reads 401, not a request-shape error.
+  if (runId === undefined)
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'events.deliver scope, or a run token with its runId, required',
+    });
+  const run = await context.readRun(runId);
+  if (
+    run?.queue?.tokenHash === undefined ||
+    !runTokenMatches(context.caller.token, run.queue.tokenHash) ||
+    !isLive(run.state) ||
+    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
+      context.now().getTime()
+  )
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'Invalid or expired run token',
+    });
+  return run;
+}
+
+function requireHost(caller: Caller): string {
+  if (caller.kind !== 'host')
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'events.deliver scope required',
+    });
+  return caller.host;
+}
+
+/** A run's own native Work, if an event can resume it. */
+function resumableWorkId(run: Run): string | undefined {
+  if (!isWorkAnchor(run.task)) return undefined;
+  if (!EVENT_RESUMABLE_PIPELINES.has(run.pipeline)) return undefined;
+  if (!EVENT_RESUMABLE_MODES.has(run.params?.['mode'] ?? '')) return undefined;
+  return run.task.workId;
+}
+
+/** The Work a run caller's subscriptions belong to; any run of the Work
+ * may see and remove them. */
+function ownWorkId(run: Run): string | undefined {
+  return isWorkAnchor(run.task) ? run.task.workId : undefined;
+}
+
+export const agentEventsRouter = os.router({
+  subscribe: authenticated.subscribe.handler(
+    async ({ input, context, errors }) => {
+      const validated = validateSubscriptionRequest({
+        key: input.key,
+        ...(input.kinds === undefined ? {} : { kinds: input.kinds }),
+        ...(input.until === undefined ? {} : { until: input.until }),
+      });
+      const now = context.now();
+      if (context.caller.kind === 'run') {
+        const run = await runCaller(context, input.runId);
+        if (input.sessionId !== undefined)
+          throw errors.BAD_REQUEST({
+            message: 'A run subscribes its Work, not a session',
+          });
+        const workId = resumableWorkId(run);
+        if (workId === undefined)
+          throw errors.FORBIDDEN({
+            message: isWorkAnchor(run.task)
+              ? 'This run’s Work cannot be resumed by an event: only agent runs (claude, codex, opencode, agy) of coding Work can'
+              : 'Only a run of native Work can subscribe; LCARS already resumes issue and pull-request work on reviews and CI',
+          });
+        if (input.workId !== undefined && input.workId !== workId)
+          throw errors.FORBIDDEN({
+            message: 'A run may subscribe only its own Work',
+          });
+        if (!validated.ok)
+          throw errors.BAD_REQUEST({ message: validated.error });
+        if (validated.value.key === `lcars:work:${workId}`)
+          throw errors.BAD_REQUEST({
+            message: 'A Work cannot subscribe to its own state',
+          });
+        const target = { type: 'work' as const, workId };
+        const subscription: AgentEventSubscription = {
+          ...validated.value,
+          id: agentEventSubscriptionId({ ...validated.value, target }),
+          target,
+          createdAt: now.toISOString(),
+        };
+        const existing = await context.store.get(subscription.id);
+        if (existing !== undefined) return view(existing);
+        if (
+          (await context.store.listForWork(workId)).length >=
+          MAX_SUBSCRIPTIONS_PER_WORK
+        )
+          throw errors.CONFLICT({
+            message: `Work ${workId} already has ${MAX_SUBSCRIPTIONS_PER_WORK} subscriptions`,
+          });
+        return view((await context.store.create(subscription)).subscription);
+      }
+      const host = requireHost(context.caller);
+      if (input.runId !== undefined || input.workId !== undefined)
+        throw errors.BAD_REQUEST({
+          message:
+            'Work targets are subscribed by a dispatched run with its run token; subscribe a session with sessionId',
+        });
+      if (input.sessionId === undefined)
+        throw errors.BAD_REQUEST({ message: 'sessionId is required' });
+      if (!validated.ok) throw errors.BAD_REQUEST({ message: validated.error });
+      // One answer for a missing session, a session on another host, and an
+      // ended one: a host learns nothing about sessions it does not run.
+      if (
+        !sessionLiveOnHost(
+          await context.getSessionDoc(input.sessionId),
+          host,
+          now,
+        )
       )
-    )
-      throw errors.FORBIDDEN({
-        message: `Session ${input.sessionId} is not a live session reported by ${host}`,
-      });
-    const target = {
-      type: 'session' as const,
-      sessionId: input.sessionId,
-      host,
-    };
-    const subscription: AgentEventSubscription = {
-      ...validated.value,
-      id: agentEventSubscriptionId({ ...validated.value, target }),
-      target,
-      createdAt: now.toISOString(),
-    };
-    const existing = await context.store.get(subscription.id);
-    if (existing !== undefined) return view(existing);
-    if (
-      (await context.store.countForSession(input.sessionId)) >=
-      MAX_SUBSCRIPTIONS_PER_SESSION
-    )
-      throw errors.CONFLICT({
-        message: `Session ${input.sessionId} already has ${MAX_SUBSCRIPTIONS_PER_SESSION} subscriptions`,
-      });
-    return view((await context.store.create(subscription)).subscription);
-  }),
-  list: delivery.list.handler(async ({ input, context }) => {
-    const subscriptions = await context.store.listForHost(
-      context.host,
-      input.sessionId,
-    );
+        throw errors.FORBIDDEN({
+          message: `Session ${input.sessionId} is not a live session reported by ${host}`,
+        });
+      const target = {
+        type: 'session' as const,
+        sessionId: input.sessionId,
+        host,
+      };
+      const subscription: AgentEventSubscription = {
+        ...validated.value,
+        id: agentEventSubscriptionId({ ...validated.value, target }),
+        target,
+        createdAt: now.toISOString(),
+      };
+      const existing = await context.store.get(subscription.id);
+      if (existing !== undefined) return view(existing);
+      if (
+        (await context.store.countForSession(input.sessionId)) >=
+        MAX_SUBSCRIPTIONS_PER_SESSION
+      )
+        throw errors.CONFLICT({
+          message: `Session ${input.sessionId} already has ${MAX_SUBSCRIPTIONS_PER_SESSION} subscriptions`,
+        });
+      return view((await context.store.create(subscription)).subscription);
+    },
+  ),
+  list: authenticated.list.handler(async ({ input, context }) => {
+    let subscriptions: AgentEventSubscription[];
+    if (context.caller.kind === 'run') {
+      const workId = ownWorkId(await runCaller(context, input.runId));
+      subscriptions =
+        workId === undefined ? [] : await context.store.listForWork(workId);
+    } else {
+      if (input.runId !== undefined)
+        throw new ORPCError('BAD_REQUEST', {
+          message:
+            'runId is only for a dispatched run calling with its run token',
+        });
+      subscriptions = await context.store.listForHost(
+        context.caller.host,
+        input.sessionId,
+      );
+    }
     return {
       subscriptions: subscriptions
         .map(view)
@@ -211,15 +364,15 @@ export const agentEventsRouter = os.router({
         ),
     };
   }),
-  reportSession: delivery.reportSession.handler(
+  reportSession: authenticated.reportSession.handler(
     async ({ input, context, errors }) => {
+      const host = requireHost(context.caller);
       const now = context.now();
       if (
         Date.parse(input.occurredAt) - now.getTime() >
         MAX_REPORT_CLOCK_SKEW_MS
       )
         throw errors.BAD_REQUEST({ message: 'occurredAt is in the future' });
-      const { host } = context;
       const doc = await context.getSessionDoc(input.sessionId);
       // An idle session must still be live here; an ended one has stopped,
       // so only the host the telemetry names for it is checked. One answer
@@ -247,15 +400,27 @@ export const agentEventsRouter = os.router({
       };
     },
   ),
-  unsubscribe: delivery.unsubscribe.handler(
+  unsubscribe: authenticated.unsubscribe.handler(
     async ({ input, context, errors }) => {
       const existing = await context.store.get(input.id);
-      // Another host's subscription reads as absent.
-      if (
-        existing?.target.type !== 'session' ||
-        existing.target.host !== context.host
-      )
-        throw errors.NOT_FOUND();
+      if (context.caller.kind === 'run') {
+        const workId = ownWorkId(await runCaller(context, input.runId));
+        // Another Work's subscription reads as absent.
+        if (
+          workId === undefined ||
+          existing?.target.type !== 'work' ||
+          existing.target.workId !== workId
+        )
+          throw errors.NOT_FOUND();
+      } else {
+        if (input.runId !== undefined) throw errors.NOT_FOUND();
+        // Another host's subscription reads as absent.
+        if (
+          existing?.target.type !== 'session' ||
+          existing.target.host !== context.caller.host
+        )
+          throw errors.NOT_FOUND();
+      }
       if (!(await context.store.delete(input.id))) throw errors.NOT_FOUND();
       return { id: input.id, deleted: true as const };
     },

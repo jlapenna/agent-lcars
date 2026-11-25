@@ -1963,11 +1963,15 @@ export type AgentEventSubscriptionView = z.output<
 const eventsBase = oc.meta(openapi({ tags: ['events'], spec: withBearer }));
 
 /**
- * Subscriptions that route events to agents (#3538). Only a host's delivery
- * agent calls these, as its `svc:agent-events-<host>` principal with
- * `events.deliver`. The host is the one named by that verified identity,
- * never a request field, so a host can subscribe only for sessions its own
- * telemetry reports and can see or remove only its own subscriptions.
+ * Subscriptions that route events to agents (#3538). Two callers:
+ *
+ * - a host's delivery agent, as its `svc:agent-events-<host>` principal with
+ *   `events.deliver`. The host is the one named by that verified identity,
+ *   never a request field, so a host can subscribe only for sessions its own
+ *   telemetry reports and can see or remove only its own subscriptions;
+ * - a dispatched run of native Work (#3570), with its run token as the
+ *   bearer and its `runId` in the request. Its subscriptions target its own
+ *   Work, which a matching event resumes; it sees and removes only those.
  */
 export const agentEventsContract = {
   subscribe: eventsBase
@@ -1976,24 +1980,36 @@ export const agentEventsContract = {
         method: 'POST',
         path: '/events/subscriptions',
         operationId: 'createAgentEventSubscription',
-        summary: 'Subscribe a live session on the calling host to an event key',
+        summary:
+          "Subscribe a live session on the calling host, or a dispatched run's Work, to an event key",
         description:
-          'Requires events.deliver. Accepted only when the session telemetry ' +
-          'reports the calling host and the session has not ended. Idempotent: ' +
-          'the same session, key, kinds and until return the existing ' +
-          'subscription. Work targets (workId) are not accepted yet.',
+          'With events.deliver: accepted only when the session telemetry ' +
+          'reports the calling host and the session has not ended. With a ' +
+          'run token and runId: the subscription targets the run’s own native ' +
+          'Work (a workId naming any other Work is refused), and a matching ' +
+          'event starts a resume run of that Work with the event notice as ' +
+          'its input. Idempotent: the same target, key, kinds and until ' +
+          'return the existing subscription.',
         successStatus: 201,
       }),
     )
     .errors({
       BAD_REQUEST: { message: 'Malformed key, kinds or until' },
-      FORBIDDEN: { message: 'No live session on the calling host' },
-      CONFLICT: { message: 'Subscription limit reached for the session' },
+      FORBIDDEN: {
+        message:
+          'No live session on the calling host, or not the run’s own resumable Work',
+      },
+      CONFLICT: {
+        message: 'Subscription limit reached for the session or Work',
+      },
     })
     .input(
       agentEventSubscriptionRequestSchema.extend({
+        /** Host callers: the session to deliver to. */
         sessionId: agentEventSessionIdSchema.optional(),
-        /** Reserved for dispatched Work (#3570); refused until then. */
+        /** Run callers: the run whose token is the bearer. */
+        runId: runIdSchema.optional(),
+        /** Run callers: optional, and must be the run's own Work. */
         workId: agentEventWorkIdSchema.optional(),
       }),
     )
@@ -2004,12 +2020,14 @@ export const agentEventsContract = {
         method: 'GET',
         path: '/events/subscriptions',
         operationId: 'listAgentEventSubscriptions',
-        summary: "List the calling host's event subscriptions",
+        summary:
+          "List the calling host's event subscriptions, or a run's Work's",
       }),
     )
     .input(
       z.strictObject({
         sessionId: agentEventSessionIdSchema.optional(),
+        runId: runIdSchema.optional(),
       }),
     )
     .output(
@@ -2057,11 +2075,19 @@ export const agentEventsContract = {
         method: 'DELETE',
         path: '/events/subscriptions/{id}',
         operationId: 'deleteAgentEventSubscription',
-        summary: "Remove one of the calling host's event subscriptions",
+        summary:
+          "Remove one of the calling host's, or a run's Work's, event subscriptions",
       }),
     )
-    .errors({ NOT_FOUND: { message: 'No such subscription on this host' } })
-    .input(z.strictObject({ id: agentEventSubscriptionIdSchema }))
+    .errors({
+      NOT_FOUND: { message: 'No such subscription for this caller' },
+    })
+    .input(
+      z.strictObject({
+        id: agentEventSubscriptionIdSchema,
+        runId: runIdSchema.optional(),
+      }),
+    )
     .output(
       z.strictObject({
         id: agentEventSubscriptionIdSchema,

@@ -1,3 +1,4 @@
+import type { Run } from '@agent-lcars/orchestrator';
 import type { CliSessionDoc, SessionDoc } from '@agent-lcars/telemetry';
 import { agentEventDeliverySchema } from '@agent-lcars/work';
 import { describe, expect, it, vi } from 'vitest';
@@ -10,10 +11,12 @@ import {
   createAgentEventsHandler,
   deliveryHost,
   MAX_SUBSCRIPTIONS_PER_SESSION,
+  MAX_SUBSCRIPTIONS_PER_WORK,
   sessionEventId,
   sessionLiveOnHost,
   sessionReportedByHost,
 } from './agent-event-subscriptions-router';
+import { hashRunToken } from './run-token';
 import type { WorkPrincipal } from './work-auth';
 
 const NOW = new Date('2026-11-25T12:00:00.000Z');
@@ -63,6 +66,7 @@ function context(
   return {
     principal: deliveryPrincipal('pike'),
     store: new MemoryAgentEventSubscriptionStore(),
+    readRun: async () => undefined,
     getSessionDoc: async (id) => sessions.get(id),
     now: () => NOW,
     ...overrides,
@@ -253,16 +257,22 @@ describe('POST /events/subscriptions', () => {
     expect(String(json['message'])).toContain(message);
   });
 
-  it('refuses a Work target clearly until #3570', async () => {
+  it('leaves Work targets to a dispatched run with its run token', async () => {
     const ctx = context();
-    const { status, json } = await subscribe(ctx, {
-      workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
-      key: 'lcars:session:other',
-    });
-    expect(status).toBe(400);
-    expect(json['message']).toBe(
-      'Work targets are not supported yet (#3570); subscribe a session with sessionId',
-    );
+    for (const extra of [
+      { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
+      { runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1' },
+    ]) {
+      const { status, json } = await subscribe(ctx, {
+        sessionId: 'session-a',
+        key: 'lcars:session:other',
+        ...extra,
+      });
+      expect(status).toBe(400);
+      expect(json['message']).toBe(
+        'Work targets are subscribed by a dispatched run with its run token; subscribe a session with sessionId',
+      );
+    }
   });
 
   it('requires a sessionId', async () => {
@@ -407,6 +417,260 @@ describe('GET and DELETE /events/subscriptions', () => {
   });
 });
 
+describe('a dispatched run subscribing its Work (#3570)', () => {
+  const WORK_ID = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
+  const OTHER_WORK = '01J5Z3K9QX8F0N2B4V6C8D1E3H';
+  const RUN_ID = `work:${WORK_ID}/r1`;
+  const TOKEN = 'run-token-1';
+
+  function run(overrides: Partial<Run> = {}): Run {
+    return {
+      runId: RUN_ID,
+      task: { workId: WORK_ID },
+      state: 'running',
+      pipeline: 'claude',
+      priority: 'normal',
+      requestId: 'req-1',
+      requestSource: 'caller',
+      params: { mode: 'implement' },
+      queue: {
+        state: 'claimed',
+        claimedAt: '2026-11-25T11:50:00.000Z',
+        tokenHash: hashRunToken(TOKEN),
+      },
+      leaseExpiresAt: '2026-11-25T13:00:00.000Z',
+      events: [],
+      createdAt: '2026-11-25T11:50:00.000Z',
+      updatedAt: '2026-11-25T11:50:00.000Z',
+      ...overrides,
+    };
+  }
+
+  function runContext(runs: Run[] = [run()], token = TOKEN) {
+    const byId = new Map(runs.map((r) => [r.runId, r]));
+    const ctx = context({
+      bearerToken: token,
+      readRun: async (id) => byId.get(id),
+    });
+    delete ctx.principal;
+    return ctx;
+  }
+
+  it('subscribes the run’s own Work, idempotently', async () => {
+    const ctx = runContext();
+    const first = await subscribe(ctx, {
+      runId: RUN_ID,
+      key: 'github:run:jlapenna/agent-lcars/42',
+      until: 'completed',
+    });
+    expect(first.status).toBe(201);
+    expect(first.json).toMatchObject({
+      key: 'github:run:jlapenna/agent-lcars/42',
+      until: 'completed',
+      target: { type: 'work', workId: WORK_ID },
+    });
+    const again = await subscribe(ctx, {
+      runId: RUN_ID,
+      workId: WORK_ID,
+      key: 'github:run:jlapenna/agent-lcars/42',
+      until: 'completed',
+    });
+    expect(again.json['id']).toBe(first.json['id']);
+    expect(ctx.store.documents.size).toBe(1);
+  });
+
+  it('refuses a run subscribing for another Work', async () => {
+    const ctx = runContext();
+    const { status, json } = await subscribe(ctx, {
+      runId: RUN_ID,
+      workId: OTHER_WORK,
+      key: 'lcars:session:other',
+    });
+    expect(status).toBe(403);
+    expect(json['message']).toBe('A run may subscribe only its own Work');
+    expect(ctx.store.documents.size).toBe(0);
+  });
+
+  it.each([
+    ['a wrong token', [run()], 'not-the-token'],
+    ['a settled run', [run({ state: 'finished' })], TOKEN],
+    [
+      'an expired lease',
+      [run({ leaseExpiresAt: '2026-11-25T11:59:59.000Z' })],
+      TOKEN,
+    ],
+    ['an unknown run', [], TOKEN],
+    ['an unclaimed run', [run({ queue: { state: 'queued' } })], TOKEN],
+  ] as const)(
+    'answers 401 to %s before reading anything else',
+    async (_label, runs, token) => {
+      const ctx = runContext([...runs], token);
+      for (const [method, path, body] of [
+        [
+          'POST',
+          '/events/subscriptions',
+          { runId: RUN_ID, key: 'lcars:session:x' },
+        ],
+        [
+          'GET',
+          `/events/subscriptions?runId=${encodeURIComponent(RUN_ID)}`,
+          undefined,
+        ],
+        // A DELETE carries its runId in the body, as the oRPC client sends it.
+        ['DELETE', '/events/subscriptions/abc', { runId: RUN_ID }],
+      ] as const)
+        expect((await call(ctx, method, path, body)).status).toBe(401);
+      expect(ctx.store.documents.size).toBe(0);
+    },
+  );
+
+  it('needs the runId the token belongs to', async () => {
+    const { status, json } = await subscribe(runContext(), {
+      key: 'lcars:session:x',
+    });
+    expect(status).toBe(401);
+    expect(json['message']).toBe(
+      'events.deliver scope, or a run token with its runId, required',
+    );
+  });
+
+  it.each([
+    [
+      'a run of issue work',
+      run({
+        runId: 'octo/example#7/r1',
+        task: { repo: 'octo/example', issue: 7 },
+      }),
+      403,
+      'Only a run of native Work can subscribe; LCARS already resumes issue and pull-request work on reviews and CI',
+    ],
+    [
+      'a recipe run',
+      run({ pipeline: 'goose', params: { mode: 'recipe' } }),
+      403,
+      'This run’s Work cannot be resumed by an event: only agent runs (claude, codex, opencode, agy) of coding Work can',
+    ],
+    [
+      'a review run',
+      run({ params: { mode: 'review' } }),
+      403,
+      'This run’s Work cannot be resumed by an event: only agent runs (claude, codex, opencode, agy) of coding Work can',
+    ],
+  ] as const)('refuses %s', async (_label, subscriber, status, message) => {
+    const ctx = runContext([subscriber]);
+    const result = await subscribe(ctx, {
+      runId: subscriber.runId,
+      key: 'lcars:session:x',
+    });
+    expect(result.status).toBe(status);
+    expect(result.json['message']).toBe(message);
+  });
+
+  it('refuses a session target and the Work’s own state from a run', async () => {
+    const ctx = runContext();
+    expect(
+      (
+        await subscribe(ctx, {
+          runId: RUN_ID,
+          sessionId: 'session-a',
+          key: 'lcars:session:x',
+        })
+      ).json['message'],
+    ).toBe('A run subscribes its Work, not a session');
+    expect(
+      (await subscribe(ctx, { runId: RUN_ID, key: `lcars:work:${WORK_ID}` }))
+        .json['message'],
+    ).toBe('A Work cannot subscribe to its own state');
+  });
+
+  it('caps subscriptions per Work', async () => {
+    const ctx = runContext();
+    for (let n = 0; n < MAX_SUBSCRIPTIONS_PER_WORK; n++)
+      expect(
+        (await subscribe(ctx, { runId: RUN_ID, key: `lcars:session:s-${n}` }))
+          .status,
+      ).toBe(201);
+    expect(
+      (await subscribe(ctx, { runId: RUN_ID, key: 'lcars:session:too-many' }))
+        .status,
+    ).toBe(409);
+  });
+
+  it('lists and removes only its own Work’s subscriptions', async () => {
+    const ctx = runContext();
+    const own = await subscribe(ctx, { runId: RUN_ID, key: 'lcars:session:x' });
+    const ownId = String(own.json['id']);
+    const otherId = agentEventSubscriptionId({
+      key: 'lcars:session:x',
+      target: { type: 'work', workId: OTHER_WORK },
+    });
+    await ctx.store.create({
+      id: otherId,
+      key: 'lcars:session:x',
+      source: 'lcars:session',
+      target: { type: 'work', workId: OTHER_WORK },
+      createdAt: NOW.toISOString(),
+    });
+    const sessionId = agentEventSubscriptionId({
+      key: 'lcars:session:x',
+      target: { type: 'session', sessionId: 'session-a', host: 'pike' },
+    });
+    await ctx.store.create({
+      id: sessionId,
+      key: 'lcars:session:x',
+      source: 'lcars:session',
+      target: { type: 'session', sessionId: 'session-a', host: 'pike' },
+      createdAt: NOW.toISOString(),
+    });
+    const q = `runId=${encodeURIComponent(RUN_ID)}`;
+    const listed = await call(ctx, 'GET', `/events/subscriptions?${q}`);
+    expect(
+      (listed.json['subscriptions'] as { id: string }[]).map(({ id }) => id),
+    ).toEqual([ownId]);
+    for (const id of [otherId, sessionId])
+      expect(
+        (
+          await call(ctx, 'DELETE', `/events/subscriptions/${id}`, {
+            runId: RUN_ID,
+          })
+        ).status,
+      ).toBe(404);
+    expect(
+      (
+        await call(ctx, 'DELETE', `/events/subscriptions/${ownId}`, {
+          runId: RUN_ID,
+        })
+      ).json,
+    ).toEqual({ id: ownId, deleted: true });
+
+    // A host sees no Work subscriptions and cannot remove one.
+    const host = context({ store: ctx.store });
+    expect(
+      (
+        (await call(host, 'GET', '/events/subscriptions')).json[
+          'subscriptions'
+        ] as { id: string }[]
+      ).map(({ id }) => id),
+    ).toEqual([sessionId]);
+    expect(
+      (await call(host, 'DELETE', `/events/subscriptions/${otherId}`)).status,
+    ).toBe(404);
+  });
+
+  it('may not report session events', async () => {
+    const ctx = runContext();
+    expect(
+      (
+        await call(ctx, 'POST', '/events/session', {
+          sessionId: 'session-a',
+          kind: 'ended',
+          occurredAt: '2026-11-25T11:59:30.000Z',
+        })
+      ).status,
+    ).toBe(401);
+  });
+});
+
 describe('POST /events/session', () => {
   /** A context whose events are routed for real through its own store, to
    * a recording publisher. */
@@ -418,7 +682,11 @@ describe('POST /events/session', () => {
     let n = 0;
     const publish = vi.fn(async () => `message-${++n}`);
     ctx.routeEvent = (event) =>
-      routeAgentEvent(event, { store: ctx.store, publisher: { publish } });
+      routeAgentEvent(event, {
+        store: ctx.store,
+        publisher: { publish },
+        resumeWork: async () => ({ outcome: 'queued' }),
+      });
     return { ctx, publish };
   }
 

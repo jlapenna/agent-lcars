@@ -11,7 +11,8 @@ import { deriveItemState } from '@agent-lcars/work/derive';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { WorkContext } from './work-mint';
-import { requestReply, resumeUriFor, selectResumeSession } from './work-reply';
+import { requestReply } from './work-reply';
+import { resumeUriFor, selectResumeSession } from './work-resume-session';
 
 /** A minimal, valid `IssueAgentSessionDoc` -- every field the type
  *  requires, none of the ones it doesn't. Mirrors `work-router.test.ts`'s

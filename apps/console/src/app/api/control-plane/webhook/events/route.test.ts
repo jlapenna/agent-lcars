@@ -7,7 +7,13 @@ const { routeGithubAgentEvents } = vi.hoisted(() => ({
   routeGithubAgentEvents: vi.fn(),
 }));
 
-vi.mock('@/lib/github-agent-event-intake', () => ({ routeGithubAgentEvents }));
+vi.mock('@/lib/github-agent-event-intake', () => ({
+  routeGithubAgentEvents,
+  defaultGithubAgentEventDeps: (runtime: unknown) => ({ runtime }),
+}));
+vi.mock('@/lib/orchestrator-runtime', () => ({
+  createOrchestratorRuntime: () => 'runtime',
+}));
 
 import { POST } from './route';
 
@@ -54,6 +60,7 @@ describe('POST /api/control-plane/webhook/events', () => {
         deliveryId: DELIVERY,
         payload: { action: 'submitted' },
       }),
+      { runtime: 'runtime' },
     );
   });
 

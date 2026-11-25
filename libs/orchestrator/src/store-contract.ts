@@ -14,6 +14,7 @@ import {
   cancelRun,
   confirmDispatch,
   decidedRun,
+  eventResumeRequestId,
   isRefusal,
   MAX_PLACEMENT_WAITS,
   PLACEMENT_WAIT_BUDGET_EXHAUSTED_NOTE,
@@ -811,6 +812,70 @@ export function runOrchestratorStoreContract(
           first.run.runId,
         ]);
         expect(records.outstandingOutbox).toEqual([]);
+      });
+    });
+
+    it('keeps an event that arrives during a run and resumes the Work once after it settles (#3570)', async () => {
+      const { store, orchestrator } = await fixture();
+      const work = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' };
+      const first = await orchestrator.request({
+        taskId: work,
+        requestId: 'req-1',
+        pipeline: 'claude',
+        work: TASK_WORK,
+        params: { mode: 'implement' },
+      });
+      if (isRefusal(first)) throw new Error(first.reason);
+      const event = { deliveryId: 'sub:ev-1', notice: '[lcars-event] done' };
+      expect(isRefusal(await orchestrator.queueEventResume(work, event))).toBe(
+        false,
+      );
+      expect(await orchestrator.queueEventResume(work, event)).toMatchObject({
+        refused: true,
+        reason: 'duplicate-request',
+      });
+      const waiting = (await store.readTask(work))?.task.eventResumes;
+      expect(waiting).toMatchObject({
+        received: 1,
+        admitted: 0,
+        pending: [{ seq: 1, deliveryId: 'sub:ev-1' }],
+        recent: ['sub:ev-1'],
+      });
+
+      const settled = await orchestrator.report(decidedRun(first).runId, {
+        ok: true,
+        summary: 'park',
+      });
+      if (isRefusal(settled)) throw new Error(settled.reason);
+      const entries = await claimOutbox(store, T0, 20);
+      expect(entries.filter((entry) => entry.kind === 'event-resume')).toEqual([
+        expect.objectContaining({
+          entryId: `event-resume/${decidedRun(first).runId}`,
+        }),
+      ]);
+
+      const admit = () =>
+        orchestrator.admitEventResume({
+          taskId: work,
+          requestId: eventResumeRequestId(1),
+          pipeline: 'claude',
+        });
+      const resumed = await admit();
+      if (isRefusal(resumed)) throw new Error(resumed.reason);
+      expect(decidedRun(resumed)).toMatchObject({
+        requestSource: 'event',
+        params: { mode: 'event', eventNotice: '[lcars-event] done' },
+      });
+      expect(await admit()).toMatchObject({
+        refused: true,
+        reason: 'duplicate-request',
+        existingRun: expect.objectContaining({
+          runId: decidedRun(resumed).runId,
+        }),
+      });
+      expect((await store.readTask(work))?.task.eventResumes).toMatchObject({
+        admitted: 1,
+        pending: [],
       });
     });
 

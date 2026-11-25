@@ -2,12 +2,16 @@ import { logger } from '@agent-lcars/logging';
 import { required } from '@agent-lcars/util-server';
 import { NextResponse } from 'next/server';
 
-import { routeGithubAgentEvents } from '@/lib/github-agent-event-intake';
+import {
+  defaultGithubAgentEventDeps,
+  routeGithubAgentEvents,
+} from '@/lib/github-agent-event-intake';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
 import {
   MAX_PROCESS_ATTEMPTS,
   parseAttempt,
 } from '@/lib/hosted-webhook-policy';
+import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
 
 /**
  * Cloud Tasks target that routes one GitHub delivery's agent events to
@@ -54,12 +58,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     request.headers.get('x-cloudtasks-taskretrycount'),
   );
   try {
-    const result = await routeGithubAgentEvents({
-      event: eventName,
-      deliveryId,
-      payload,
-      receivedAt: new Date().toISOString(),
-    });
+    const result = await routeGithubAgentEvents(
+      {
+        event: eventName,
+        deliveryId,
+        payload,
+        receivedAt: new Date().toISOString(),
+      },
+      defaultGithubAgentEventDeps(createOrchestratorRuntime()),
+    );
     logger.info('agent-lcars: GitHub agent events processed', {
       eventName,
       ...result,
