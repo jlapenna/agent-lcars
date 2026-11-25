@@ -28,8 +28,25 @@ const REPORT_INTERVAL_MS = 5 * 60_000;
 const TOP_LABELS = 25;
 const INSTALLED_KEY = '__agentLcarsFirestoreReadAccounting';
 
-const operation = new AsyncLocalStorage<string>();
-const counts = new Map<string, { calls: number; docs: number }>();
+/**
+ * Held on `globalThis` because the SDK wrappers are installed from
+ * `instrumentation.ts` while the store labelling runs inside pages and Route
+ * Handlers, which load separate copies of this module in one JS realm (see
+ * in-flight.ts). Module-level state would give each copy its own label store
+ * and counts, so every read would be labelled `direct`.
+ */
+const STATE_KEY = '__agentLcarsFirestoreReadState';
+
+interface ReadState {
+  operation: AsyncLocalStorage<string>;
+  counts: Map<string, { calls: number; docs: number }>;
+}
+
+const realm = globalThis as Record<string, unknown>;
+const { operation, counts } = (realm[STATE_KEY] ??= {
+  operation: new AsyncLocalStorage<string>(),
+  counts: new Map(),
+}) as ReadState;
 
 /** Runs `read` with `label` naming the operation its Firestore reads belong to. */
 export function withReadLabel<T>(label: string, read: () => T): T {
@@ -93,7 +110,6 @@ export function report(): void {
 
 /** Wraps the SDK's read methods once per process. */
 export function installReadAccounting(): void {
-  const realm = globalThis as Record<string, unknown>;
   if (realm[INSTALLED_KEY]) return;
   realm[INSTALLED_KEY] = true;
 

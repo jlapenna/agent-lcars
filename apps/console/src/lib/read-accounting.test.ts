@@ -57,4 +57,22 @@ describe('read accounting', () => {
       reads: { 'listThings things': { calls: 1, docs: 2 } },
     });
   });
+
+  it('shares labels and counts across separate module copies', async () => {
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => undefined);
+    vi.resetModules();
+    const other = await import('./read-accounting');
+
+    withReadLabel('listNativeTasks', () => other.recordRead('tasks', 2));
+    other.withReadLabel('readTask', () => recordRead('tasks', 1));
+    report();
+
+    expect(info.mock.calls[0]![1]).toMatchObject({
+      totalDocs: 3,
+      reads: {
+        'listNativeTasks tasks': { calls: 1, docs: 2 },
+        'readTask tasks': { calls: 1, docs: 1 },
+      },
+    });
+  });
 });
