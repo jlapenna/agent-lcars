@@ -73,6 +73,11 @@ subscription to `AGENT_LCARS_AGENT_EVENTS_TOPIC`, with `host` and
 a subscription the event ends. It skips an event id it has already published
 for a subscription.
 
+Native Work items are a source: each change of an item's state is routed as
+an `lcars:work:<workId>` event through the orchestrator outbox
+(`work-agent-events.ts` maps states to kinds; see
+[Work state events](../../docs/lifecycle-systems.md#work-state-events)).
+
 ## Replying from the CLI
 
 ```bash

@@ -1,6 +1,7 @@
 import { parseRunGeneration } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
+  agentEventIdOf,
   deliveryBindingSchema,
   isWorkAnchor,
   type LeasedOutboxEntry,
@@ -14,11 +15,14 @@ import {
   type Task,
 } from '@agent-lcars/orchestrator';
 import {
+  type AgentEvent,
   isSourceManagedWork,
   storedWorkPayloadSchema,
+  workAgentEvent,
 } from '@agent-lcars/work';
 import { deriveItemState } from '@agent-lcars/work/derive';
 
+import { routeAgentEvent as routeAgentEventDefault } from './agent-event-routing';
 import { type AnchorTarget, anchorTarget } from './anchor-target';
 import { agentFleetLogin, consoleUrl } from './deployment';
 import { publishFleetTriage } from './fleet-triage-publish';
@@ -160,6 +164,9 @@ export interface DispatchDeps {
   /** Injectable for tests; defaults to the real signed webhook POST
    *  (`./outcome-webhook`'s `deliverOutcomeWebhook`). */
   deliverOutcomeWebhook?: typeof deliverOutcomeWebhookDefault;
+  /** Injectable for tests; defaults to the subscription router
+   *  (`./agent-event-routing`'s `routeAgentEvent`). */
+  routeAgentEvent?: (event: AgentEvent) => Promise<unknown>;
 }
 
 export interface DrainOutboxResult {
@@ -240,6 +247,8 @@ export async function drainOutbox(
         await handleDispatchRun(deps, entry, result);
       } else if (entry.kind === 'monitor-delivery') {
         await handleMonitorDelivery(deps, entry);
+      } else if (entry.kind === 'agent-event') {
+        await handleAgentEvent(deps, entry);
       } else {
         await handleReportOutcome(deps, entry, result);
       }
@@ -311,6 +320,40 @@ async function handleMonitorDelivery(
     ).toISOString(),
     recovered: true,
   });
+}
+
+/**
+ * Tells sessions subscribed to `lcars:work:<workId>` that the item changed
+ * state (#3568). The store wrote this entry in the transaction that made the
+ * change, so the transition itself never waits on routing. Routing reads the
+ * key's subscriptions (one Firestore query) and publishes one message per
+ * match. A failure throws into the ordinary retryable-failure path; the
+ * retry reuses the entry's event id, and the router skips subscriptions it
+ * already published that id for, so only the failed deliveries go out again.
+ */
+async function handleAgentEvent(
+  deps: DispatchDeps,
+  entry: LeasedOutboxEntry,
+): Promise<void> {
+  if (!isWorkAnchor(entry.task) || entry.itemState === undefined) {
+    // Not something a retry can fix: retire it where the outbox gauge and
+    // this log show it, rather than retrying it for three days.
+    logger.error(
+      'agent-lcars: agent-event outbox entry %s has no Work anchor or state',
+      entry.entryId,
+    );
+    await settleClaim(deps, entry, 'failed');
+    return;
+  }
+  const event = workAgentEvent({
+    workId: entry.task.workId,
+    eventId: agentEventIdOf(entry),
+    state: entry.itemState,
+    occurredAt: entry.createdAt,
+    consoleUrl: consoleUrl(),
+  });
+  await (deps.routeAgentEvent ?? routeAgentEventDefault)(event);
+  await settleClaim(deps, entry, 'done');
 }
 
 /** A PR webhook makes every waiting monitor bound to that PR (or repository on

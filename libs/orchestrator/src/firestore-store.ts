@@ -26,7 +26,7 @@ import {
   isRefusal,
   type Refusal,
 } from './decide';
-import { taskDerivedFrom } from './item-state';
+import { itemStateEventOutbox, taskDerivedFrom } from './item-state';
 import {
   type LifecycleMetricRead,
   type LifecycleMetricRecords,
@@ -40,6 +40,7 @@ import {
   isLive,
   isWorkAnchor,
   type LeasedOutboxEntry,
+  type OutboxEntry,
   outboxEntrySchema,
   type OutboxSettlement,
   queueOrderAt,
@@ -168,16 +169,29 @@ function isAlreadyExists(error: unknown): boolean {
  */
 /** The stored item state for a task write: derived from the task's runs as
  * they will be once `written` (each replacing its stored copy by run id)
- * commits, or absent when the stored runs could not all be read. */
-function storedDerived(
-  task: Task,
-  stored: readonly Run[] | undefined,
-  written: readonly (Run | undefined)[],
-): { derived?: TaskDerived } {
-  if (stored === undefined) return {};
+ * commits, or absent when the stored runs could not all be read. With it,
+ * the `agent-event` outbox entry when the write changes a native Work item's
+ * state (#3568), written in the same transaction. */
+function taskWrite(input: {
+  previous: Task | undefined;
+  task: Task;
+  stored: readonly Run[] | undefined;
+  written: readonly (Run | undefined)[];
+  revision: number;
+}): { stored: { derived?: TaskDerived }; events: OutboxEntry[] } {
+  const { previous, task, stored, written, revision } = input;
+  if (stored === undefined) return { stored: {}, events: [] };
   const runs = new Map(stored.map((run) => [run.runId, run]));
   for (const run of written) if (run !== undefined) runs.set(run.runId, run);
-  return { derived: taskDerivedFrom(task, [...runs.values()]) };
+  const next = [...runs.values()];
+  return {
+    stored: { derived: taskDerivedFrom(task, next) },
+    events: itemStateEventOutbox({
+      previous: { task: previous, runs: stored },
+      next: { task, runs: next },
+      revision,
+    }),
+  };
 }
 
 export class FirestoreStore implements OrchestratorStore {
@@ -661,13 +675,18 @@ export class FirestoreStore implements OrchestratorStore {
       )
         tx.create(revisionRef, input.sourceRevision);
 
+      const revision = (task?.revision ?? 0) + 1;
+      const written = taskWrite({
+        previous: task?.task,
+        task: outcome.task,
+        stored: storedRuns,
+        written: [outcome.run, ...(outcome.additionalRuns ?? [])],
+        revision,
+      });
       const nextTaskDoc: z.infer<typeof taskDocSchema> = {
         task: outcome.task,
-        revision: (task?.revision ?? 0) + 1,
-        ...storedDerived(outcome.task, storedRuns, [
-          outcome.run,
-          ...(outcome.additionalRuns ?? []),
-        ]),
+        revision,
+        ...written.stored,
       };
       tx.set(taskRef, nextTaskDoc);
       if (outcome.run !== undefined) {
@@ -677,7 +696,7 @@ export class FirestoreStore implements OrchestratorStore {
         tx.set(this.#runRef(run.runId), run);
       }
       this.#commitProviderCooldownWrites(tx, cooldownWrites);
-      for (const entry of outcome.outbox) {
+      for (const entry of [...outcome.outbox, ...written.events]) {
         tx.set(this.#outboxRef(entry.entryId), entry);
       }
       return outcome;
@@ -696,9 +715,10 @@ export class FirestoreStore implements OrchestratorStore {
       // outbox refs are computed below, after the read -- ref construction
       // isn't itself a read, so this still respects that ordering.
       const taskSnapshot = await tx.get(taskRef);
-      const currentRevision = taskSnapshot.exists
-        ? taskDocSchema.parse(taskSnapshot.data()).revision
+      const current = taskSnapshot.exists
+        ? taskDocSchema.parse(taskSnapshot.data())
         : undefined;
+      const currentRevision = current?.revision;
       if (currentRevision !== expectedRevision) {
         throw new StoreConflict(decision.task.task);
       }
@@ -708,13 +728,18 @@ export class FirestoreStore implements OrchestratorStore {
         ...(decision.additionalRuns ?? []),
       ]);
 
+      const revision = (expectedRevision ?? 0) + 1;
+      const written = taskWrite({
+        previous: current?.task,
+        task: decision.task,
+        stored: storedRuns,
+        written: [decision.run, ...(decision.additionalRuns ?? [])],
+        revision,
+      });
       const nextTaskDoc: z.infer<typeof taskDocSchema> = {
         task: decision.task,
-        revision: (expectedRevision ?? 0) + 1,
-        ...storedDerived(decision.task, storedRuns, [
-          decision.run,
-          ...(decision.additionalRuns ?? []),
-        ]),
+        revision,
+        ...written.stored,
       };
       tx.set(taskRef, nextTaskDoc);
 
@@ -725,7 +750,7 @@ export class FirestoreStore implements OrchestratorStore {
         tx.set(this.#runRef(run.runId), run);
       }
       this.#commitProviderCooldownWrites(tx, cooldownWrites);
-      for (const entry of decision.outbox) {
+      for (const entry of [...decision.outbox, ...written.events]) {
         tx.set(this.#outboxRef(entry.entryId), entry);
       }
     });
@@ -810,14 +835,15 @@ export class FirestoreStore implements OrchestratorStore {
         outcome.run,
         ...(outcome.additionalRuns ?? []),
       ]);
-      tx.set(taskRef, {
+      const revision = (task?.revision ?? 0) + 1;
+      const written = taskWrite({
+        previous: task?.task,
         task: outcome.task,
-        revision: (task?.revision ?? 0) + 1,
-        ...storedDerived(outcome.task, storedRuns, [
-          outcome.run,
-          ...(outcome.additionalRuns ?? []),
-        ]),
+        stored: storedRuns,
+        written: [outcome.run, ...(outcome.additionalRuns ?? [])],
+        revision,
       });
+      tx.set(taskRef, { task: outcome.task, revision, ...written.stored });
       if (outcome.run !== undefined) {
         tx.set(this.#runRef(outcome.run.runId), outcome.run);
       }
@@ -825,7 +851,7 @@ export class FirestoreStore implements OrchestratorStore {
         tx.set(this.#runRef(additionalRun.runId), additionalRun);
       }
       this.#commitProviderCooldownWrites(tx, cooldownWrites);
-      for (const entry of outcome.outbox) {
+      for (const entry of [...outcome.outbox, ...written.events]) {
         tx.set(this.#outboxRef(entry.entryId), entry);
       }
       return outcome;

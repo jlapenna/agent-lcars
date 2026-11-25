@@ -255,6 +255,24 @@ tick.
 The hermetic Inbox journey keeps a 20-second merge-action allowance, distinct
 from #2201's navigation-to-ready phone p95 contract.
 
+## Work state events
+
+When a write changes a native Work item's derived state, the orchestrator
+store adds one `agent-event` outbox entry in the same transaction
+(`itemStateEventOutbox` in `libs/orchestrator/src/item-state.ts`). Writes that
+leave the state unchanged, the write that creates the item, and
+GitHub-anchored tasks add none. The drain turns the entry into an
+`lcars:work:<workId>` event (`workAgentEvent` in
+`libs/work/src/work-agent-events.ts`, which owns the state-to-kind mapping:
+`running` is `state`, `parked` is `needs-reply`, and `done`, `failed` and
+`canceled` are the terminal `done`) and hands it to `routeAgentEvent`. The
+event id is the Work id plus the task revision that made the change, so a
+retried entry repeats the same id and the router publishes only the
+deliveries that failed. Routing costs one subscription query per state
+change. A transition never waits on routing; a routing failure follows the
+ordinary outbox backoff and retirement, visible in the `agent-event` series of
+the outbox gauges.
+
 ## Code map
 
 | Need                                                | Source                                                                           |
@@ -280,6 +298,7 @@ from #2201's navigation-to-ready phone p95 contract.
 | Agent exits zero without deliverable evidence             | Worker runtime         | Native verifier log and the expected attempt marker                  |
 | Failed worker has no outcome comment                      | Completion path        | Direct-runner completion logs, then Work API logs                    |
 | Completion reports success but no outcome comment appears | Outbox drain           | Pending/failed outbox entries from completion or reconcile response  |
+| Subscribed session never hears of a Work state change     | Outbox drain           | `agent-event` outbox gauges and drain failure logs for the entry     |
 | Task is silent or appears stuck                           | Reconciliation         | QueueExecutor `maintenance tick` logs and the tick response          |
 | Console Retry fails                                       | GitHub Work admission  | `github-work-admission.ts` and `backend-actions.ts` mutation         |
 

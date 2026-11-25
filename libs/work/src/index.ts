@@ -8,4 +8,5 @@ export * from './repository-agents';
 export * from './repository-job-limits';
 export * from './spec';
 export * from './ulid';
+export * from './work-agent-events';
 export * from './work-repository';

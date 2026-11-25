@@ -679,6 +679,15 @@ export const taskDocumentSchema = z.strictObject({
   derived: taskDerivedSchema.optional(),
 });
 
+/** A Work item's state, derived from its task and runs (`deriveItemState`). */
+export const itemStateSchema = z.enum([
+  'running',
+  'done',
+  'parked',
+  'failed',
+  'canceled',
+]);
+
 /**
  * Effects that must survive the transaction that decided them. A worker
  * drains this; the decision and its side effect are never in one step.
@@ -692,9 +701,13 @@ const outboxEntryBaseSchema = z.strictObject({
     'admit-handoff-summary',
     'publish-triage',
     'publish-issue-start',
+    'agent-event',
   ]),
   task: taskIdSchema,
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
+  /** `agent-event` entries only: the native Work item's state after the
+   *  transition that wrote the entry (`itemStateEventOutbox`). */
+  itemState: itemStateSchema.optional(),
   /** Incremented by every `claimPendingOutbox` claim, including expired-
    *  lease recovery -- so this counts how many times the entry has been
    *  handed to a worker, not how many times delivery was actually
