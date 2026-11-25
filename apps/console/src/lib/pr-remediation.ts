@@ -165,6 +165,39 @@ const pullRequestSnapshotSchema = z.object({
         .nullable(),
     ),
   }),
+  headCommit: z
+    .object({
+      nodes: z.array(
+        z
+          .object({
+            commit: z.object({
+              oid: sha,
+              statusCheckRollup: z
+                .object({
+                  contexts: z.object({
+                    pageInfo: z.object({ hasNextPage: z.boolean() }),
+                    nodes: z.array(
+                      z
+                        .object({
+                          __typename: z.string().optional(),
+                          name: z.string().optional(),
+                          status: z.string().optional(),
+                          conclusion: z.string().nullable().optional(),
+                          context: z.string().optional(),
+                          state: z.string().optional(),
+                        })
+                        .nullable(),
+                    ),
+                  }),
+                })
+                .nullable(),
+            }),
+          })
+          .nullable(),
+      ),
+    })
+    .nullable()
+    .optional(),
   commits: z
     .object({
       totalCount: z.number().int(),
@@ -512,6 +545,23 @@ const PR_SNAPSHOT_QUERY = `
           totalCount
           nodes { commit { oid author { user { login } } signature { isValid wasSignedByGitHub } } }
         }
+        headCommit: commits(last: 1) {
+          nodes {
+            commit {
+              oid
+              statusCheckRollup {
+                contexts(first: 100) {
+                  pageInfo { hasNextPage }
+                  nodes {
+                    __typename
+                    ... on CheckRun { name status conclusion }
+                    ... on StatusContext { context state }
+                  }
+                }
+              }
+            }
+          }
+        }
         reviewThreads(first: 100) {
           pageInfo { hasNextPage }
           nodes {
@@ -526,6 +576,49 @@ const PR_SNAPSHOT_QUERY = `
     }
   }
 `;
+
+const FAILED_CHECK_CONCLUSIONS = new Set([
+  'FAILURE',
+  'TIMED_OUT',
+  'STARTUP_FAILURE',
+]);
+const FAILED_STATUS_STATES = new Set(['FAILURE', 'ERROR']);
+
+/**
+ * Names of checks that failed on the current head, once every check on it has
+ * finished. A name counts only when every run of it failed: a superseded run
+ * that was cancelled, or an older failure beside a newer success, is not a
+ * failure. Returns none while anything runs, for a truncated rollup, or when
+ * the rollup belongs to another commit.
+ */
+export function failingHeadChecks(snapshot: PullRequestSnapshot): string[] {
+  const commit = snapshot.headCommit?.nodes.at(-1)?.commit;
+  if (commit === undefined || commit.oid !== snapshot.headRefOid) return [];
+  const contexts = commit.statusCheckRollup?.contexts;
+  if (contexts === undefined || contexts.pageInfo.hasNextPage) return [];
+  const outcomes = new Map<string, boolean[]>();
+  for (const node of contexts.nodes) {
+    if (node === null) continue;
+    let name: string | undefined;
+    let failed: boolean;
+    if (node.name !== undefined) {
+      if (node.status !== 'COMPLETED') return [];
+      name = node.name;
+      failed = FAILED_CHECK_CONCLUSIONS.has(node.conclusion ?? '');
+    } else if (node.context !== undefined) {
+      if (node.state === 'PENDING' || node.state === 'EXPECTED') return [];
+      name = node.context;
+      failed = FAILED_STATUS_STATES.has(node.state ?? '');
+    } else {
+      continue;
+    }
+    outcomes.set(name, [...(outcomes.get(name) ?? []), failed]);
+  }
+  return [...outcomes]
+    .filter(([, results]) => results.every(Boolean))
+    .map(([name]) => name)
+    .sort();
+}
 
 async function linkedIssueRunIsLive(
   deps: PrRemediationDeps,
@@ -842,6 +935,7 @@ function buildRemediationContext(input: {
   hasMergeConflict: boolean;
   unresolvedThreadCount: number;
   blockingReviewCount: number;
+  failingChecks?: readonly string[];
 }): string {
   const reasons: string[] = [];
   if (input.hasMergeConflict) {
@@ -855,6 +949,10 @@ function buildRemediationContext(input: {
   if (input.blockingReviewCount > 0) {
     reasons.push('blocking code review feedback');
   }
+  const checks = input.failingChecks ?? [];
+  if (checks.length > 0) {
+    reasons.push(`failing checks: ${checks.join(', ')}`);
+  }
   return (
     `Remediate pull request https://github.com/${input.repo}/pull/${input.number} ` +
     `at ${input.headSha} (${reasons.join('; ')}). ` +
@@ -863,7 +961,12 @@ function buildRemediationContext(input: {
     `resolve addressed review threads via GraphQL resolveReviewThread, and post or update a ` +
     `deliverable carrying your exact <!-- attempt-claim:$ATTEMPT_ID --> marker. ` +
     `If origin/${input.baseRefName} already contains this PR's change or a merged change made it ` +
-    `obsolete, close the PR as superseded as the agent protocol describes instead of resolving it.`
+    `obsolete, close the PR as superseded as the agent protocol describes instead of resolving it.` +
+    (checks.length > 0
+      ? ` For each failing check, read its log. If origin/${input.baseRefName} already fixed the cause, ` +
+        `merge it into ${input.headRefName}; if the failure is a flake, rerun only the failed jobs ` +
+        `(gh run rerun --failed); otherwise fix the cause on ${input.headRefName}. Say which in your deliverable.`
+      : '')
   );
 }
 
@@ -1142,6 +1245,7 @@ async function reconcilePullRequestRemediationOnce(
   const hasMergeConflict =
     snapshot.mergeable === 'CONFLICTING' ||
     snapshot.mergeStateStatus === 'DIRTY';
+  const failingChecks = failingHeadChecks(snapshot);
   const unresolvedThreadIds = unresolvedTrustedThreadIds(snapshot);
   const { blockingReviewKeys, hasCurrentHeadLcarsReview } = headReviews;
 
@@ -1186,7 +1290,8 @@ async function reconcilePullRequestRemediationOnce(
   if (
     hasMergeConflict ||
     unresolvedThreadIds.length > 0 ||
-    blockingReviewKeys.length > 0
+    blockingReviewKeys.length > 0 ||
+    failingChecks.length > 0
   ) {
     if (newestRemediationRoundWasNoOp(runs, snapshot.headRefOid)) {
       await applyNeedsHumanLabel(deps, anchor);
@@ -1217,6 +1322,7 @@ async function reconcilePullRequestRemediationOnce(
         conflict: hasMergeConflict,
         threads: unresolvedThreadIds,
         reviews: blockingReviewKeys,
+        ...(failingChecks.length > 0 ? { checks: failingChecks } : {}),
       }),
     ).slice(0, 16);
     const requestId = `${PR_REMEDIATION_REQUEST_PREFIX}${anchor.issue}:${snapshot.headRefOid.slice(0, 12)}:${digest}`;
@@ -1229,6 +1335,7 @@ async function reconcilePullRequestRemediationOnce(
       hasMergeConflict,
       unresolvedThreadCount: unresolvedThreadIds.length,
       blockingReviewCount: blockingReviewKeys.length,
+      failingChecks,
     });
     const outcome = await admitGithubWork(deps, {
       anchor,
@@ -1238,7 +1345,8 @@ async function reconcilePullRequestRemediationOnce(
         context,
         ...(hasMergeConflict &&
         unresolvedThreadIds.length === 0 &&
-        blockingReviewKeys.length === 0
+        blockingReviewKeys.length === 0 &&
+        failingChecks.length === 0
           ? { remediationReason: CONFLICT_ONLY_REMEDIATION_REASON }
           : {}),
         ...crossRepo,
@@ -1464,7 +1572,11 @@ export async function reconcileOpenPullRequestRemediations(
     projection: (typeof projections)[number],
   ): boolean =>
     (projection.unresolvedReviewThreadCount ?? 0) > 0 ||
-    projection.mergeableState === 'dirty';
+    projection.mergeableState === 'dirty' ||
+    (projection.ciRunning !== true &&
+      (projection.checkRuns ?? []).some((check) =>
+        FAILED_CHECK_CONCLUSIONS.has((check.conclusion ?? '').toUpperCase()),
+      ));
 
   const eligible = projections.filter((projection) => {
     if (
