@@ -798,6 +798,9 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/opencode.json \
     /home/runner/.config/opencode/opencode.json
 COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/agents/opencode/review-overlay.json \
+    /home/runner/.config/opencode/review-overlay.json
+COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/instructions.md \
     /home/runner/.config/opencode/instructions.md
 COPY --from=telemetry-watcher-build --chown=runner:runner \

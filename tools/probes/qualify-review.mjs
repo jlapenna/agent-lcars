@@ -187,6 +187,7 @@ ${join(output, 'guidance.md')}; PR metadata is ${join(output, 'pr.json')}.
 Give every child the full diff, guidance, PR metadata and exact head. Children
 return evidence only, never recursively delegate and never write to GitHub.
 ${dependencyContext}
+${provider === 'opencode' ? 'In the procedure receipt, cite the packaged upstream revision ' + readFileSync(join(procedure, 'revision'), 'utf8').trim() + '.' : ''}
 All passes, validators and captured publication share this ${seconds}-second
 provider budget, ending by ${reviewDeadline}. Give the shared deadline to every
 child and reserve time for validation and publication.
@@ -278,15 +279,33 @@ if (provider === 'codex' && process.env.LCARS_REVIEW_CODEX_ISOLATE === '1') {
   );
 }
 if (provider === 'opencode') {
+  const sourceConfig = join(root, 'agents/opencode');
+  const effectiveConfig = imageId
+    ? '/home/runner/.config/opencode'
+    : sourceConfig;
+  if (imageId) {
+    for (const name of ['review-overlay.json', 'instructions.md']) {
+      if (
+        !readFileSync(join(sourceConfig, name)).equals(
+          readFileSync(join(effectiveConfig, name)),
+        )
+      )
+        throw new Error(
+          'Candidate image OpenCode review input mismatch: ' + name,
+        );
+    }
+  }
   // Match the direct runner's effective per-review configuration.
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
-    permission: { task: 'allow' },
+    ...JSON.parse(
+      readFileSync(join(effectiveConfig, 'review-overlay.json'), 'utf8'),
+    ),
     provider: {
       homelab: {
         models: { default: { options: { reasoningEffort: 'medium' } } },
       },
     },
-    instructions: [join(root, 'agents/opencode/instructions.md')],
+    instructions: [join(effectiveConfig, 'instructions.md')],
   });
   env.MODE = 'review';
   args = [

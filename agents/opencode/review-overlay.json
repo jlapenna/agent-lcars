@@ -1,0 +1,16 @@
+{
+  "default_agent": "lcars-review-coordinator",
+  "agent": {
+    "lcars-review-coordinator": {
+      "description": "Coordinate independent review passes, validate findings, and publish the review.",
+      "mode": "primary",
+      "permission": { "task": { "*": "deny", "lcars-review": "allow" } }
+    },
+    "lcars-review": {
+      "description": "Run one independent code review pass or validate one finding and return the evidence.",
+      "mode": "subagent",
+      "steps": 12,
+      "permission": { "task": "deny", "edit": "deny" }
+    }
+  }
+}
