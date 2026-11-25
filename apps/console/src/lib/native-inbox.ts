@@ -86,8 +86,8 @@ async function inboxCandidates(
 ): Promise<ReturnType<typeof toWorkSummary>[]> {
   if (selectedItemKey !== undefined) return allNativeWork(store);
   const [parks, reports] = await Promise.all([
-    store.listRunsWithSummary('park'),
-    store.listRunsWithSummary('report'),
+    store.listRunRefsWithSummary('park'),
+    store.listRunRefsWithSummary('report'),
   ]);
   const ids = new Map<string, TaskId>();
   for (const run of parks)

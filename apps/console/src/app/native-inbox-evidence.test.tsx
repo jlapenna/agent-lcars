@@ -19,7 +19,7 @@ describe('Bridge native Inbox evidence', () => {
       // The Inbox finds candidate tasks from the runs that parked or
       // reported, then reads those tasks and their runs.
       if (failure === 'tasks')
-        vi.spyOn(store, 'listRunsWithSummary').mockRejectedValue(
+        vi.spyOn(store, 'listRunRefsWithSummary').mockRejectedValue(
           new Error('tasks unavailable'),
         );
       if (failure === 'runs') {
@@ -39,7 +39,7 @@ describe('Bridge native Inbox evidence', () => {
             },
           },
         });
-        vi.spyOn(store, 'listRunsWithSummary').mockImplementation(
+        vi.spyOn(store, 'listRunRefsWithSummary').mockImplementation(
           async (summary) =>
             summary === 'park'
               ? (
