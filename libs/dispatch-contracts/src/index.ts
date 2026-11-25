@@ -19,6 +19,7 @@ export {
 export type { AgentPipeline, PipelineContract } from './pipelines';
 export {
   AGENT_BOT_LOGINS,
+  PULL_REQUEST_AUTHOR_BOT_LOGIN,
   AGENT_LABELS,
   DISPATCH_PIPELINES,
   isDispatchPipeline,

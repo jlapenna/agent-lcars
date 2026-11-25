@@ -1,6 +1,7 @@
 import {
   AGENT_LABELS,
   type AgentPipeline,
+  PULL_REQUEST_AUTHOR_BOT_LOGIN,
   DISPATCH_PIPELINES,
 } from '@agent-lcars/dispatch-contracts';
 
@@ -229,7 +230,7 @@ export function detectPullRequestAuthorPipeline(
     return fromBranch;
   }
 
-  if (login === 'agent-lcars[bot]') {
+  if (login === 'agent-lcars[bot]' || login === PULL_REQUEST_AUTHOR_BOT_LOGIN) {
     return 'codex';
   }
 

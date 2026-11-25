@@ -18,6 +18,7 @@ import {
 } from '@/lib/github-actions-oidc';
 import {
   createDispatchTokenProvider,
+  createPullRequestAuthorTokenProvider,
   DIRECT_RUNNER_PERMISSIONS,
   lazyDispatchTokenProvider,
   ORCHESTRATOR_GITHUB_PERMISSIONS,
@@ -171,6 +172,8 @@ async function handle(request: Request): Promise<Response> {
       checkoutTokens: lazyDispatchTokenProvider(() =>
         createDispatchTokenProvider(process.env, DIRECT_RUNNER_PERMISSIONS),
       ),
+      pullRequestAuthorTokens: () =>
+        createPullRequestAuthorTokenProvider(process.env),
       codexAuth: codexAuthStore('agent-lcars-codex-auth'),
     },
   });

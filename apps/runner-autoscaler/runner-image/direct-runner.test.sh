@@ -304,6 +304,8 @@ JSON
     # from the response, exactly like a run without the label.
     if [ -n "${FAKE_CHECKOUT_IDENTITY_JSON:-}" ]; then
       echo "{\"token\":\"$checkout_token\",\"expiresAt\":null,\"refreshAt\":\"$expires_at\",\"identity\":$FAKE_CHECKOUT_IDENTITY_JSON}"
+    elif [ -n "${FAKE_CHECKOUT_PR_AUTHOR_TOKEN:-}" ]; then
+      echo "{\"token\":\"$checkout_token\",\"expiresAt\":\"$expires_at\",\"repository\":\"jlapenna/agent-lcars\",\"pullRequestAuthor\":{\"login\":\"agent-lcars-author[bot]\",\"token\":\"$FAKE_CHECKOUT_PR_AUTHOR_TOKEN\",\"expiresAt\":\"$expires_at\"}}"
     elif [ -n "${FAKE_CHECKOUT_GRANTS_JSON:-}" ]; then
       echo "{\"token\":\"$checkout_token\",\"expiresAt\":\"$expires_at\",\"grants\":$FAKE_CHECKOUT_GRANTS_JSON}"
     else
@@ -1427,6 +1429,30 @@ GH_REPO=supersprinklesracing/sprinkles "$credential_bin/gh" pr list >/dev/null
   fail "gh wrapper: an owner with no grant did not fall back to the anchor token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
 
 echo "scenario cross-repo-grants: OK"
+
+# --- Scenario 1a3: pull requests open as the author App (#3522) -------------
+# GitHub refuses an approval from a pull request's own author, so `gh pr
+# create` on the anchor repository uses the pull-request author App's token
+# when checkout-token returns one. Every other gh call, and a pr create on
+# another repository, keeps the ordinary checkout token.
+export FAKE_CHECKOUT_PR_AUTHOR_TOKEN='fake-pr-author-token-jkl333'
+run_scenario pr-author-token
+unset FAKE_CHECKOUT_PR_AUTHOR_TOKEN
+[ "$rc" -eq 0 ] || fail "pr-author-token: expected exit 0, got $rc ($(cat "$scenario_log"))"
+credential_bin="$RUNNER_TEMP/github-credentials/bin"
+"$credential_bin/gh" pr create --title t --body b >/dev/null
+[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = 'fake-pr-author-token-jkl333' ] ||
+  fail "pr-author-token: gh pr create did not use the author App token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
+"$credential_bin/gh" pr create -R jlapenna/agent-lcars --title t --body b >/dev/null
+[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = 'fake-pr-author-token-jkl333' ] ||
+  fail "pr-author-token: gh pr create -R <anchor> did not use the author App token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
+"$credential_bin/gh" pr create -R jlapenna/homelab --title t --body b >/dev/null
+[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = "$FAKE_TOKEN" ] ||
+  fail "pr-author-token: gh pr create on another repository used the anchor-scoped author token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
+"$credential_bin/gh" pr comment 1 --body b >/dev/null
+[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = "$FAKE_TOKEN" ] ||
+  fail "pr-author-token: a non-create gh call used the author App token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
+echo "scenario pr-author-token: OK"
 
 # --- Scenario 1a: Codex provider dispatch, resume, and the auth broker ------
 # Codex must run without the Claude host-token mount, restore only through
