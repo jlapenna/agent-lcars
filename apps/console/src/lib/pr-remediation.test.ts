@@ -19,6 +19,7 @@ import {
 } from './orchestrator-routes';
 import {
   MAX_AUTO_PR_REMEDIATION_ROUNDS,
+  MAX_AUTO_PR_REMEDIATION_ROUNDS_TOTAL,
   reconcileMergedPullRequestConflicts,
   reconcileOpenPullRequestRemediations,
   reconcilePullRequestRemediation,
@@ -1431,6 +1432,109 @@ describe('automatic pull-request review & conflict remediation', () => {
         body: JSON.stringify({ labels: ['status:needs-human'] }),
       }),
     );
+  });
+
+  it('does not count conflict-only rounds caused by the base moving toward the cap', async () => {
+    const f = createFixture();
+    const anchor = { repo: REPO, issue: 4002 };
+
+    // Each round resolves a conflict that a later merge to the base recreates.
+    for (let round = 1; round <= MAX_AUTO_PR_REMEDIATION_ROUNDS; round += 1) {
+      f.setPr(REPO, 4002, {
+        headRefOid: String(round).repeat(40),
+        mergeable: 'CONFLICTING',
+        mergeStateStatus: 'DIRTY',
+      });
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({
+        action: 'remediated',
+        outcome: { kind: 'accepted', runId: `${REPO}#4002/r${round}` },
+      });
+      const [run] = (await f.store.listRuns(anchor)).filter(
+        (candidate) => candidate.runId === `${REPO}#4002/r${round}`,
+      );
+      expect(run?.params?.['remediationReason']).toBe('conflict-only');
+      await f.orchestrator.report(`${REPO}#4002/r${round}`, { ok: true });
+    }
+
+    f.setPr(REPO, 4002, {
+      headRefOid: '9'.repeat(40),
+      mergeable: 'CONFLICTING',
+      mergeStateStatus: 'DIRTY',
+    });
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+    ).toMatchObject({
+      action: 'remediated',
+      outcome: {
+        kind: 'accepted',
+        runId: `${REPO}#4002/r${MAX_AUTO_PR_REMEDIATION_ROUNDS + 1}`,
+      },
+    });
+    expect(f.fetchImpl).not.toHaveBeenCalledWith(
+      expect.stringContaining(`/repos/${REPO}/issues/4002/labels`),
+      expect.objectContaining({
+        body: JSON.stringify({ labels: ['status:needs-human'] }),
+      }),
+    );
+
+    // Conflict-only rounds are still bounded by the hard total cap.
+    await f.orchestrator.report(
+      `${REPO}#4002/r${MAX_AUTO_PR_REMEDIATION_ROUNDS + 1}`,
+      { ok: true },
+    );
+    for (
+      let round = MAX_AUTO_PR_REMEDIATION_ROUNDS + 2;
+      round <= MAX_AUTO_PR_REMEDIATION_ROUNDS_TOTAL;
+      round += 1
+    ) {
+      f.setPr(REPO, 4002, {
+        headRefOid: round.toString(16).padStart(40, 'a'),
+        mergeable: 'CONFLICTING',
+        mergeStateStatus: 'DIRTY',
+      });
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({ action: 'remediated' });
+      await f.orchestrator.report(`${REPO}#4002/r${round}`, { ok: true });
+    }
+    f.setPr(REPO, 4002, {
+      headRefOid: 'f'.repeat(40),
+      mergeable: 'CONFLICTING',
+      mergeStateStatus: 'DIRTY',
+    });
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+    ).toEqual({ action: 'ignored', reason: 'remediation-cap-reached' });
+  });
+
+  it('still counts a conflict round that also carries review threads', async () => {
+    const f = createFixture();
+    const anchor = { repo: REPO, issue: 4003 };
+
+    for (let round = 1; round <= MAX_AUTO_PR_REMEDIATION_ROUNDS; round += 1) {
+      f.setPr(REPO, 4003, {
+        headRefOid: String(round).repeat(40),
+        mergeable: 'CONFLICTING',
+        mergeStateStatus: 'DIRTY',
+        reviewThreads: [{ id: 'PRRT_1', isResolved: false }],
+      });
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({ action: 'remediated' });
+      await f.orchestrator.report(`${REPO}#4003/r${round}`, { ok: true });
+    }
+
+    f.setPr(REPO, 4003, {
+      headRefOid: '9'.repeat(40),
+      mergeable: 'CONFLICTING',
+      mergeStateStatus: 'DIRTY',
+      reviewThreads: [{ id: 'PRRT_1', isResolved: false }],
+    });
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+    ).toEqual({ action: 'ignored', reason: 'remediation-cap-reached' });
   });
 
   it('ignores untrusted external commenter threads, spoofed review markers, and review-assigned untrusted PR authors', async () => {
