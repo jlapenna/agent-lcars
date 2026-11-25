@@ -1,5 +1,4 @@
 import {
-  AGENT_BOT_LOGINS,
   type AgentPipeline,
   isDispatchPipeline,
   type IssueReference,
@@ -22,6 +21,7 @@ import {
 import { z } from 'zod';
 
 import { isControlPlaneRepository } from '@/lib/deployment';
+import { isTrustedGitHubActor } from '@/lib/github-actor-trust';
 import type { GithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
   githubAnchorProjectionAnchorsFromDelivery,
@@ -298,26 +298,16 @@ const approvalSchema = z.object({
   }),
 });
 
-const TRUSTED_APPROVER_ASSOCIATIONS = new Set([
-  'OWNER',
-  'MEMBER',
-  'COLLABORATOR',
-]);
-const FLEET_APPROVERS = new Set(
-  AGENT_BOT_LOGINS.map((login) => login.toLowerCase()),
-);
-
 /** Only an approval GitHub's rule could count wakes the sweep: anyone can
  * review a public repository, and each dispatch runs privileged workflow code
  * on a self-hosted runner. The fleet App's reviews arrive as `NONE`. */
 function isTrustedApprover(
   review: z.infer<typeof approvalSchema>['review'],
 ): boolean {
-  const login = review.user?.login.toLowerCase();
-  return (
-    (login !== undefined && FLEET_APPROVERS.has(login)) ||
-    TRUSTED_APPROVER_ASSOCIATIONS.has(review.author_association ?? '')
-  );
+  return isTrustedGitHubActor({
+    login: review.user?.login,
+    association: review.author_association,
+  });
 }
 
 /** An approval is the request to land a pull request (jlapenna/agent-lcars#3508).
