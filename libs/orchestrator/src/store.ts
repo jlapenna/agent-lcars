@@ -426,6 +426,12 @@ export interface OrchestratorStore {
     anchors: readonly GithubAnchorProjection['anchor'][],
   ): Promise<(GithubAnchorProjection | undefined)[]>;
 
+  /** The anchors of pull requests merged at or after `since` (ISO), read
+   * from the webhook-maintained projections rather than from GitHub. */
+  listGithubAnchorsMergedSince(
+    since: string,
+  ): Promise<GithubAnchorProjection['anchor'][]>;
+
   /** Every currently-open GitHub anchor known to the control plane, newest
    * source update first. Phase 2 will use this bounded server-owned feed for
    * Bridge, Inbox, and Agents after the explicit projection backfill. */

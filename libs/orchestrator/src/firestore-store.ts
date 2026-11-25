@@ -36,6 +36,7 @@ import {
   byOutboxClaimFairness,
   type GithubAnchorProjection,
   githubAnchorProjectionSchema,
+  githubAnchorSchema,
   isClaimant,
   isLive,
   isWorkAnchor,
@@ -958,6 +959,20 @@ export class FirestoreStore implements OrchestratorStore {
   ): Promise<GithubAnchorProjection[]> {
     return (await this.listOpenGithubAnchorProjectionPage({ limit }))
       .projections;
+  }
+
+  async listGithubAnchorsMergedSince(
+    since: string,
+  ): Promise<GithubAnchorProjection['anchor'][]> {
+    // A range on one field is served by its automatic single-field index;
+    // the projection returns only each anchor, not the whole PR snapshot.
+    const snapshot = await this.#githubAnchors
+      .where('projection.mergedAt', '>=', since)
+      .select('projection.anchor')
+      .get();
+    return snapshot.docs.map((doc) =>
+      githubAnchorSchema.parse(doc.get('projection.anchor')),
+    );
   }
 
   async listOpenGithubAnchorProjectionPage(input: {

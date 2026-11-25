@@ -3518,6 +3518,42 @@ export function runOrchestratorStoreContract(
       });
     });
 
+    describe('merged pull request anchors', () => {
+      it('lists the anchors of pull requests merged since a cutoff', async () => {
+        const { store } = await fixture();
+        const write = async (issue: number, mergedAt?: string | null) => {
+          const anchor = { repo: 'octo/example', issue };
+          const generation =
+            await store.beginGithubAnchorProjectionRefresh(anchor);
+          await store.applyGithubAnchorProjectionRefresh({
+            anchor,
+            generation,
+            projection: {
+              anchor,
+              kind: 'pr',
+              state: mergedAt ? 'closed' : 'open',
+              title: `PR ${issue}`,
+              body: '',
+              url: `https://github.com/octo/example/pull/${issue}`,
+              labels: [],
+              assigneeLogins: [],
+              ...(mergedAt === undefined ? {} : { mergedAt }),
+              sourceUpdatedAt: '2026-11-25T12:00:00.000Z',
+              observedAt: '2026-11-25T12:00:01.000Z',
+            },
+          });
+        };
+        await write(1, '2026-11-25T11:00:00.000Z');
+        await write(2, '2026-11-24T09:00:00.000Z');
+        await write(3, null);
+        await write(4);
+
+        expect(
+          await store.listGithubAnchorsMergedSince('2026-11-24T12:00:00.000Z'),
+        ).toEqual([{ repo: 'octo/example', issue: 1 }]);
+      });
+    });
+
     describe('stored item state refresh', () => {
       it('recomputes a task’s stored item state and reports a missing task', async () => {
         const { store, orchestrator } = await fixture();
