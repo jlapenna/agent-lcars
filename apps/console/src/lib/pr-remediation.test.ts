@@ -18,6 +18,7 @@ import {
   type OrchestratorRouteDeps,
 } from './orchestrator-routes';
 import {
+  isConflictOnlyRound,
   MAX_AUTO_PR_REMEDIATION_ROUNDS,
   MAX_AUTO_PR_REMEDIATION_ROUNDS_TOTAL,
   reconcileMergedPullRequestConflicts,
@@ -1507,6 +1508,43 @@ describe('automatic pull-request review & conflict remediation', () => {
     expect(
       await reconcilePullRequestRemediation(f.remediationDeps, anchor),
     ).toEqual({ action: 'ignored', reason: 'remediation-cap-reached' });
+  });
+
+  it('recognizes untagged conflict-only rounds dispatched before remediationReason existed', () => {
+    const legacy = (reasons: string) =>
+      ({
+        params: {
+          mode: 'implement',
+          context:
+            `Remediate pull request https://github.com/${REPO}/pull/3760 ` +
+            `at ${HEAD_1} (${reasons}). Fetch origin/main, resolve any merge ` +
+            'conflicts cleanly on incident/x, address every actionable review ' +
+            'comment and thread, push to incident/x.',
+        },
+      }) as unknown as Run;
+
+    expect(isConflictOnlyRound(legacy('merge conflicts with main'))).toBe(true);
+    expect(
+      isConflictOnlyRound(
+        legacy('merge conflicts with main; 1 unresolved review thread'),
+      ),
+    ).toBe(false);
+    expect(
+      isConflictOnlyRound(
+        legacy('merge conflicts with main; blocking code review feedback'),
+      ),
+    ).toBe(false);
+    expect(isConflictOnlyRound(legacy('2 unresolved review threads'))).toBe(
+      false,
+    );
+    expect(
+      isConflictOnlyRound({
+        params: {
+          remediationReason: 'conflict-only',
+          context: legacy('2 unresolved review threads').params?.['context'],
+        },
+      } as unknown as Run),
+    ).toBe(true);
   });
 
   it('still counts a conflict round that also carries review threads', async () => {
