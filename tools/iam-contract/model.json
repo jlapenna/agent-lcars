@@ -146,6 +146,14 @@
         {
           "serviceAccount": "github-actions-exporter@agent-lcars.iam.gserviceaccount.com",
           "reason": "The GitHub Actions exporter's event subscriber credential (agent-lcars#3525; Homelab vault github_actions_exporter_key_json) is consumed only by the exporter container on the homelab controller, which runs outside GitHub Actions and has no OIDC identity to federate. It holds roles/pubsub.subscriber on the github-actions-exporter subscription and nothing else."
+        },
+        {
+          "serviceAccount": "agent-events-laforge@agent-lcars.iam.gserviceaccount.com",
+          "reason": "The laforge delivery agent's event subscriber credential (agent-lcars#3568; Homelab vault agent_events_laforge_key_json) is consumed only by lcars events agent, a user service on laforge outside GitHub Actions with no OIDC identity to federate. It holds roles/pubsub.subscriber on the agent-events-laforge subscription and the events.deliver Work grant, and nothing else."
+        },
+        {
+          "serviceAccount": "agent-events-pike@agent-lcars.iam.gserviceaccount.com",
+          "reason": "The pike delivery agent's event subscriber credential (agent-lcars#3568; Homelab vault agent_events_pike_key_json) is consumed only by lcars events agent, a user service on pike outside GitHub Actions with no OIDC identity to federate. It holds roles/pubsub.subscriber on the agent-events-pike subscription and the events.deliver Work grant, and nothing else."
         }
       ]
     },
