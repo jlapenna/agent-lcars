@@ -27,8 +27,9 @@ export const DELIVERED_MAX_ENTRIES = 20_000;
 export function fileDeliveredStore(
   directory: string,
   now: () => number = Date.now,
+  fileName: string = DELIVERED_FILE,
 ): DeliveredStore {
-  const filePath = path.join(directory, DELIVERED_FILE);
+  const filePath = path.join(directory, fileName);
   const entries = new Map<string, number>(read(filePath));
   prune(entries, now());
   return {
@@ -36,7 +37,7 @@ export function fileDeliveredStore(
     record: (deliveryId, at) => {
       entries.set(deliveryId, at);
       prune(entries, now());
-      write(directory, filePath, entries);
+      write(directory, filePath, fileName, entries);
     },
   };
 }
@@ -76,12 +77,13 @@ function prune(entries: Map<string, number>, now: number): void {
 function write(
   directory: string,
   filePath: string,
+  fileName: string,
   entries: Map<string, number>,
 ): void {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const temporaryPath = path.join(
     directory,
-    `.${DELIVERED_FILE}.${crypto.randomBytes(8).toString('hex')}.tmp`,
+    `.${fileName}.${crypto.randomBytes(8).toString('hex')}.tmp`,
   );
   try {
     fs.writeFileSync(

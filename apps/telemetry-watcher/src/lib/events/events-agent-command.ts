@@ -35,6 +35,12 @@ import {
 } from './local-socket-server';
 import { DeliveryMetrics } from './metrics';
 import {
+  listRecentHookSessions,
+  SESSION_REPORT_TICK_MS,
+  SESSION_REPORTS_FILE,
+  SessionReporter,
+} from './session-reporter';
+import {
   serviceAccountIdTokens,
   type SubscriptionForwarder,
   workApiSubscriptionForwarder,
@@ -46,11 +52,12 @@ export const EVENTS_AGENT_USAGE = `Usage: lcars events agent
 Runs this host's event delivery agent (#3538): pulls the host's Pub/Sub
 subscription agent-events-<host>, waits until the subscribing session's
 herdr-core terminal still runs that session and is at its prompt, types the
-notice with \`hc send\`, confirms a turn started, then acks. It also
-serves \`lcars session subscribe|subscriptions|unsubscribe\` on a Unix socket
-only this user can open, forwarding each request to the LCARS Work API as
-this host's agent-events identity. A long-running user service; it serves
-Prometheus metrics on loopback.
+notice with \`hc send\`, confirms a turn started, then acks. It serves
+\`lcars session subscribe|subscriptions|unsubscribe\` on a Unix socket only
+this user can open, forwarding each request to the LCARS Work API as this
+host's agent-events identity, and reports this host's sessions going idle
+or ending to LCARS as lcars:session events. A long-running user service; it
+serves Prometheus metrics on loopback.
 
 Environment:
   LCARS_EVENTS_CREDENTIALS_FILE  the host's agent-events service-account key
@@ -453,27 +460,30 @@ export async function executeEventsAgentCommand(
   }
 
   let stop: (() => Promise<void>) | undefined;
-  if (config.credentialsFile) {
+  let stopReporting: (() => void) | undefined;
+  if (config.credentialsFile && forwarder) {
     metrics.configured = 1;
     const socketPath = herdrCoreSocketPath(proc.env, proc.home);
+    const eventsState = path.join(
+      config.stateDirectory,
+      EVENTS_STATE_SUBDIRECTORY,
+    );
+    const checkTarget = (sessionId: string) =>
+      checkTerminalTarget(
+        {
+          readSession: (id) => readHookSessionState(config.stateDirectory, id),
+          getTerminal: (address) =>
+            callHerdrCore(socketPath, 'terminal.get', { terminal: address }),
+          processStart: (pid) => processStartIdentity(pid),
+        },
+        sessionId,
+      );
     const agent = new DeliveryAgent({
       host: config.host,
-      checkTarget: (sessionId) =>
-        checkTerminalTarget(
-          {
-            readSession: (id) =>
-              readHookSessionState(config.stateDirectory, id),
-            getTerminal: (address) =>
-              callHerdrCore(socketPath, 'terminal.get', { terminal: address }),
-            processStart: (pid) => processStartIdentity(pid),
-          },
-          sessionId,
-        ),
+      checkTarget,
       send: (address, text) =>
         herdrCoreSend(defaultRunFile, config.hc, address, text),
-      delivered: fileDeliveredStore(
-        path.join(config.stateDirectory, EVENTS_STATE_SUBDIRECTORY),
-      ),
+      delivered: fileDeliveredStore(eventsState),
       onUndeliverable: recordOnlyUndeliverable,
       metrics,
       log,
@@ -495,6 +505,27 @@ export async function executeEventsAgentCommand(
         return () => clearTimeout(handle);
       },
     });
+    const reporter = new SessionReporter({
+      listSessions: () =>
+        listRecentHookSessions(config.stateDirectory, Date.now()),
+      checkTarget,
+      report: (sessionId, kind, occurredAt) =>
+        forwarder.reportSession(sessionId, kind, occurredAt),
+      reported: fileDeliveredStore(eventsState, Date.now, SESSION_REPORTS_FILE),
+      metrics,
+      log,
+      now: Date.now,
+    });
+    const reportTimer = setInterval(() => {
+      void reporter.tick().catch((error: unknown) => {
+        log({
+          level: 'error',
+          msg: 'session report tick crashed',
+          error: error instanceof Error ? error.name : 'error',
+        });
+      });
+    }, SESSION_REPORT_TICK_MS);
+    stopReporting = () => clearInterval(reportTimer);
   } else {
     log({
       level: 'info',
@@ -504,6 +535,7 @@ export async function executeEventsAgentCommand(
 
   await proc.stopSignal();
   log({ level: 'info', msg: 'events agent stopping' });
+  stopReporting?.();
   await stop?.();
   await socket?.close();
   server.close();

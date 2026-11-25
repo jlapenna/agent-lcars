@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 
 import { displayLiveness, type SessionDoc } from '@agent-lcars/telemetry';
 import {
+  type AgentEvent,
   agentEventsContract,
   type AgentEventSubscription,
   type AgentEventSubscriptionView,
@@ -21,6 +22,10 @@ export interface AgentEventsContext {
   /** One telemetry session document, or `undefined` when it cannot be read. */
   getSessionDoc: (sessionId: string) => Promise<SessionDoc | undefined>;
   now: () => Date;
+  /** Routes one event to its subscriptions (`routeAgentEvent`). */
+  routeEvent: (
+    event: AgentEvent,
+  ) => Promise<{ eventId: string; deliveries: readonly { outcome: string }[] }>;
 }
 
 /** At most this many subscriptions per session; a runaway loop in one
@@ -57,6 +62,29 @@ export function sessionLiveOnHost(
     doc.observedAt,
   );
   return shown === 'live' || shown === 'idle';
+}
+
+/** Whether the session telemetry names `host` as the session's own, live
+ * or not: an `ended` report arrives after the session stopped. */
+export function sessionReportedByHost(
+  doc: SessionDoc | undefined,
+  host: string,
+): boolean {
+  return doc?.source === 'cli' && doc.host?.toLowerCase() === host;
+}
+
+/** A host's clock may run a little ahead; a report from further ahead is
+ * malformed. */
+export const MAX_REPORT_CLOCK_SKEW_MS = 5 * 60_000;
+
+/** One id per session, kind and moment, so a report the host repeats after
+ * a lost answer routes as a duplicate. */
+export function sessionEventId(
+  sessionId: string,
+  kind: string,
+  occurredAt: string,
+): string {
+  return `session.${sessionId}.${kind}.${occurredAt}`;
 }
 
 /** The same session, key, kinds and until always get the same id, so a
@@ -183,6 +211,42 @@ export const agentEventsRouter = os.router({
         ),
     };
   }),
+  reportSession: delivery.reportSession.handler(
+    async ({ input, context, errors }) => {
+      const now = context.now();
+      if (
+        Date.parse(input.occurredAt) - now.getTime() >
+        MAX_REPORT_CLOCK_SKEW_MS
+      )
+        throw errors.BAD_REQUEST({ message: 'occurredAt is in the future' });
+      const { host } = context;
+      const doc = await context.getSessionDoc(input.sessionId);
+      // An idle session must still be live here; an ended one has stopped,
+      // so only the host the telemetry names for it is checked. One answer
+      // for every refusal, as with subscribe.
+      const accepted =
+        input.kind === 'ended'
+          ? sessionReportedByHost(doc, host)
+          : sessionLiveOnHost(doc, host, now);
+      if (!accepted)
+        throw errors.FORBIDDEN({
+          message: `Session ${input.sessionId} is not a ${input.kind === 'ended' ? '' : 'live '}session reported by ${host}`,
+        });
+      const event: AgentEvent = {
+        id: sessionEventId(input.sessionId, input.kind, input.occurredAt),
+        key: `lcars:session:${input.sessionId}`,
+        kind: input.kind,
+        occurredAt: input.occurredAt,
+      };
+      const routed = await context.routeEvent(event);
+      return {
+        eventId: routed.eventId,
+        delivered: routed.deliveries.filter(
+          (delivery) => delivery.outcome === 'published',
+        ).length,
+      };
+    },
+  ),
   unsubscribe: delivery.unsubscribe.handler(
     async ({ input, context, errors }) => {
       const existing = await context.store.get(input.id);

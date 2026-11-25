@@ -38,6 +38,10 @@ function forwarder(
       ok: true as const,
       value: { id },
     })),
+    reportSession: vi.fn(async () => ({
+      ok: true as const,
+      value: { eventId: 'e', delivered: 0 },
+    })),
     ...overrides,
   };
 }

@@ -2004,6 +2004,40 @@ export const agentEventsContract = {
         subscriptions: z.array(agentEventSubscriptionViewSchema),
       }),
     ),
+  reportSession: eventsBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/events/session',
+        operationId: 'reportAgentSessionEvent',
+        summary: 'Report that a session on the calling host went idle or ended',
+        description:
+          'Requires events.deliver. An idle report is accepted only for a ' +
+          'session the telemetry reports live on the calling host; an ended ' +
+          'report for any CLI session the telemetry reports from that host, ' +
+          'live or not. Routes an lcars:session:<id> event whose id is ' +
+          'derived from the session, kind and occurredAt, so a repeated ' +
+          'report is not delivered twice.',
+      }),
+    )
+    .errors({
+      BAD_REQUEST: { message: 'Malformed report' },
+      FORBIDDEN: { message: 'No such session on the calling host' },
+    })
+    .input(
+      z.strictObject({
+        sessionId: agentEventSessionIdSchema,
+        kind: z.enum(AGENT_EVENT_SOURCES['lcars:session'].kinds),
+        occurredAt: z.iso.datetime(),
+      }),
+    )
+    .output(
+      z.strictObject({
+        eventId: z.string(),
+        /** Subscriptions the event was published to now. */
+        delivered: z.number().int().nonnegative(),
+      }),
+    ),
   unsubscribe: eventsBase
     .meta(
       openapi({

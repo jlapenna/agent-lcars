@@ -40,6 +40,19 @@ export interface SubscriptionForwarder {
     sessionId: string | undefined,
   ): Promise<ForwardResult<readonly AgentEventSubscriptionView[]>>;
   unsubscribe(id: string): Promise<ForwardResult<{ readonly id: string }>>;
+  /** Reports that a session on this host went idle or ended. */
+  reportSession(
+    sessionId: string,
+    kind: SessionReportKind,
+    occurredAt: string,
+  ): Promise<ForwardResult<SessionReportResult>>;
+}
+
+export type SessionReportKind = 'idle' | 'ended';
+export interface SessionReportResult {
+  readonly eventId: string;
+  /** Subscriptions the event was published to. */
+  readonly delivered: number;
 }
 
 export interface WorkApiForwarderDeps {
@@ -200,6 +213,10 @@ export function workApiSubscriptionForwarder(
         const { id: deleted } = await client.unsubscribe({ id }, { signal });
         return { id: deleted };
       }),
+    reportSession: (sessionId, kind, occurredAt) =>
+      call((signal) =>
+        client.reportSession({ sessionId, kind, occurredAt }, { signal }),
+      ),
   };
 }
 

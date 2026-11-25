@@ -241,6 +241,7 @@ describe('executeEventsAgentCommand', () => {
       subscribe: vi.fn(),
       list: vi.fn(async () => ({ ok: true as const, value: [] })),
       unsubscribe: vi.fn(),
+      reportSession: vi.fn(),
     };
     const createForwarder = vi.fn(() => forwarder);
     return {

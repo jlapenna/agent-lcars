@@ -163,6 +163,30 @@ describe('workApiSubscriptionForwarder', () => {
     },
   );
 
+  it('reports a session event without a host', async () => {
+    const { forwarder, seen } = harness(() =>
+      Response.json({ eventId: 'session.s1.ended.x', delivered: 2 }),
+    );
+    expect(
+      await forwarder.reportSession('s1', 'ended', '2026-11-25T12:00:00.000Z'),
+    ).toEqual({
+      ok: true,
+      value: { eventId: 'session.s1.ended.x', delivered: 2 },
+    });
+    expect(seen).toEqual([
+      {
+        method: 'POST',
+        url: 'https://lcars.test/api/work/v1/events/session',
+        authorization: 'Bearer id-token',
+        body: {
+          sessionId: 's1',
+          kind: 'ended',
+          occurredAt: '2026-11-25T12:00:00.000Z',
+        },
+      },
+    ]);
+  });
+
   it('maps 404 on unsubscribe', async () => {
     const { forwarder } = harness(() =>
       orpcError(404, 'NOT_FOUND', 'Not found'),
