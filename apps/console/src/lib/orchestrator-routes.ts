@@ -1,4 +1,5 @@
 import {
+  AGENT_BOT_LOGINS,
   type AgentPipeline,
   isDispatchPipeline,
   type IssueReference,
@@ -20,6 +21,7 @@ import {
 } from '@agent-lcars/work';
 import { z } from 'zod';
 
+import { isControlPlaneRepository } from '@/lib/deployment';
 import type { GithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
   githubAnchorProjectionAnchorsFromDelivery,
@@ -282,8 +284,13 @@ const approvalSchema = z.object({
     full_name: z.string().min(1),
     default_branch: z.string().min(1),
   }),
-  review: z.object({ state: z.literal('approved') }),
+  review: z.object({
+    state: z.literal('approved'),
+    author_association: z.string().optional(),
+    user: z.object({ login: z.string() }).nullable().optional(),
+  }),
   pull_request: z.object({
+    state: z.literal('open'),
     draft: z.boolean().optional(),
     head: z.object({
       repo: z.object({ full_name: z.string().min(1) }).nullable(),
@@ -291,10 +298,33 @@ const approvalSchema = z.object({
   }),
 });
 
+const TRUSTED_APPROVER_ASSOCIATIONS = new Set([
+  'OWNER',
+  'MEMBER',
+  'COLLABORATOR',
+]);
+const FLEET_APPROVERS = new Set(
+  AGENT_BOT_LOGINS.map((login) => login.toLowerCase()),
+);
+
+/** Only an approval GitHub's rule could count wakes the sweep: anyone can
+ * review a public repository, and each dispatch runs privileged workflow code
+ * on a self-hosted runner. The fleet App's reviews arrive as `NONE`. */
+function isTrustedApprover(
+  review: z.infer<typeof approvalSchema>['review'],
+): boolean {
+  const login = review.user?.login.toLowerCase();
+  return (
+    (login !== undefined && FLEET_APPROVERS.has(login)) ||
+    TRUSTED_APPROVER_ASSOCIATIONS.has(review.author_association ?? '')
+  );
+}
+
 /** An approval is the request to land a pull request (jlapenna/agent-lcars#3508).
  * Nothing else wakes the auto-merge sweep when one arrives: CI usually finished
  * before the review did, so an approved PR waited for the next push to the
- * base branch or the daily run. Forks and drafts never reach the sweep's arm. */
+ * base branch or the daily run. Closed PRs, forks and drafts never reach the
+ * sweep's arm, and only control-plane repositories are dispatched. */
 async function reconcileAutomergeOnApproval(
   deps: OrchestratorRouteDeps,
   input: { event: string; deliveryId: string; payload: unknown },
@@ -306,8 +336,13 @@ async function reconcileAutomergeOnApproval(
     return;
   const parsed = approvalSchema.safeParse(input.payload);
   if (!parsed.success) return;
-  const { repository, pull_request: pr } = parsed.data;
-  if (pr.draft === true || pr.head.repo?.full_name !== repository.full_name)
+  const { repository, review, pull_request: pr } = parsed.data;
+  if (
+    !isControlPlaneRepository(repository.full_name) ||
+    !isTrustedApprover(review) ||
+    pr.draft === true ||
+    pr.head.repo?.full_name !== repository.full_name
+  )
     return;
   try {
     await deps.reconcileAutomerge(
