@@ -8,6 +8,7 @@ import {
   RUN_PARAMS_MAX_BYTES,
   runQueueSchema,
   runSchema,
+  taskDocumentSchema,
   taskIdSchema,
   taskKey,
   taskSchema,
@@ -387,3 +388,38 @@ function githubFixtureWork(description: string) {
     },
   };
 }
+
+describe('taskDocumentSchema derived state (#3566)', () => {
+  const task = {
+    task: { workId: ULID },
+    runCount: 1,
+    consecutiveLost: 0,
+    updatedAt: '2026-11-25T12:00:00.000Z',
+    work: { origin: { principal: 'user:jlapenna' } },
+  };
+
+  it('reads a document with or without stored item state', () => {
+    expect(taskDocumentSchema.parse({ task, revision: 3 })).toEqual({
+      task,
+      revision: 3,
+    });
+    expect(
+      taskDocumentSchema.parse({
+        task,
+        revision: 3,
+        derived: { state: 'parked', latestRunId: 'run-1', event: false },
+      }).derived,
+    ).toEqual({ state: 'parked', latestRunId: 'run-1', event: false });
+  });
+
+  it('rejects malformed stored item state', () => {
+    for (const derived of [
+      { state: '', event: false },
+      { state: 'parked' },
+      { state: 'parked', event: false, extra: true },
+    ])
+      expect(() =>
+        taskDocumentSchema.parse({ task, revision: 3, derived }),
+      ).toThrow();
+  });
+});
