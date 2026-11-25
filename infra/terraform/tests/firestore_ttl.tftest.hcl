@@ -1,5 +1,11 @@
 mock_provider "google" {
   override_during = plan
+  mock_resource "google_service_account" {
+    defaults = {
+      email = "mock-service-account@agent-lcars.iam.gserviceaccount.com"
+      name  = "projects/agent-lcars/serviceAccounts/mock-service-account@agent-lcars.iam.gserviceaccount.com"
+    }
+  }
 }
 mock_provider "google-beta" {
   override_during = plan
