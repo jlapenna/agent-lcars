@@ -105,12 +105,21 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await page.getByRole('link', { name: 'Reset filters', exact: true }).click();
   await expect(page.getByLabel('State', { exact: true })).toHaveValue('');
 
+  // Stopped work is read by its stored sort key (#3566), so a park older than
+  // the newest 200 tasks is on the first Bridge page, not behind a cursor.
   await page.goto(`/?repo=${encodeURIComponent(E2E_FIXTURE_REPOSITORY)}`);
-  await expect(page.getByTestId('parked-work-panel')).not.toContainText(
+  await expect(page.getByTestId('parked-work-panel')).toContainText(
     'Pagination fixture 1',
   );
-  await page.getByRole('link', { name: 'Older stopped work' }).click();
-  await expect(page).toHaveURL(/stoppedCursor=/);
+  // A later page starts after its cursor: one just newer than the park (seeded
+  // at 00:00:01) still lists it, and selecting the row keeps the cursor.
+  const afterPark = JSON.stringify({
+    updatedAt: '2000-01-01T00:00:02.000Z',
+    taskKey: 'work:00000000000000000000000002',
+  });
+  await page.goto(
+    `/?repo=${encodeURIComponent(E2E_FIXTURE_REPOSITORY)}&stoppedCursor=${encodeURIComponent(afterPark)}`,
+  );
   await expect(page.getByTestId('parked-work-panel')).toContainText(
     'Pagination fixture 1',
   );

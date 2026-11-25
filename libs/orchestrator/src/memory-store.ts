@@ -59,6 +59,7 @@ import {
   selectFairQueuedRun,
   StoreConflict,
   type TaskListCursor,
+  type TaskSortKey,
   type VersionedTask,
 } from './store';
 
@@ -774,6 +775,33 @@ export class MemoryStore implements OrchestratorStore {
 
     const tasks = [...this.#tasks.entries()]
       .map(([key, entry]) => ({ key, entry, updatedAt: entry.task.updatedAt }))
+      .sort(compare)
+      .filter((entry) => cursor === undefined || compare(entry, cursor) > 0)
+      .slice(0, limit ?? 200)
+      .map(({ entry }) => entry);
+    return structuredClone(tasks);
+  }
+
+  async listTasksBySortKey(
+    key: TaskSortKey,
+    limit?: number,
+    before?: TaskListCursor,
+  ): Promise<VersionedTask[]> {
+    const compare = (
+      left: { key: string; value: string },
+      right: { key: string; value: string },
+    ) =>
+      right.value.localeCompare(left.value) ||
+      right.key.localeCompare(left.key);
+    const cursor =
+      before === undefined
+        ? undefined
+        : { key: before.taskKey, value: before.updatedAt };
+    const tasks = [...this.#tasks.entries()]
+      .flatMap(([taskKey, entry]) => {
+        const value = entry.derived?.[key];
+        return value === undefined ? [] : [{ key: taskKey, entry, value }];
+      })
       .sort(compare)
       .filter((entry) => cursor === undefined || compare(entry, cursor) > 0)
       .slice(0, limit ?? 200)

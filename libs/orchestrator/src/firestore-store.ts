@@ -88,6 +88,7 @@ import {
   selectFairQueuedRun,
   StoreConflict,
   type TaskListCursor,
+  type TaskSortKey,
   type VersionedTask,
 } from './store';
 
@@ -1217,6 +1218,27 @@ export class FirestoreStore implements OrchestratorStore {
     // not require an operator-managed composite index or a data migration.
     let query = this.#tasks
       .orderBy('task.updatedAt', 'desc')
+      .orderBy(FieldPath.documentId(), 'desc');
+    if (before !== undefined) {
+      query = query.startAfter(
+        before.updatedAt,
+        encodeURIComponent(before.taskKey),
+      );
+    }
+    const snapshot = await query.limit(limit ?? 200).get();
+    return snapshot.docs.map((doc) => taskDocSchema.parse(doc.data()));
+  }
+
+  async listTasksBySortKey(
+    key: TaskSortKey,
+    limit?: number,
+    before?: TaskListCursor,
+  ): Promise<VersionedTask[]> {
+    // Ordering by the key skips every task without it, and `__name__` is the
+    // implicit final component of the key's automatic single-field index (as
+    // in `listTasks`), so this needs no composite index.
+    let query = this.#tasks
+      .orderBy(`derived.${key}`, 'desc')
       .orderBy(FieldPath.documentId(), 'desc');
     if (before !== undefined) {
       query = query.startAfter(

@@ -197,7 +197,7 @@ describe('ParkedWorkPanel', () => {
       true,
     );
     expect(
-      screen.getByText('Older tasks may contain stopped work.'),
+      screen.getByText('Older pages hold more stopped work.'),
     ).toBeInTheDocument();
   });
 
@@ -205,10 +205,10 @@ describe('ParkedWorkPanel', () => {
     renderPanel([], undefined, undefined, true);
     expect(screen.getByTestId('parked-work-panel')).toBeInTheDocument();
     expect(
-      screen.getByText('No stopped work on this page of up to 200 tasks.'),
+      screen.getByText('No stopped work on this page.'),
     ).toBeInTheDocument();
     expect(
-      screen.getByText('Older tasks may contain stopped work.'),
+      screen.getByText('Older pages hold more stopped work.'),
     ).toBeInTheDocument();
   });
 });

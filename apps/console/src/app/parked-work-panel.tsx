@@ -84,7 +84,7 @@ export function ParkedWorkPanel({
     >
       {parked.length === 0 && !error ? (
         <Text size="sm" c="dimmed" mt="xs">
-          No stopped work on this page of up to 200 tasks.
+          No stopped work on this page.
         </Text>
       ) : (
         <Stack gap={0} mt="xs">
@@ -169,7 +169,7 @@ export function ParkedWorkPanel({
       </Group>
       {hasMoreTasks && (
         <Text size="xs" c="dimmed" mt="xs">
-          Older tasks may contain stopped work.
+          Older pages hold more stopped work.
         </Text>
       )}
     </OpsPanel>

@@ -37,7 +37,7 @@ function EventWorkRow({ item }: { item: WorkSummary }) {
 }
 
 /**
- * Event-driven work among the recently updated tasks the Bridge reads. The
+ * Event-driven work among the most recent event tasks the Bridge reads. The
  * newest {@link EVENT_WORK_SHOWN} are listed; every other match in that read
  * sits behind a disclosure, and Work lists older activity. `windowed` says
  * the read stopped before the oldest task, so the count is a lower bound.
@@ -103,8 +103,8 @@ export function EventWorkActivity({
         {windowSize !== undefined && (
           <Text size="xs" c="dimmed">
             {windowed
-              ? `Matches among the ${windowSize} most recently updated tasks. Older activity is available in Work.`
-              : `Every match among all ${windowSize} tasks.`}
+              ? `Matches among the ${windowSize} most recent event tasks. Older activity is available in Work.`
+              : `Every match among all ${windowSize} event tasks.`}
           </Text>
         )}
       </Stack>

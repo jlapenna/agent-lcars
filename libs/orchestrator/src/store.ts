@@ -553,6 +553,18 @@ export interface OrchestratorStore {
    */
   listTasks(limit?: number, before?: TaskListCursor): Promise<VersionedTask[]>;
 
+  /**
+   * The newest tasks carrying a stored sort key (#3566), newest first: parked
+   * or failed tasks for `stoppedAt`, event work for `eventAt`. Tasks without
+   * the key are skipped, so a page holds only matching tasks. The cursor is
+   * `listTasks`'s shape with `updatedAt` holding the key's value.
+   */
+  listTasksBySortKey(
+    key: TaskSortKey,
+    limit?: number,
+    before?: TaskListCursor,
+  ): Promise<VersionedTask[]>;
+
   /** Every live (`pending`/`running`) run, lease or no lease. */
   listLiveRuns(): Promise<Run[]>;
   /** One bounded recovery page; retry scheduling rotates unresolved actions.
@@ -645,6 +657,9 @@ export interface RunListCursor {
 }
 
 /** Opaque-at-the-API-boundary cursor for the all-anchor task feed. */
+/** A stored item-state sort key a task listing can be ordered by. */
+export type TaskSortKey = 'stoppedAt' | 'eventAt';
+
 export interface TaskListCursor {
   readonly updatedAt: string;
   readonly taskKey: string;
