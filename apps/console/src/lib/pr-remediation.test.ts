@@ -59,6 +59,8 @@ interface MockPrSnapshot {
   assignees?: string[];
   reviewRequests?: string[];
   commits?: { oid: string; author: string | null; signedByGitHub: boolean }[];
+  checks?: { name: string; status: string; conclusion: string | null }[];
+  checksOid?: string;
   reviews?: {
     databaseId?: number;
     state: string;
@@ -121,6 +123,28 @@ function makeGraphqlPr(overrides: MockPrSnapshot = {}) {
         requestedReviewer: { __typename: 'User', login },
       })),
     },
+    ...(overrides.checks === undefined
+      ? {}
+      : {
+          headCommit: {
+            nodes: [
+              {
+                commit: {
+                  oid: overrides.checksOid ?? overrides.headRefOid ?? HEAD_1,
+                  statusCheckRollup: {
+                    contexts: {
+                      pageInfo: { hasNextPage: false },
+                      nodes: overrides.checks.map((check) => ({
+                        __typename: 'CheckRun',
+                        ...check,
+                      })),
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        }),
     ...(overrides.commits === undefined
       ? {}
       : {
@@ -1368,6 +1392,87 @@ describe('automatic pull-request review & conflict remediation', () => {
     ).toMatchObject({
       action: 'remediated',
       outcome: { kind: 'accepted', runId: `${REPO}#4006/r2` },
+    });
+  });
+
+  describe('failing checks on the current head', () => {
+    const anchor = { repo: REPO, issue: 4060 };
+    const approved = {
+      author: { login: 'jlapenna' },
+      reviews: [
+        {
+          state: 'APPROVED',
+          author: { __typename: 'Bot', login: 'agent-lcars' },
+          commit: { oid: HEAD_1 },
+        },
+      ],
+    };
+
+    it('remediates an approved PR whose finished checks failed', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4060, {
+        ...approved,
+        checks: [
+          {
+            name: 'repository validation',
+            status: 'COMPLETED',
+            conclusion: 'FAILURE',
+          },
+          { name: 'gitleaks', status: 'COMPLETED', conclusion: 'SUCCESS' },
+        ],
+      });
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({
+        action: 'remediated',
+        outcome: { kind: 'accepted', runId: `${REPO}#4060/r1` },
+      });
+      const [run] = await f.store.listRuns(anchor);
+      expect(run?.params?.['context']).toContain(
+        'failing checks: repository validation',
+      );
+      expect(run?.params?.['context']).toContain('gh run rerun --failed');
+      expect(run?.params?.['remediationReason']).toBeUndefined();
+    });
+
+    it.each([
+      [
+        'a check is still running',
+        [
+          { name: 'Verify', status: 'COMPLETED', conclusion: 'FAILURE' },
+          { name: 'E2E', status: 'IN_PROGRESS', conclusion: null },
+        ],
+        undefined,
+      ],
+      [
+        'the failure was a superseded run beside a newer success',
+        [
+          { name: 'Verify', status: 'COMPLETED', conclusion: 'FAILURE' },
+          { name: 'Verify', status: 'COMPLETED', conclusion: 'SUCCESS' },
+        ],
+        undefined,
+      ],
+      [
+        'the only failures are cancellations',
+        [{ name: 'Verify', status: 'COMPLETED', conclusion: 'CANCELLED' }],
+        undefined,
+      ],
+      [
+        'the rollup belongs to an older commit',
+        [{ name: 'Verify', status: 'COMPLETED', conclusion: 'FAILURE' }],
+        HEAD_2,
+      ],
+    ])('does nothing when %s', async (_case, checks, checksOid) => {
+      const f = createFixture();
+      f.setPr(REPO, 4060, { ...approved, checks, checksOid });
+
+      const result = await reconcilePullRequestRemediation(
+        f.remediationDeps,
+        anchor,
+      );
+      expect(result.action).not.toBe('remediated');
+      expect(await f.store.listRuns(anchor)).toHaveLength(0);
     });
   });
 
