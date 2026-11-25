@@ -1375,22 +1375,13 @@ export class FirestoreStore implements OrchestratorStore {
       // Reading selection and occupancy in this transaction makes a racing
       // claimant retry after the winner changes either value.
       const requested = [...new Set(input.pipelines)];
-      const cooldowns = await Promise.all(
-        requested.map((pipeline) =>
-          tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
-        ),
-      );
-      const granted = requested.filter(
-        (_, index) =>
-          !providerIsCoolingDown(cooldowns[index]?.data(), input.now),
-      );
-      if (granted.length === 0) return undefined;
       // Queued candidates first: most claims are idle polls, and with nothing
-      // queued there is nothing to order or place, so the occupancy, priority
-      // and credential reads below are skipped. Only live runs are candidates;
-      // a run canceled while queued can keep `queue.state: queued`.
-      const queuedSnapshots = await Promise.all(
-        granted.map((pipeline) =>
+      // queued there is nothing to order or place, so the cooldown,
+      // occupancy, priority and credential reads below are skipped and an
+      // idle poll is one round trip. Only live runs are candidates; a run
+      // canceled while queued can keep `queue.state: queued`.
+      const queuedByPipeline = await Promise.all(
+        requested.map((pipeline) =>
           tx.get(
             this.#runs
               .where('queue.state', '==', 'queued')
@@ -1398,6 +1389,22 @@ export class FirestoreStore implements OrchestratorStore {
               .where('state', 'in', LIVE_STATES),
           ),
         ),
+      );
+      if (queuedByPipeline.every((snapshot) => snapshot.empty))
+        return undefined;
+      const cooldowns = await Promise.all(
+        requested.map((pipeline) =>
+          tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
+        ),
+      );
+      const grantedIndexes = requested.flatMap((_, index) =>
+        providerIsCoolingDown(cooldowns[index]?.data(), input.now)
+          ? []
+          : [index],
+      );
+      const granted = grantedIndexes.map((index) => requested[index]!);
+      const queuedSnapshots = grantedIndexes.map(
+        (index) => queuedByPipeline[index]!,
       );
       if (queuedSnapshots.every((snapshot) => snapshot.empty)) return undefined;
       const [prioritySnapshots, windowSnapshots] = await Promise.all([
