@@ -52,6 +52,7 @@ import {
 import {
   detectPullRequestAuthorPipeline,
   isAutomatedReviewExcludedAuthor,
+  isDependencyBotLogin,
   isVerifiedDependencyUpdate,
   parseAttemptClaimRunId,
   selectCrossModelReviewer,
@@ -84,6 +85,17 @@ const PR_REMEDIATION_REQUEST_PREFIX = 'pr-remediation:';
  * fails to change the head is still caught by the no-op and dedupe rules. */
 const CONFLICT_ONLY_REMEDIATION_REASON = 'conflict-only';
 const PR_REREVIEW_REQUEST_PREFIX = 'pr-rereview:';
+
+/** A dependency bot's draft pull request is qualification work: Renovate opens
+ * majors and repository-selected groups as drafts precisely because they need
+ * an agent to adopt them (repo-tools renovate-preset: "a major upgrade is
+ * agent work"). Once the fleet has run one of these on a PR, it owns the
+ * branch, and ordinary remediation applies despite the bot author. */
+const DEPENDENCY_QUALIFICATION_REQUEST_PREFIX = 'dependency-qualification:';
+
+function isDependencyQualificationRun(run: Run): boolean {
+  return run.requestId.startsWith(DEPENDENCY_QUALIFICATION_REQUEST_PREFIX);
+}
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 
@@ -819,6 +831,92 @@ function countConsecutiveAutoRemediations(runs: readonly Run[]): {
   return { counted: distinctRounds.size, total: allRounds.size };
 }
 
+async function qualifyDependencyDraft(
+  deps: PrRemediationDeps,
+  anchor: GithubAnchor,
+  snapshot: PullRequestSnapshot,
+  watchedRepo: Parameters<typeof supportedAgentPipelines>[0],
+): Promise<PrRemediationResult> {
+  const labels = snapshot.labels.nodes.flatMap((node) =>
+    node === null ? [] : [node.name],
+  );
+  if (
+    labels.includes('status:needs-human') ||
+    labels.includes('status:blocked')
+  ) {
+    return { action: 'ignored', reason: 'parked-or-excluded-label' };
+  }
+  const runs = await deps.store.listRuns(anchor);
+  if (newestNonReviewRunIsParked(runs)) {
+    return { action: 'ignored', reason: 'parked' };
+  }
+  const rounds = new Set(
+    runs.filter(isDependencyQualificationRun).map((run) => run.requestId),
+  );
+  const requestId = `${DEPENDENCY_QUALIFICATION_REQUEST_PREFIX}${anchor.issue}:${snapshot.headRefOid.slice(0, 12)}`;
+  if (!rounds.has(requestId) && rounds.size >= MAX_AUTO_PR_REMEDIATION_ROUNDS) {
+    logger.warn(
+      'agent-lcars: reached %s dependency qualification rounds on %s#%s; stopping automatic dispatch',
+      MAX_AUTO_PR_REMEDIATION_ROUNDS,
+      anchor.repo,
+      anchor.issue,
+    );
+    await applyNeedsHumanLabel(deps, anchor);
+    return { action: 'ignored', reason: 'qualification-cap-reached' };
+  }
+  const selection = selectPullRequestRemediation({
+    supportedPipelines: supportedAgentPipelines(watchedRepo),
+  });
+  const outcome = await admitGithubWork(deps, {
+    anchor,
+    requestId,
+    params: {
+      mode: 'implement',
+      context: buildQualificationContext({
+        repo: anchor.repo,
+        number: anchor.issue,
+        headSha: snapshot.headRefOid,
+        baseRefName: snapshot.baseRefName,
+        headRefName: snapshot.headRefName,
+      }),
+      ...(hasCrossRepoOption(labels) ? { crossRepo: 'true' } : {}),
+    },
+    work: workPayloadFromGithub({
+      title: snapshot.title,
+      body: snapshot.body,
+      pipeline: selection.pipeline,
+      repo: anchor.repo,
+      actor: normalizeGraphqlActorLogin(snapshot.author) ?? 'renovate[bot]',
+    }),
+    workMirrorsAnchor: true,
+    remediationFallback: true,
+    fallbackPipelines: selection.fallbackPipelines,
+  });
+  return { action: 'remediated', outcome };
+}
+
+function buildQualificationContext(input: {
+  repo: string;
+  number: number;
+  headSha: string;
+  baseRefName: string;
+  headRefName: string;
+}): string {
+  return (
+    `Qualify the dependency update in draft pull request https://github.com/${input.repo}/pull/${input.number} ` +
+    `at ${input.headSha}. Renovate opened it as a draft because it needs an agent to adopt it ` +
+    `(a major version or a group the repository qualifies by hand). Fetch origin/${input.baseRefName} ` +
+    `and merge it into ${input.headRefName} if needed. Read the upstream release notes and migration ` +
+    `guidance for every updated package, make every code, configuration and lockfile change the update ` +
+    `needs, run the repository's verification, and push to ${input.headRefName}. Then mark the pull ` +
+    `request ready (gh pr ready) and arm squash auto-merge: required checks and the LCARS review gate ` +
+    `the merge. If adopting it needs a decision only the maintainer can make (for example a data ` +
+    `migration or a breaking behavior change with no compatible path), park with that exact question ` +
+    `instead of marking it ready. Do not close the pull request. Post a deliverable carrying your exact ` +
+    `<!-- attempt-claim:$ATTEMPT_ID --> marker.`
+  );
+}
+
 /** Rounds dispatched before `remediationReason` existed carry no tag, so
  * recognize their conflict-only brief from `buildRemediationContext`'s
  * reason list. Remove once no open PR has an untagged remediation round. */
@@ -1002,15 +1100,18 @@ async function reconcilePullRequestRemediationOnce(
   if (snapshot.state !== 'OPEN' || snapshot.mergedAt !== null) {
     return { action: 'ignored', reason: 'anchor-closed' };
   }
-  if (snapshot.isDraft) {
-    return { action: 'ignored', reason: 'draft-pull-request' };
-  }
   // Never execute privileged coding agents on untrusted fork branches.
   if (
     snapshot.headRepository?.nameWithOwner?.toLowerCase() !==
     anchor.repo.toLowerCase()
   ) {
     return { action: 'ignored', reason: 'fork-pull-request' };
+  }
+  if (snapshot.isDraft) {
+    if (isDependencyBotLogin(normalizeGraphqlActorLogin(snapshot.author))) {
+      return qualifyDependencyDraft(deps, anchor, snapshot, watchedRepo);
+    }
+    return { action: 'ignored', reason: 'draft-pull-request' };
   }
 
   // The orchestrator lock is per task, so the PR anchor does not contend with
@@ -1081,11 +1182,10 @@ async function reconcilePullRequestRemediationOnce(
     }
     return { action: 'approved-dependency-update', head };
   }
-  if (!author || isAutomatedReviewExcludedAuthor(author)) {
+  if (!author) {
     return { action: 'ignored', reason: 'excluded-author' };
   }
   if (
-    labels.includes('bot:renovate') ||
     labels.includes('status:needs-human') ||
     labels.includes('status:blocked')
   ) {
@@ -1096,6 +1196,15 @@ async function reconcilePullRequestRemediationOnce(
     deps.store.readTask(anchor),
     deps.store.listRuns(anchor),
   ]);
+  // A dependency bot's PR stays the bot's until the fleet qualified it; after
+  // that the fleet's commits are on the branch and the bot no longer rebases.
+  const fleetQualified = runs.some(isDependencyQualificationRun);
+  if (isAutomatedReviewExcludedAuthor(author) && !fleetQualified) {
+    return { action: 'ignored', reason: 'excluded-author' };
+  }
+  if (labels.includes('bot:renovate') && !fleetQualified) {
+    return { action: 'ignored', reason: 'parked-or-excluded-label' };
+  }
   if (newestNonReviewRunIsParked(runs)) {
     return { action: 'ignored', reason: 'parked' };
   }
@@ -1466,16 +1575,25 @@ export async function reconcileOpenPullRequestRemediations(
     (projection.unresolvedReviewThreadCount ?? 0) > 0 ||
     projection.mergeableState === 'dirty';
 
+  const isDependencyDraft = (projection: (typeof projections)[number]) =>
+    projection.draft === true && isDependencyBotLogin(projection.author);
+
   const eligible = projections.filter((projection) => {
     if (
       projection.kind !== 'pr' ||
       projection.state !== 'open' ||
-      projection.draft === true ||
       projection.mergedAt != null ||
-      projection.labels.includes('bot:renovate') ||
       projection.labels.includes('status:needs-human') ||
       projection.labels.includes('status:blocked')
     ) {
+      return false;
+    }
+    // A dependency bot's draft is qualification work; a dependency bot's
+    // ready PR is inspected only for a concrete signal, and remediation then
+    // acts only if the fleet already qualified it.
+    const dependencyBot = isDependencyBotLogin(projection.author);
+    if (projection.draft === true && !dependencyBot) return false;
+    if (projection.labels.includes('bot:renovate') && !dependencyBot) {
       return false;
     }
     if (!isControlPlaneRepository(projection.anchor.repo)) return false;
@@ -1490,19 +1608,28 @@ export async function reconcileOpenPullRequestRemediations(
     ) {
       return false;
     }
+    if (dependencyBot) {
+      return (
+        isDependencyDraft(projection) ||
+        hasConcreteRemediationSignal(projection)
+      );
+    }
     if (isAutomatedReviewExcludedAuthor(projection.author)) return false;
     return (
       hasConcreteRemediationSignal(projection) ||
       projection.reviewRequirement === 'required'
     );
   });
-  // Prioritize PRs with a concrete thread or merge-conflict
-  // signals ahead of generic `reviewRequirement === 'required'`.
-  eligible.sort(
-    (left, right) =>
-      (hasConcreteRemediationSignal(left) ? 0 : 1) -
-      (hasConcreteRemediationSignal(right) ? 0 : 1),
-  );
+  // Prioritize PRs with a concrete thread or merge-conflict signal, then
+  // generic `reviewRequirement === 'required'`, then dependency drafts, which
+  // are deduplicated per head and so usually need no new run.
+  const priority = (projection: (typeof projections)[number]): number =>
+    hasConcreteRemediationSignal(projection)
+      ? 0
+      : isDependencyDraft(projection)
+        ? 2
+        : 1;
+  eligible.sort((left, right) => priority(left) - priority(right));
 
   // Enqueue only: `handleReconcile`'s single outbox drain runs immediately
   // afterward and owns outbox claims, backoff, and response accounting.
@@ -1545,13 +1672,15 @@ export async function reconcileOpenPullRequestRemediations(
 
   // After remediation, so the census never spends the sweep's budget before
   // remediation does; a census starved of time reports complete=false.
-  // Runs this sweep just admitted count as running.
+  // Runs this sweep just admitted count as running. Dependency-bot PRs stay
+  // out of the census as before: the bot rebases its own branches.
   await recordBlockedPullRequestCensus(
     deps,
     eligible.filter(
       (projection) =>
-        projection.mergeableState === 'dirty' ||
-        (projection.unresolvedReviewThreadCount ?? 0) > 0,
+        !isDependencyBotLogin(projection.author) &&
+        (projection.mergeableState === 'dirty' ||
+          (projection.unresolvedReviewThreadCount ?? 0) > 0),
     ),
     projectionsComplete,
     deadlineMs,

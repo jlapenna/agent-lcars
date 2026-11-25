@@ -874,7 +874,6 @@ describe('automatic pull-request review & conflict remediation', () => {
           ],
         },
       ],
-      ['the pull request is a draft', { isDraft: true }],
       ['the commits were not read', { commits: undefined }],
       [
         'someone dismissed LCARS approval of this head',
@@ -954,6 +953,138 @@ describe('automatic pull-request review & conflict remediation', () => {
       await reconcilePullRequestRemediation(f.remediationDeps, anchor);
 
       expect(reviewPosts(f)).toEqual([]);
+    });
+  });
+
+  describe('dependency drafts awaiting qualification', () => {
+    const RENOVATE = { __typename: 'Bot', login: 'renovate' };
+    const anchor = { repo: REPO, issue: 4040 };
+    const draft = (
+      overrides: Partial<MockPrSnapshot> = {},
+    ): MockPrSnapshot => ({
+      author: RENOVATE,
+      isDraft: true,
+      headRefName: 'renovate/major-node-runtime',
+      labels: ['type:dependency-update', 'bot:renovate'],
+      commits: [{ oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true }],
+      ...overrides,
+    });
+
+    it('dispatches one qualification run per head and never approves the draft', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4040, draft());
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({
+        action: 'remediated',
+        outcome: { kind: 'accepted', runId: `${REPO}#4040/r1` },
+      });
+      const [run] = await f.store.listRuns(anchor);
+      expect(run?.requestId).toBe(
+        `dependency-qualification:4040:${HEAD_1.slice(0, 12)}`,
+      );
+      expect(run?.params?.['mode']).toBe('implement');
+      expect(run?.params?.['context']).toContain(
+        'Qualify the dependency update',
+      );
+      expect(run?.params?.['context']).toContain('gh pr ready');
+      await f.orchestrator.report(`${REPO}#4040/r1`, { ok: true });
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({
+        action: 'remediated',
+        outcome: { kind: 'duplicate', runId: `${REPO}#4040/r1` },
+      });
+      expect(
+        vi
+          .mocked(f.fetchImpl)
+          .mock.calls.filter(
+            ([url, init]) =>
+              String(url).endsWith(`/pulls/4040/reviews`) &&
+              init?.method === 'POST',
+          ),
+      ).toEqual([]);
+    });
+
+    it.each([
+      ['held for a human', { labels: ['bot:renovate', 'status:needs-human'] }],
+      ['blocked', { labels: ['bot:renovate', 'status:blocked'] }],
+    ])(
+      'leaves a dependency draft alone when it is %s',
+      async (_case, overrides) => {
+        const f = createFixture();
+        f.setPr(REPO, 4040, draft(overrides));
+
+        expect(
+          await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+        ).toEqual({ action: 'ignored', reason: 'parked-or-excluded-label' });
+        expect(await f.store.listRuns(anchor)).toHaveLength(0);
+      },
+    );
+
+    it('still ignores a draft that a person opened', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4040, draft({ author: { login: 'jlapenna' } }));
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'ignored', reason: 'draft-pull-request' });
+    });
+
+    it('caps qualification rounds and hands the draft to a human', async () => {
+      const f = createFixture();
+      for (let round = 1; round <= MAX_AUTO_PR_REMEDIATION_ROUNDS; round += 1) {
+        f.setPr(REPO, 4040, draft({ headRefOid: String(round).repeat(40) }));
+        expect(
+          await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+        ).toMatchObject({ action: 'remediated' });
+        await f.orchestrator.report(`${REPO}#4040/r${round}`, { ok: true });
+      }
+      f.setPr(REPO, 4040, draft({ headRefOid: '9'.repeat(40) }));
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'ignored', reason: 'qualification-cap-reached' });
+      expect(f.fetchImpl).toHaveBeenCalledWith(
+        expect.stringContaining(`/repos/${REPO}/issues/4040/labels`),
+        expect.objectContaining({
+          body: JSON.stringify({ labels: ['status:needs-human'] }),
+        }),
+      );
+    });
+
+    it('remediates a qualified dependency PR like any fleet PR, but not an unqualified one', async () => {
+      const f = createFixture();
+      const conflicted = {
+        isDraft: false,
+        headRefOid: HEAD_2,
+        mergeable: 'CONFLICTING',
+        mergeStateStatus: 'DIRTY',
+        commits: [
+          { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+          { oid: HEAD_2, author: 'agent-lcars[bot]', signedByGitHub: true },
+        ],
+      };
+
+      // No qualification run yet: the bot still owns the branch.
+      f.setPr(REPO, 4040, draft(conflicted));
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'ignored', reason: 'excluded-author' });
+
+      f.setPr(REPO, 4040, draft());
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
+      await f.orchestrator.report(`${REPO}#4040/r1`, { ok: true });
+
+      f.setPr(REPO, 4040, draft(conflicted));
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({
+        action: 'remediated',
+        outcome: { kind: 'accepted', runId: `${REPO}#4040/r2` },
+      });
     });
   });
 
@@ -1317,6 +1448,75 @@ describe('automatic pull-request review & conflict remediation', () => {
     // The census follows the sweep's remediation checks, never precedes them.
     expect(structured.mock.calls.at(-1)?.[1]).toBe(
       'LCARS PR remediation census',
+    );
+    structured.mockRestore();
+  });
+
+  it('sweeps dependency drafts into qualification without counting dependency PRs in the census', async () => {
+    const f = createFixture();
+    const structured = vi
+      .spyOn(logger, 'structured')
+      .mockImplementation(() => undefined);
+    const seed = async (
+      issue: number,
+      overrides: Partial<GithubAnchorProjection>,
+    ) => {
+      const anchor = { repo: REPO, issue };
+      const generation =
+        await f.store.beginGithubAnchorProjectionRefresh(anchor);
+      await f.store.applyGithubAnchorProjectionRefresh({
+        anchor,
+        generation,
+        projection: {
+          anchor,
+          kind: 'pr',
+          state: 'open',
+          draft: false,
+          mergedAt: null,
+          title: `PR ${issue}`,
+          body: '',
+          url: `https://github.com/${REPO}/pull/${issue}`,
+          author: 'renovate[bot]',
+          labels: ['bot:renovate'],
+          assigneeLogins: [],
+          sourceUpdatedAt: T0,
+          observedAt: T0,
+          ...overrides,
+        },
+      });
+    };
+    await seed(4050, { draft: true });
+    await seed(4051, { mergeableState: 'dirty' });
+    await seed(4052, { draft: true, author: 'jlapenna', labels: [] });
+    f.setPr(REPO, 4050, {
+      author: { __typename: 'Bot', login: 'renovate' },
+      isDraft: true,
+      headRefName: 'renovate/major-node-runtime',
+      labels: ['bot:renovate'],
+    });
+    f.setPr(REPO, 4051, {
+      author: { __typename: 'Bot', login: 'renovate' },
+      mergeable: 'CONFLICTING',
+      mergeStateStatus: 'DIRTY',
+      labels: ['bot:renovate'],
+    });
+    f.advanceMinutes(180);
+
+    await reconcileOpenPullRequestRemediations(
+      f.remediationDeps,
+      Date.now() + 60_000,
+    );
+
+    expect(await f.store.listRuns({ repo: REPO, issue: 4050 })).toMatchObject([
+      { requestId: expect.stringMatching(/^dependency-qualification:4050:/u) },
+    ]);
+    expect(await f.store.listRuns({ repo: REPO, issue: 4051 })).toEqual([]);
+    expect(await f.store.listRuns({ repo: REPO, issue: 4052 })).toEqual([]);
+    expect(structured).toHaveBeenCalledWith(
+      'info',
+      'LCARS PR remediation census',
+      expect.objectContaining({ complete: true, blocked: 0, stalled: 0 }),
+      { enrich: false },
     );
     structured.mockRestore();
   });

@@ -44,6 +44,10 @@ export function parseAttemptClaimRunId(
   return lastRunId;
 }
 
+export function isDependencyBotLogin(login: string | undefined): boolean {
+  return login !== undefined && DEPENDENCY_BOT_LOGINS.has(login.toLowerCase());
+}
+
 export function isAutomatedReviewExcludedAuthor(
   login: string | undefined,
 ): boolean {
