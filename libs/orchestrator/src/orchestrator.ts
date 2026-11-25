@@ -9,6 +9,7 @@ import {
   reserveCredentialOperation,
 } from './credential-operation';
 import {
+  admitEventResume,
   cancelRun,
   closeTask,
   confirmDispatch,
@@ -21,6 +22,7 @@ import {
   isRefusal,
   observePlacement,
   observeStartupPlacement,
+  queueEventResume,
   type Refusal,
   refused,
   renewLease,
@@ -735,6 +737,51 @@ export class Orchestrator {
           ...(input.note === undefined ? {} : { note: input.note }),
         });
       },
+    });
+  }
+
+  /** Accepts an event for a native Work a dispatched run subscribed it to
+   * (#3570); see `queueEventResume`. */
+  async queueEventResume(
+    taskId: WorkAnchor,
+    event: { deliveryId: string; notice: string },
+  ): Promise<Decision | Refusal> {
+    return this.transact(taskId, (task, activeRun) =>
+      queueEventResume({
+        now: this.clock.now(),
+        task: task?.task,
+        activeRun,
+        event,
+      }),
+    );
+  }
+
+  /** Starts the run that resumes a Work for the events waiting on it; see
+   * `admitEventResume`. The request history records it under the `event`
+   * source, so admitting the same events twice returns the first run. */
+  async admitEventResume(input: {
+    taskId: WorkAnchor;
+    requestId: string;
+    pipeline: string;
+    priority?: QueuePriority;
+    params?: Record<string, string>;
+  }): Promise<Decision | Refusal> {
+    const now = this.clock.now();
+    return this.store.transactRequest({
+      taskId: input.taskId,
+      requestId: input.requestId,
+      requestSource: 'event',
+      decide: ({ task, activeRun, previousRun, requestId }) =>
+        admitEventResume({
+          now,
+          task: task?.task,
+          activeRun,
+          previousRun,
+          requestId,
+          pipeline: input.pipeline,
+          ...(input.priority === undefined ? {} : { priority: input.priority }),
+          ...(input.params === undefined ? {} : { params: input.params }),
+        }),
     });
   }
 
