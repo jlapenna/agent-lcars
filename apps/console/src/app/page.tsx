@@ -259,9 +259,9 @@ async function IndexBody({
     timings.time('queue', getCachedQueueItems()),
     activityRead,
     timings.time('cliSessions', getCliSessions({ exhaustive: true })),
-    timings.time(
-      'runnerSessions',
-      activityRead.then(({ data }) =>
+    activityRead.then(({ data }) =>
+      timings.time(
+        'runnerSessions',
         getRunnerSessionsByRunId([...data.liveRuns, ...data.recentRuns]),
       ),
     ),
