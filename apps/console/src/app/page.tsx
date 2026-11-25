@@ -34,6 +34,7 @@ import {
 import { getNativeInboxEvidence } from '../lib/native-inbox';
 import { derivePrimaryAction } from '../lib/primary-action';
 import { buildQueueView } from '../lib/queue-view';
+import { readTimings } from '../lib/read-timings';
 import { indexSessionsByRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import {
@@ -232,7 +233,8 @@ async function IndexBody({
   stoppedCursor?: string;
   multiRepo: boolean;
 }) {
-  const activityRead = getCachedAgentActivity();
+  const timings = readTimings('bridge');
+  const activityRead = timings.time('activity', getCachedAgentActivity());
   const [
     {
       data: { items: rawItems },
@@ -254,29 +256,42 @@ async function IndexBody({
     spendArchive,
     tokenRateSnapshot,
   ] = await Promise.all([
-    getCachedQueueItems(),
+    timings.time('queue', getCachedQueueItems()),
     activityRead,
-    getCliSessions({ exhaustive: true }),
-    activityRead.then(({ data }) =>
-      getRunnerSessionsByRunId([...data.liveRuns, ...data.recentRuns]),
+    timings.time('cliSessions', getCliSessions({ exhaustive: true })),
+    timings.time(
+      'runnerSessions',
+      activityRead.then(({ data }) =>
+        getRunnerSessionsByRunId([...data.liveRuns, ...data.recentRuns]),
+      ),
     ),
-    getParkedWork(repoFilterKey, stoppedCursor, view),
-    getNativeInboxEvidence(async () => {
-      const context = await workContext();
-      return { store: context.runtime.store, principal: context.principal };
-    }),
-    getAutoscalerStatuses(),
-    getSessionArchive(
-      parseSessionArchiveQuery({ days: '1', repo: repoFilterKey }),
-      {
-        includeSpend: true,
-      },
-    ).catch((error: unknown) => {
-      logger.error('agent-lcars: Bridge spend readout unavailable:', error);
-      return undefined;
-    }),
-    getTokenRateSnapshot(),
+    timings.time(
+      'stoppedWork',
+      getParkedWork(repoFilterKey, stoppedCursor, view),
+    ),
+    timings.time(
+      'nativeInbox',
+      getNativeInboxEvidence(async () => {
+        const context = await workContext();
+        return { store: context.runtime.store, principal: context.principal };
+      }),
+    ),
+    timings.time('autoscaler', getAutoscalerStatuses()),
+    timings.time(
+      'spend',
+      getSessionArchive(
+        parseSessionArchiveQuery({ days: '1', repo: repoFilterKey }),
+        {
+          includeSpend: true,
+        },
+      ).catch((error: unknown) => {
+        logger.error('agent-lcars: Bridge spend readout unavailable:', error);
+        return undefined;
+      }),
+    ),
+    timings.time('tokenRate', getTokenRateSnapshot()),
   ]);
+  timings.log();
   // Deduped: independent authoritative reads can fail independently, and
   // each unique problem only needs saying once.
   const warnings = Array.from(

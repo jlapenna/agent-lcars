@@ -6,6 +6,7 @@ import { getCachedAgentActivity } from './dashboard-data';
 import { consoleUrl } from './deployment';
 import { loadInboxNotificationSnapshot } from './inbox-notifications-data';
 import { mergedLastDay } from './merged-pulls';
+import { readTimings } from './read-timings';
 import { getArchiveTokenTotal } from './session-archive';
 
 /**
@@ -101,19 +102,28 @@ export async function loadShellReadouts(): Promise<ShellReadouts | undefined> {
 
   // This runs in a Route Handler, where `React.cache` does not share reads, so
   // start the activity read once and hand it to the inbox snapshot.
-  const activityRead = getCachedAgentActivity();
+  const timings = readTimings('shell-readouts');
+  const activityRead = timings.time('activity', getCachedAgentActivity());
   const [activity, snapshot, tokens, merges] = await Promise.all([
     activityRead.catch(() => undefined),
-    loadInboxNotificationSnapshot(activityRead).catch(() => undefined),
-    readRecentTokens().catch(() => ({}) as RecentTokens),
+    timings
+      .time('inbox', loadInboxNotificationSnapshot(activityRead))
+      .catch(() => undefined),
+    timings
+      .time('tokens24h', readRecentTokens())
+      .catch(() => ({}) as RecentTokens),
     // Counted from GitHub across the watched repositories, so merges no
     // recorded session referenced still count.
-    mergedLastDay().then((merged): RecentMerges =>
-      merged === undefined
-        ? {}
-        : { merged24h: merged.count, merged24hPartial: merged.partial },
+    timings.time(
+      'merges24h',
+      mergedLastDay().then((merged): RecentMerges =>
+        merged === undefined
+          ? {}
+          : { merged24h: merged.count, merged24hPartial: merged.partial },
+      ),
     ),
   ]);
+  timings.log();
   const queue = activity?.data.queue;
   const fleet = activity?.data.fleet;
   return {
