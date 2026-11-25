@@ -61,6 +61,7 @@ describe('read accounting', () => {
   it('shares labels and counts across separate module copies', async () => {
     const info = vi.spyOn(logger, 'info').mockImplementation(() => undefined);
     vi.resetModules();
+    // eslint-disable-next-line no-restricted-syntax -- a second module copy is the point: vi.resetModules() invalidates what a static import bound.
     const other = await import('./read-accounting');
 
     withReadLabel('listNativeTasks', () => other.recordRead('tasks', 2));
