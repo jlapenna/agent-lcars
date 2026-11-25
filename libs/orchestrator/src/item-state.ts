@@ -83,14 +83,27 @@ export function deriveItemState(
 export function taskDerivedFrom(
   task: Pick<
     Task,
-    'closedAt' | 'consecutiveLost' | 'delivery' | 'desiredRevision'
+    | 'closedAt'
+    | 'consecutiveLost'
+    | 'delivery'
+    | 'desiredRevision'
+    | 'updatedAt'
   >,
   runs: readonly Run[],
 ): TaskDerived {
   const latest = latestRun(runs);
+  const state = deriveItemState(task, runs);
+  const event = runs.some((run) => run.sourceRevision !== undefined);
   return {
-    state: deriveItemState(task, runs),
+    state,
     ...(latest === undefined ? {} : { latestRunId: latest.runId }),
-    event: runs.some((run) => run.sourceRevision !== undefined),
+    event,
+    // Sort keys present only on the tasks a reader wants: a query ordered by
+    // one skips every task without it, so the newest stopped or event tasks
+    // need only Firestore's automatic single-field index.
+    ...(state === 'parked' || state === 'failed'
+      ? { stoppedAt: task.updatedAt }
+      : {}),
+    ...(event ? { eventAt: task.updatedAt } : {}),
   };
 }
