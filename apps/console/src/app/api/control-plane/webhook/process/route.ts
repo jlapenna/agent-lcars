@@ -2,6 +2,7 @@ import { logger } from '@agent-lcars/logging';
 import { required } from '@agent-lcars/util-server';
 import { NextResponse } from 'next/server';
 
+import { queueGithubAgentEvents } from '@/lib/github-agent-event-intake';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
 import {
   MAX_PROCESS_ATTEMPTS,
@@ -76,6 +77,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   let deliveryId: string | undefined;
   let eventName: string | undefined;
   let repairGeneration = 0;
+  // Set once the delivery is readable, so the `finally` below can queue its
+  // agent events after the existing handling, whatever its outcome.
+  let routable:
+    { deliveryId: string; eventName: string; payload: unknown } | undefined;
   try {
     deliveryId = header(request, 'x-github-delivery');
     eventName = header(request, 'x-github-event');
@@ -90,6 +95,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         cause: error,
       });
     }
+    routable = { deliveryId, eventName, payload };
     const result = await handleWebhookDelivery(createOrchestratorRuntime(), {
       event: eventName,
       deliveryId,
@@ -191,5 +197,22 @@ export async function POST(request: Request): Promise<NextResponse> {
       { error: 'Hosted admission failed' },
       { status: 500 },
     );
+  } finally {
+    // Agent events (#3569) come after admission and never change its
+    // answer: `queueGithubAgentEvents` does not throw, enqueues nothing for
+    // a delivery that stands for no event, and names its task per delivery,
+    // so admission's own retries enqueue it at most once. Queuing on every
+    // attempt keeps events from waiting behind an admission retry.
+    if (routable !== undefined) {
+      await queueGithubAgentEvents(
+        {
+          rawBody,
+          deliveryId: routable.deliveryId,
+          eventName: routable.eventName,
+          signature: request.headers.get('x-hub-signature-256') ?? '',
+        },
+        routable.payload,
+      );
+    }
   }
 }

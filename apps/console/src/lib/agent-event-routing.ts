@@ -14,6 +14,7 @@ import { PubSub } from '@google-cloud/pubsub';
 import {
   type AgentEventSubscriptionStore,
   agentEventSubscriptionStore,
+  type StoredAgentEventSubscription,
 } from './agent-event-store';
 
 /** Publishes one delivery to the topic each host's delivery agent pulls. */
@@ -87,7 +88,26 @@ export async function routeAgentEvent(
   },
 ): Promise<{ eventId: string; deliveries: RoutedDelivery[] }> {
   const event = agentEventSchema.parse(input);
-  const subscriptions = (await deps.store.listForKey(event.key))
+  return routeAgentEventToSubscriptions(
+    event,
+    await deps.store.listForKey(event.key),
+    deps,
+  );
+}
+
+/**
+ * {@link routeAgentEvent} for a caller that already read the key's
+ * subscriptions, so a source that checks for subscribers before doing more
+ * work reads them once. Only the given subscriptions that match the event
+ * are routed.
+ */
+export async function routeAgentEventToSubscriptions(
+  input: unknown,
+  candidates: readonly StoredAgentEventSubscription[],
+  deps: AgentEventRoutingDeps,
+): Promise<{ eventId: string; deliveries: RoutedDelivery[] }> {
+  const event = agentEventSchema.parse(input);
+  const subscriptions = candidates
     .filter((subscription) => subscriptionMatches(subscription, event))
     .sort((a, b) => a.id.localeCompare(b.id));
   const deliveries: RoutedDelivery[] = [];

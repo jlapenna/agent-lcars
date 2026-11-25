@@ -123,6 +123,15 @@ describe('validateSubscriptionRequest', () => {
       false,
     );
   });
+
+  it('accepts a conversation comment on a pull request', () => {
+    expect(
+      validateSubscriptionRequest({
+        key: 'github:pr:jlapenna/homelab#1',
+        kinds: ['comment'],
+      }),
+    ).toMatchObject({ ok: true, value: { kinds: ['comment'] } });
+  });
 });
 
 describe('subscriptionMatches', () => {

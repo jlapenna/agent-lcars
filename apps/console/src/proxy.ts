@@ -34,6 +34,7 @@ export const publicRoutes = [
   '/api/control-plane/linear/webhook',
   '/api/control-plane/linear/process',
   '/api/control-plane/webhook/process',
+  '/api/control-plane/webhook/events',
 ];
 
 // Exported for the same reason publicRoutes is: proxy.test.ts iterates the

@@ -71,6 +71,48 @@ _does_ anything with it is separate, ordinary code:
 `push` is not a required or admitted event. Repository updates do not create
 LCARS work. An existing GitHub App subscription may still deliver pushes;
 the console acknowledges them as unsupported without queueing or dispatching.
+Agent events do not consume them yet either, which is why `behind` and
+`conflict` are not produced (see below).
+
+## Agent events from webhook deliveries
+
+Deliveries for fleet repositories also become `github:pr`, `github:issue` and
+`github:run` agent events for sessions subscribed with
+`lcars session subscribe` (#3569, step 2 of #3538). This comes after the
+existing handling and never changes it:
+
+- The process route (`webhook/process/route.ts`) calls
+  `queueGithubAgentEvents` once admission has answered, whatever the answer,
+  including when admission fails and will be retried. `workflow_run` and
+  `workflow_job` are not queued for admission, so the intake route queues a
+  completed run beside its Pub/Sub publish instead. Queuing never throws and
+  never changes either route's response; a failed enqueue is logged at error.
+- A delivery is queued only when the pure mapping
+  (`apps/console/src/lib/github-agent-events.ts`) finds an event in it after
+  the actor policy. It goes to the same `dispatch-webhooks` queue as
+  admission, as its own task (`github-events-<delivery id>`), targeting
+  `/api/control-plane/webhook/events`, which re-verifies the HMAC like
+  `/process`. Repeating the enqueue for a delivery is a duplicate.
+- The events route reads each affected key's subscriptions once. With no
+  matching subscription it stops there. Only when a subscription wants
+  `checks-finished` or `threads-resolved` does it make that kind's one GitHub
+  read with the App's token: the head's latest check runs, or the pull
+  request's review threads. A failed or truncated read produces no event and
+  no retry. A routing failure answers 500 and Cloud Tasks retries the
+  delivery, up to the same attempt cap as admission.
+- Event ids are `github.<X-GitHub-Delivery>.<kind>`, so a redelivery is
+  idempotent. `checks-finished` is identified by the head and its newest
+  check run instead, so a burst of completions becomes one notice.
+
+The mapping, the actor rule per kind and what is not mapped are documented at
+the top of `github-agent-events.ts`. In short: reviews and comments follow
+the approval rule (`isTrustedGitHubActor` in `github-actor-trust.ts`: OWNER,
+MEMBER, COLLABORATOR or a fleet bot); state changes judge the `sender`,
+counting a sender who acts on someone else's pull request or issue as a
+COLLABORATOR because GitHub required repository access; check and run
+results carry no actor and count only for code in the base repository.
+`conflict` and `behind` need a base-branch `push` consumer and are left to a
+follow-up.
 
 So landing the consumer code and flipping the settings checkbox are both
 required, in either order — neither alone delivers anything.

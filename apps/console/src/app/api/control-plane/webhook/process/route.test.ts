@@ -7,6 +7,7 @@ const {
   enqueueGitHubWebhook,
   handleWebhookDelivery,
   ProjectionRefreshError,
+  queueGithubAgentEvents,
 } = vi.hoisted(() => {
   class ProjectionRefreshError extends Error {
     override readonly name = 'ProjectionRefreshError';
@@ -16,6 +17,7 @@ const {
     enqueueGitHubWebhook: vi.fn(),
     handleWebhookDelivery: vi.fn(),
     ProjectionRefreshError,
+    queueGithubAgentEvents: vi.fn(),
   };
 });
 
@@ -24,6 +26,9 @@ vi.mock('@/lib/hosted-webhook-queue', () => ({ enqueueGitHubWebhook }));
 vi.mock('@/lib/orchestrator-routes', () => ({
   handleWebhookDelivery,
   ProjectionRefreshError,
+}));
+vi.mock('@/lib/github-agent-event-intake', () => ({
+  queueGithubAgentEvents,
 }));
 vi.mock('@/lib/github-webhook-auth', () => ({
   verifyWebhookSignature: vi.fn(() => true),
@@ -52,6 +57,7 @@ beforeEach(() => {
   process.env['AGENT_LCARS_WEBHOOK_SECRET'] = 'test-webhook-secret';
   createOrchestratorRuntime.mockReturnValue({});
   enqueueGitHubWebhook.mockResolvedValue({ outcome: 'enqueued' });
+  queueGithubAgentEvents.mockResolvedValue('no-event');
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
 
@@ -61,6 +67,63 @@ afterEach(() => {
 });
 
 describe('POST /api/control-plane/webhook/process', () => {
+  describe('agent events (#3569)', () => {
+    it('queues the delivery after admission and keeps admission’s answer', async () => {
+      const order: string[] = [];
+      handleWebhookDelivery.mockImplementation(async () => {
+        order.push('admission');
+        return { status: 200, body: { ignored: 'no-trigger' } };
+      });
+      queueGithubAgentEvents.mockImplementation(async () => {
+        order.push('events');
+        return 'enqueued';
+      });
+
+      const response = await POST(request('0'));
+
+      expect(order).toEqual(['admission', 'events']);
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        ignored: 'no-trigger',
+      });
+      expect(queueGithubAgentEvents).toHaveBeenCalledWith(
+        {
+          rawBody: expect.any(Buffer),
+          deliveryId: 'projection-refresh-delivery',
+          eventName: 'issues',
+          signature: 'sha256=ignored-by-mock',
+        },
+        { repository: { full_name: 'jlapenna/agent-lcars' } },
+      );
+    });
+
+    it('still queues events when admission fails and is retried', async () => {
+      handleWebhookDelivery.mockRejectedValue(new Error('firestore down'));
+
+      const response = await POST(request('0'));
+
+      expect(response.status).toBe(500);
+      expect(queueGithubAgentEvents).toHaveBeenCalledTimes(1);
+    });
+
+    it('queues nothing for a delivery it cannot read', async () => {
+      const response = await POST(
+        new Request('https://console.test/api/control-plane/webhook/process', {
+          method: 'POST',
+          body: 'not json',
+          headers: {
+            'x-github-delivery': 'projection-refresh-delivery',
+            'x-github-event': 'issues',
+            'x-hub-signature-256': 'sha256=ignored-by-mock',
+          },
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(queueGithubAgentEvents).not.toHaveBeenCalled();
+    });
+  });
+
   it('hands a projection-only repair to a durable successor at the retry cap', async () => {
     handleWebhookDelivery.mockRejectedValue(
       new ProjectionRefreshError('GitHub exact refresh unavailable'),

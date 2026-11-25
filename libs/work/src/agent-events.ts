@@ -44,6 +44,9 @@ export const AGENT_EVENT_SOURCES = {
     id: new RegExp(`^${githubRepository}#[1-9][0-9]{0,9}$`, 'u'),
     kinds: [
       'review',
+      // A conversation comment on the pull request (GitHub delivers it as
+      // `issue_comment`). Review comments arrive with their `review`.
+      'comment',
       'thread',
       'threads-resolved',
       'merged',
