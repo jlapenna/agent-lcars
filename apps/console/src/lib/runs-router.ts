@@ -203,9 +203,11 @@ async function pullRequestAuthorGrant(
   context: RunsContext,
   repo: string,
 ): Promise<{ login: string; token: string; expiresAt: string } | undefined> {
-  const provider = context.pullRequestAuthorTokens?.();
-  if (provider === undefined) return undefined;
   try {
+    // Inside the try: a malformed key throws while the provider is built,
+    // and that must not fail the checkout either.
+    const provider = context.pullRequestAuthorTokens?.();
+    if (provider === undefined) return undefined;
     const token = await provider.expiringTokenFor(repo);
     return {
       login: PULL_REQUEST_AUTHOR_BOT_LOGIN,

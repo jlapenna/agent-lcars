@@ -389,6 +389,39 @@ export function createPullRequestAuthorTokenProvider(
   });
 }
 
+let cachedPullRequestAuthor:
+  | {
+      clientId: string | undefined;
+      privateKeyPem: string | undefined;
+      provider: ExpiringDispatchTokenProvider | undefined;
+    }
+  | undefined;
+
+/**
+ * {@link createPullRequestAuthorTokenProvider}, reused for as long as the
+ * App's configuration is unchanged, so each checkout-token refresh does not
+ * parse the key again or repeat installation lookups. A rotated key builds a
+ * new provider. A construction error is not cached, so every call reports it.
+ */
+export function pullRequestAuthorTokenProvider(
+  env: Record<string, string | undefined>,
+): ExpiringDispatchTokenProvider | undefined {
+  const clientId = env['AGENT_LCARS_AUTHOR_APP_CLIENT_ID'];
+  const privateKeyPem = env['AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY'];
+  if (
+    cachedPullRequestAuthor === undefined ||
+    cachedPullRequestAuthor.clientId !== clientId ||
+    cachedPullRequestAuthor.privateKeyPem !== privateKeyPem
+  ) {
+    cachedPullRequestAuthor = {
+      clientId,
+      privateKeyPem,
+      provider: createPullRequestAuthorTokenProvider(env),
+    };
+  }
+  return cachedPullRequestAuthor.provider;
+}
+
 /**
  * Defers `factory` (normally a `createDispatchTokenProvider` call) until
  * this provider's `tokenFor` is actually invoked, then builds and caches

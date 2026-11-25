@@ -18,10 +18,10 @@ import {
 } from '@/lib/github-actions-oidc';
 import {
   createDispatchTokenProvider,
-  createPullRequestAuthorTokenProvider,
   DIRECT_RUNNER_PERMISSIONS,
   lazyDispatchTokenProvider,
   ORCHESTRATOR_GITHUB_PERMISSIONS,
+  pullRequestAuthorTokenProvider,
 } from '@/lib/github-app-tokens';
 import { jobSecretsHttp } from '@/lib/job-secrets-http';
 import {
@@ -173,7 +173,7 @@ async function handle(request: Request): Promise<Response> {
         createDispatchTokenProvider(process.env, DIRECT_RUNNER_PERMISSIONS),
       ),
       pullRequestAuthorTokens: () =>
-        createPullRequestAuthorTokenProvider(process.env),
+        pullRequestAuthorTokenProvider(process.env),
       codexAuth: codexAuthStore('agent-lcars-codex-auth'),
     },
   });

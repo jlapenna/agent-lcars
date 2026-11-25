@@ -3766,6 +3766,32 @@ describe('checkoutToken', () => {
       });
     });
 
+    it('still returns the checkout token when the author App key is malformed', async () => {
+      const { store, orchestrator, now, runId, runToken } = await claimedRun(
+        'work-pr-author-bad-key',
+      );
+      const r = await call(
+        {
+          store,
+          orchestrator,
+          now,
+          tokens: context.tokens,
+          checkoutTokens,
+          pullRequestAuthorTokens: () => {
+            throw new Error('GitHub App private key is not a valid PEM');
+          },
+          codexAuth: context.codexAuth,
+          bearerToken: runToken,
+        },
+        'GET',
+        runPath(runId, '/checkout-token'),
+      );
+      expect(r.status).toBe(200);
+      const body = r.json as { token: string; pullRequestAuthor?: unknown };
+      expect(body.token).toBe('ghs_checkout');
+      expect(body.pullRequestAuthor).toBeUndefined();
+    });
+
     it('still returns the checkout token when the author App cannot mint', async () => {
       const { store, orchestrator, now, runId, runToken } = await claimedRun(
         'work-pr-author-missing',

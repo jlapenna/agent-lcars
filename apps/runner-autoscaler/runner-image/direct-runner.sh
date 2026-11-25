@@ -489,7 +489,7 @@ fi
 # pull-request author App when its token is on disk (#3522).
 if [ "\${1:-}" = pr ] && [ "\${2:-}" = create ] && [ -f '$PR_AUTHOR_TOKEN_FILE' ]; then
   anchor_repository="\$(cat '$CHECKOUT_REPOSITORY_FILE')"
-  if [ -z "\$repo_arg" ] || [ "\$repo_arg" = "\$anchor_repository" ]; then
+  if [ -z "\$repo_arg" ] || [ "\${repo_arg,,}" = "\${anchor_repository,,}" ]; then
     token_file='$PR_AUTHOR_TOKEN_FILE'
   fi
 fi

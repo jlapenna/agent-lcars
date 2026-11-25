@@ -1446,6 +1446,9 @@ credential_bin="$RUNNER_TEMP/github-credentials/bin"
 "$credential_bin/gh" pr create -R jlapenna/agent-lcars --title t --body b >/dev/null
 [ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = 'fake-pr-author-token-jkl333' ] ||
   fail "pr-author-token: gh pr create -R <anchor> did not use the author App token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
+"$credential_bin/gh" pr create -R JLapenna/Agent-LCARS --title t --body b >/dev/null
+[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = 'fake-pr-author-token-jkl333' ] ||
+  fail "pr-author-token: a differently-cased anchor -R did not use the author App token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
 "$credential_bin/gh" pr create -R jlapenna/homelab --title t --body b >/dev/null
 [ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = "$FAKE_TOKEN" ] ||
   fail "pr-author-token: gh pr create on another repository used the anchor-scoped author token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
