@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Packs the workstation `lcars` CLI -- the three bundles and their launcher --
+# Packs the workstation `lcars` CLI -- the four bundles and their launcher --
 # into the archive enrolled workstations install.
 #
 # .github/workflows/publish-workstation-cli.yml runs this after `main` passes
@@ -16,6 +16,7 @@
 #   DIST_DIR  where the built bundles are; defaults to this checkout's
 #             dist/apps. Build them first:
 #               ./tools/nx run-many -t session-title-cli hook-cli hook-flush-cli \
+#                 events-agent-cli \
 #                 -p @agent-lcars/telemetry-watcher
 #
 # SHA256SUMS covers the launcher and the bundles and nothing else, so it
@@ -41,7 +42,7 @@ if ! [[ "$revision" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 
 # Launcher first: the installed directory's contents, in the order listed.
-contents=(lcars lcars-hook.cjs lcars-hook-flush.cjs lcars-session-title.cjs)
+contents=(lcars lcars-hook.cjs lcars-hook-flush.cjs lcars-session-title.cjs lcars-events-agent.cjs)
 
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
@@ -51,6 +52,7 @@ built_bundle() {
     lcars-hook.cjs) echo "$dist_dir/telemetry-watcher-hook/$1" ;;
     lcars-hook-flush.cjs) echo "$dist_dir/telemetry-watcher-hook-flush/$1" ;;
     lcars-session-title.cjs) echo "$dist_dir/telemetry-watcher-session-title-cli/$1" ;;
+    lcars-events-agent.cjs) echo "$dist_dir/telemetry-watcher-events-agent/$1" ;;
   esac
 }
 

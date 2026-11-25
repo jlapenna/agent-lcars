@@ -37,6 +37,10 @@ if [ "\${1:-}" = hook ]; then
   exec "\$(command -v node || echo "\$HOME/.local/share/fnm/aliases/default/bin/node")" \\
     "$lib_dir/lcars-hook.cjs" "\$@"
 fi
+if [ "\${1:-}" = events ]; then
+  exec "\$(command -v node || echo "\$HOME/.local/share/fnm/aliases/default/bin/node")" \\
+    "$lib_dir/lcars-events-agent.cjs" "\$@"
+fi
 exec "\$(command -v node || echo "\$HOME/.local/share/fnm/aliases/default/bin/node")" \\
   "$lib_dir/lcars-session-title.cjs" "\$@"
 LAUNCHER

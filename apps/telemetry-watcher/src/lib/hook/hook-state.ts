@@ -4,6 +4,8 @@ import * as path from 'node:path';
 
 import { isHerdrPaneId, type SessionEventKind } from '@agent-lcars/telemetry';
 
+import type { HerdrForegroundProcess } from './herdr-pane';
+
 /**
  * Per-session client state under `~/.local/state/agent-lcars/hook-sessions/`
  * (docs/hooks-telemetry-design.md §4.1 step 3).
@@ -28,6 +30,10 @@ export interface HookSessionState {
   /** The herdr-core terminal this session was last found in
    * (`herdr-pane.ts`). */
   readonly herdrPaneId?: string;
+  /** The session's own process, as the terminal's foreground when the pane
+   * was found. The delivery agent types into the pane only while it still
+   * runs this process (`events/terminal-target.ts`). */
+  readonly herdrForeground?: HerdrForegroundProcess;
   /** Set once the terminal lookup gave a definite answer, found or not, so
    * later events reuse it instead of asking herdr-core again. */
   readonly herdrPaneResolved?: true;
@@ -80,6 +86,7 @@ export function readHookSessionState(
     const lastKind = record['lastKind'];
     const repoScoped = record['repoScoped'] === true;
     const herdrPaneId = record['herdrPaneId'];
+    const herdrForeground = parseForeground(record['herdrForeground']);
     const herdrPaneResolved = record['herdrPaneResolved'] === true;
     const herdrPaneCheckedAt = record['herdrPaneCheckedAt'];
     return {
@@ -95,12 +102,28 @@ export function readHookSessionState(
       ...(repoScoped && { repoScoped }),
       ...(typeof herdrPaneId === 'string' &&
         isHerdrPaneId(herdrPaneId) && { herdrPaneId }),
+      ...(typeof herdrPaneId === 'string' &&
+        isHerdrPaneId(herdrPaneId) &&
+        herdrForeground && { herdrForeground }),
       ...(herdrPaneResolved && { herdrPaneResolved }),
       ...(typeof herdrPaneCheckedAt === 'string' && { herdrPaneCheckedAt }),
     };
   } catch {
     return undefined;
   }
+}
+
+function parseForeground(value: unknown): HerdrForegroundProcess | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const { pid, start } = value as Record<string, unknown>;
+  return typeof pid === 'number' &&
+    Number.isSafeInteger(pid) &&
+    pid > 1 &&
+    typeof start === 'string' &&
+    start.length > 0 &&
+    start.length <= 128
+    ? { pid, start }
+    : undefined;
 }
 
 /** Crash-safe rename-into-place, mode 0700 directory, like the title CLI. */

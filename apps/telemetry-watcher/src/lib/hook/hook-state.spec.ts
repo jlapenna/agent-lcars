@@ -121,4 +121,39 @@ describe('hook session state herdr pane', () => {
     expect(read?.herdrPaneId).toBeUndefined();
     expect(read?.herdrPaneResolved).toBe(true);
   });
+
+  it('keeps the terminal foreground process only with a valid pane and shape', () => {
+    const dir = tempState();
+    const base = {
+      version: 1 as const,
+      seq: 1,
+      herdrPaneResolved: true as const,
+      updatedAt: '2026-10-10T12:00:00.000Z',
+    };
+    writeHookSessionState(dir, {
+      ...base,
+      sessionId: 's1',
+      herdrPaneId: 't36',
+      herdrForeground: { pid: 800, start: 'boot/123' },
+    });
+    expect(readHookSessionState(dir, 's1')?.herdrForeground).toEqual({
+      pid: 800,
+      start: 'boot/123',
+    });
+
+    writeHookSessionState(dir, {
+      ...base,
+      sessionId: 's2',
+      herdrForeground: { pid: 800, start: 'boot/123' },
+    });
+    expect(readHookSessionState(dir, 's2')?.herdrForeground).toBeUndefined();
+
+    writeHookSessionState(dir, {
+      ...base,
+      sessionId: 's3',
+      herdrPaneId: 't36',
+      herdrForeground: { pid: 1, start: 'boot/123' },
+    });
+    expect(readHookSessionState(dir, 's3')?.herdrForeground).toBeUndefined();
+  });
 });

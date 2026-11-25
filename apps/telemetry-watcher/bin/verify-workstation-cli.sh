@@ -26,7 +26,7 @@ fail() {
   exit 1
 }
 
-expected='REVISION SHA256SUMS lcars lcars-hook-flush.cjs lcars-hook.cjs lcars-session-title.cjs'
+expected='REVISION SHA256SUMS lcars lcars-events-agent.cjs lcars-hook-flush.cjs lcars-hook.cjs lcars-session-title.cjs'
 actual="$(cd "$lib" && find . -mindepth 1 -printf '%P\n' | LC_ALL=C sort | tr '\n' ' ')"
 [ "${actual% }" = "$expected" ] || fail "holds '${actual% }', expected '$expected'"
 
@@ -46,6 +46,12 @@ grep -q 'session title' <<<"$help" ||
 hook_usage="$(run hook)" || fail 'the hook bundle exited non-zero'
 grep -q 'usage: lcars hook claude' <<<"$hook_usage" ||
   fail 'the launcher did not reach the hook bundle'
+# `events agent --help` loads the whole events-agent bundle, Pub/Sub client
+# included, and prints its usage without starting the agent.
+events_usage="$(run events agent --help)" ||
+  fail 'the events-agent bundle exited non-zero for --help'
+grep -q 'Usage: lcars events agent' <<<"$events_usage" ||
+  fail 'the launcher did not reach the events-agent bundle'
 # The flusher holds the Firestore client and is only ever started by the
 # other bundles, from the file beside them. `session archive --help` starts
 # it that way and prints its usage without touching the network, which

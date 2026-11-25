@@ -53,11 +53,13 @@ function run(command: string, args: string[], env: NodeJS.ProcessEnv = {}) {
 const HOOK = 'telemetry-watcher-hook/lcars-hook.cjs';
 const FLUSH = 'telemetry-watcher-hook-flush/lcars-hook-flush.cjs';
 const TITLE = 'telemetry-watcher-session-title-cli/lcars-session-title.cjs';
+const EVENTS = 'telemetry-watcher-events-agent/lcars-events-agent.cjs';
 const print = (usage: string) =>
   `console.log(${JSON.stringify(usage)}, JSON.stringify(process.argv.slice(2)));\n`;
 const BUNDLES: Record<string, string> = {
   [HOOK]: print('usage: lcars hook claude'),
   [FLUSH]: "console.log('usage: lcars session archive');\n",
+  [EVENTS]: print('Usage: lcars events agent'),
   [TITLE]: `if (process.argv.slice(2).join(' ') === 'session archive --help')
   require(require('node:path').join(__dirname, 'lcars-hook-flush.cjs'));
 else ${print('usage: session title')}`,
@@ -86,7 +88,7 @@ function unpack(root: string, archive: string): string {
 }
 
 describe('package-workstation-cli.sh', () => {
-  it('packs the launcher, the three bundles, their checksums and the revision', () => {
+  it('packs the launcher, the four bundles, their checksums and the revision', () => {
     const root = tempRoot();
     const { out, result, archive } = pack(root);
     expect(result.status, result.stderr).toBe(0);
@@ -96,6 +98,7 @@ describe('package-workstation-cli.sh', () => {
       'REVISION',
       'SHA256SUMS',
       'lcars',
+      'lcars-events-agent.cjs',
       'lcars-hook-flush.cjs',
       'lcars-hook.cjs',
       'lcars-session-title.cjs',
@@ -150,6 +153,9 @@ describe('package-workstation-cli.sh', () => {
 
     expect(run(link, ['hook', 'claude', 'Stop'], env).stdout).toBe(
       'usage: lcars hook claude ["hook","claude","Stop"]\n',
+    );
+    expect(run(link, ['events', 'agent', '--help'], env).stdout).toBe(
+      'Usage: lcars events agent ["events","agent","--help"]\n',
     );
     expect(run(link, ['session', 'title', 'a b'], env).stdout).toBe(
       'usage: session title ["session","title","a b"]\n',

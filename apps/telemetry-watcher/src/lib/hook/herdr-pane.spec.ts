@@ -6,13 +6,16 @@ import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  callHerdrCore,
   defaultHerdrPaneDependencies,
   herdrCoreSocketPath,
   type HerdrPaneDependencies,
   type HerdrTerminalList,
   listHerdrCoreTerminals,
   parentPidFromStat,
+  processStartIdentity,
   resolveHerdrPane,
+  startTicksFromStat,
 } from './herdr-pane';
 
 /** hook(900) <- claude(800) <- bash(700) <- herdr-core hold(600) <- init. */
@@ -58,6 +61,41 @@ describe('resolveHerdrPane', () => {
           { address: 't2', pid: 111, foreground: 112 },
           { address: 't36', pid: 700, foreground: 800 },
         ]),
+      ),
+    ).toEqual({ status: 'found', paneId: 't36' });
+  });
+
+  it('records the foreground process when it is the session’s own', async () => {
+    const processStart = vi.fn(() => 'boot/1234');
+    expect(
+      await resolveHerdrPane(
+        deps([{ address: 't36', pid: 700, foreground: 800 }], {
+          processStart,
+        }),
+      ),
+    ).toEqual({
+      status: 'found',
+      paneId: 't36',
+      foreground: { pid: 800, start: 'boot/1234' },
+    });
+    expect(processStart).toHaveBeenCalledWith(800);
+  });
+
+  it('records no foreground process that is not an ancestor, or cannot be read', async () => {
+    const processStart = vi.fn(() => 'boot/1234');
+    expect(
+      await resolveHerdrPane(
+        deps([{ address: 't9', pid: 700, foreground: 4242 }], {
+          processStart,
+        }),
+      ),
+    ).toEqual({ status: 'found', paneId: 't9' });
+    expect(processStart).not.toHaveBeenCalled();
+    expect(
+      await resolveHerdrPane(
+        deps([{ address: 't36', pid: 700, foreground: 800 }], {
+          processStart: () => undefined,
+        }),
       ),
     ).toEqual({ status: 'found', paneId: 't36' });
   });
@@ -253,6 +291,40 @@ describe('herdrCoreSocketPath', () => {
   });
 });
 
+describe('process start identity', () => {
+  const stat =
+    '800 (claude (x) y) S 700 800 700 34816 800 4194560 1 2 3 4 5 6 7 8 20 0 12 0 98765 1000 300';
+
+  it('reads the start time field after a command name holding spaces and parentheses', () => {
+    expect(startTicksFromStat(stat)).toBe('98765');
+    expect(parentPidFromStat(stat)).toBe(700);
+    expect(startTicksFromStat('garbage')).toBeUndefined();
+  });
+
+  it('joins the boot id and the start time', () => {
+    const files: Record<string, string> = {
+      '/proc/sys/kernel/random/boot_id':
+        '0f1e2d3c-aaaa-bbbb-cccc-111122223333\n',
+      '/proc/800/stat': stat,
+    };
+    const read = (file: string) => {
+      if (file in files) return files[file];
+      throw new Error('ENOENT');
+    };
+    expect(processStartIdentity(800, read)).toBe(
+      '0f1e2d3c-aaaa-bbbb-cccc-111122223333/98765',
+    );
+    expect(processStartIdentity(801, read)).toBeUndefined();
+  });
+
+  it('identifies this process on Linux', () => {
+    if (process.platform !== 'linux') return;
+    const identity = processStartIdentity(process.pid);
+    expect(identity).toMatch(/^[0-9a-f-]+\/[0-9]+$/);
+    expect(processStartIdentity(process.pid)).toBe(identity);
+  });
+});
+
 describe('listHerdrCoreTerminals', () => {
   const cleanups: (() => void)[] = [];
   afterEach(() => {
@@ -300,6 +372,35 @@ describe('listHerdrCoreTerminals', () => {
     });
     expect(requests).toEqual([
       { jsonrpc: '2.0', id: 1, method: 'terminal.list', params: {} },
+    ]);
+  });
+
+  it('returns another call’s result, and the core’s refusal by its kind', async () => {
+    const { socketPath, requests } = await core((request) =>
+      request['method'] === 'terminal.get' &&
+      (request['params'] as Record<string, unknown>)['terminal'] === 't36'
+        ? `${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { address: 't36', turn: 2 } })}\n`
+        : `${JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'not_found', data: { kind: 'not_found' } } })}\n`,
+    );
+    expect(
+      await callHerdrCore(socketPath, 'terminal.get', { terminal: 't36' }),
+    ).toEqual({ ok: true, result: { address: 't36', turn: 2 } });
+    expect(
+      await callHerdrCore(socketPath, 'terminal.get', { terminal: 't99' }),
+    ).toEqual({ ok: false, absent: false, error: 'not_found' });
+    expect(requests).toEqual([
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'terminal.get',
+        params: { terminal: 't36' },
+      },
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'terminal.get',
+        params: { terminal: 't99' },
+      },
     ]);
   });
 
