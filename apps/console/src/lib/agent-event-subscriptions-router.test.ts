@@ -64,6 +64,7 @@ function context(
     ]),
   );
   return {
+    githubRepositories: ['jlapenna/homelab', 'jlapenna/agent-lcars'],
     principal: deliveryPrincipal('pike'),
     store: new MemoryAgentEventSubscriptionStore(),
     readRun: async () => undefined,
@@ -157,6 +158,49 @@ describe('sessionLiveOnHost', () => {
 });
 
 describe('POST /events/subscriptions', () => {
+  it.each([
+    { key: 'github:pr:outside/upstream#1' },
+    { key: 'github:run:outside/upstream/42' },
+    { key: 'github:issue:outside/upstream#1' },
+    { key: 'outline:doc:12345678-1234-1234-1234-123456789abc' },
+    { key: 'github:pr:jlapenna/homelab#3827', kinds: ['behind'] },
+    { key: 'github:pr:jlapenna/homelab#3827', until: 'conflict' },
+  ])('refuses a registration without a producer: %j', async (request) => {
+    const ctx = context();
+    const { status } = await subscribe(ctx, {
+      sessionId: 'session-a',
+      ...request,
+    });
+    expect(status).toBe(403);
+    expect(await ctx.store.countForSession('session-a')).toBe(0);
+  });
+
+  it('reuses a pre-rollout default subscription without freezing its kinds', async () => {
+    const ctx = context();
+    const legacy = {
+      key: 'github:pr:jlapenna/homelab#3827',
+      source: 'github:pr' as const,
+      target: {
+        type: 'session' as const,
+        sessionId: 'session-a',
+        host: 'pike',
+      },
+      until: 'merged',
+      createdAt: NOW.toISOString(),
+    };
+    const id = agentEventSubscriptionId(legacy);
+    await ctx.store.create({ ...legacy, id });
+    const result = await subscribe(ctx, {
+      sessionId: 'session-a',
+      key: legacy.key,
+      until: 'merged',
+    });
+    expect(result.status).toBe(201);
+    expect(result.json['id']).toBe(id);
+    expect(result.json['kinds']).toBeUndefined();
+    expect(await ctx.store.countForSession('session-a')).toBe(1);
+  });
+
   it('subscribes a live session on the calling host', async () => {
     const ctx = context();
     const { status, json } = await subscribe(ctx, {

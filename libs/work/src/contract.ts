@@ -1988,7 +1988,8 @@ export const agentEventsContract = {
           'run token and runId: the subscription targets the run’s own native ' +
           'Work (a workId naming any other Work is refused), and a matching ' +
           'event starts a resume run of that Work with the event notice as ' +
-          'its input. Idempotent: the same target, key, kinds and until ' +
+          'its input. Sources without an available producer are refused. ' +
+          'Idempotent: the same target, key, kinds and until ' +
           'return the existing subscription.',
         successStatus: 201,
       }),
@@ -1997,7 +1998,7 @@ export const agentEventsContract = {
       BAD_REQUEST: { message: 'Malformed key, kinds or until' },
       FORBIDDEN: {
         message:
-          'No live session on the calling host, or not the run’s own resumable Work',
+          'No live session on the calling host, not the run’s own resumable Work, or source unavailable',
       },
       CONFLICT: {
         message: 'Subscription limit reached for the session or Work',

@@ -126,6 +126,7 @@ async function handle(request: Request): Promise<Response> {
         ...(principal === undefined ? {} : { principal }),
         // A run subscribing its Work presents its run token (#3570).
         ...(bearerToken === undefined ? {} : { bearerToken }),
+        githubRepositories: controlPlaneRepositories(),
         readRun: (runId) => runtime.store.readRun(runId),
         store: agentEventSubscriptionStore,
         getSessionDoc: sessionForResume,
