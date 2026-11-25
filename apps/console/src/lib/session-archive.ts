@@ -29,6 +29,11 @@ import {
 } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import {
+  getArchiveSnapshotFirestore,
+  loadArchiveSnapshot,
+  saveArchiveSnapshot,
+} from './session-archive-snapshot';
+import {
   createSessionArchiveSync,
   type SessionArchiveSync,
 } from './session-archive-sync';
@@ -300,11 +305,12 @@ async function listArchiveDocs(
 }
 
 /**
- * The archive window every page reads (Sessions, Costs, the Bridge and the
- * cost readouts), kept current in memory: each read fetches only the
- * sessions written since the previous one. The 14-day window is about
- * 6,000 documents and some 2 to 5 s to stream, which is what pages used to
- * pay, or avoid by serving a copy up to a minute old.
+ * The archive window Sessions, Costs and the cost readouts read, kept
+ * current in memory: each read fetches only the sessions written since the
+ * previous one. The 14-day window is about 6,500 documents and some 2 to
+ * 5 s to stream, which is what pages used to pay, or avoid by serving a
+ * copy up to a minute old. An instance that has not read it yet starts from
+ * the saved snapshot (session-archive-snapshot.ts) instead.
  *
  * Held on `globalThis` rather than in a module-level constant: Next bundles
  * App Router pages and Route Handlers into separate module graphs that
@@ -324,20 +330,31 @@ function archiveSync(): SessionArchiveSync {
           since,
         ),
       now: () => Date.now(),
+      loadSnapshot: () => loadArchiveSnapshot(getArchiveSnapshotFirestore()),
+      saveSnapshot: (snapshot) =>
+        saveArchiveSnapshot(getArchiveSnapshotFirestore(), snapshot),
+      onSnapshotError: (operation, error) =>
+        logger.warn(
+          `agent-lcars: session archive snapshot ${operation} failed:`,
+          error,
+        ),
     },
     DEFAULT_ARCHIVE_DAYS,
   );
   return realm[ARCHIVE_SYNC_KEY] as SessionArchiveSync;
 }
 
-/** Windows up to the 14-day default read the in-memory archive; wider
- * ones, a snapshot's own clock, and hermetic E2E fixtures (whose resets
- * delete documents) read Firestore directly. */
+/** Windows longer than a day, up to the 14-day default, read the in-memory
+ * archive. A day or less (Bridge, the rail's 24-hour figures) reads
+ * Firestore directly: about 500 documents in 0.4 s, where an instance that
+ * has not loaded the archive yet would first read all 14 days. Wider
+ * windows, a snapshot's own clock, and hermetic E2E fixtures (whose resets
+ * delete documents) also read directly. */
 async function readArchiveDocs(
   filter: ArchiveDocsFilter,
   syncedDays: number | undefined,
 ): Promise<SessionDoc[]> {
-  if (syncedDays === undefined || isE2eTesting())
+  if (syncedDays === undefined || syncedDays <= 1 || isE2eTesting())
     return listArchiveDocs(filter);
   return (await archiveSync().read(syncedDays)).filter(
     (doc) =>

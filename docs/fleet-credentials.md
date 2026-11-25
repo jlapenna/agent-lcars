@@ -38,10 +38,10 @@ Two GitHub Apps exist and are easy to confuse:
   [jlapenna 150568943](https://github.com/settings/installations/150568943),
   [supersprinklesracing 150568991](https://github.com/organizations/supersprinklesracing/settings/installations/150568991).
 - **Autoscaler App** (`agent-lcars-autoscaler`, client `Iv23lir3t9e2k4RAkWxw`):
-  what runner scale-set listeners register with (Administration R/W, plus
-  Actions R/O, which only served the github-actions-exporter's former REST
-  polling; remove it once the event-based exporter is verified, see "Actions
-  exporter key" below). Its
+  what runner scale-set listeners register with (Administration R/W and
+  Metadata R/O). Its former Actions R/O grant served only the
+  github-actions-exporter's REST polling and was removed after the exporter
+  moved to webhooks (#3525; see "Actions exporter key" below). Its
   jlapenna installation uses "All repositories", confirmed by the maintainer
   during labels onboarding on 2026-10-12. The supersprinklesracing baseline
   remains "All repositories"; #1381 records its separately owned narrowing

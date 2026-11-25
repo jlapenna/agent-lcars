@@ -1205,7 +1205,7 @@ export function outcomeCommentBody(
         );
       } else if (fallbackSuccessor !== undefined) {
         lines.push(
-          `A fresh fallback attempt ${fallbackSuccessor.runId} on ${fallbackSuccessor.pipeline} was created after this provider limit. Original intent: ${fallbackSuccessor.providerFallback?.originalRunId}.`,
+          `A fresh fallback attempt ${fallbackSuccessor.runId} on ${fallbackSuccessor.pipeline} was created after this ${fallbackSuccessor.providerFallback?.trigger?.reason === 'agent-timeout' ? 'timeout' : 'provider limit'}. Original intent: ${fallbackSuccessor.providerFallback?.originalRunId}.`,
         );
       } else if (
         run.result?.ok === false &&

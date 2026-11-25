@@ -670,6 +670,106 @@ describe('handleWebhookDelivery', () => {
     expect(refresh).toHaveBeenCalledWith(ISSUE);
   });
 
+  describe('auto-merge sweep on approval', () => {
+    const review = (
+      state: string,
+      {
+        pr = {},
+        action = 'submitted',
+        reviewer = { login: 'jlapenna', association: 'OWNER' },
+        repo = REPO,
+      }: {
+        pr?: Record<string, unknown>;
+        action?: string;
+        reviewer?: { login: string; association: string };
+        repo?: string;
+      } = {},
+    ) => ({
+      action,
+      repository: { full_name: repo, default_branch: 'main' },
+      review: {
+        id: 7,
+        state,
+        author_association: reviewer.association,
+        user: { login: reviewer.login },
+      },
+      pull_request: {
+        state: 'open',
+        number: 3800,
+        draft: false,
+        head: { repo: { full_name: repo } },
+        ...pr,
+      },
+    });
+
+    async function deliver(payload: unknown) {
+      const { deps } = fixture();
+      const reconcileAutomerge = vi.fn().mockResolvedValue(undefined);
+      deps.reconcileAutomerge = reconcileAutomerge;
+      const result = await handleWebhookDelivery(deps, {
+        event: 'pull_request_review',
+        deliveryId: 'approval',
+        payload,
+      });
+      return { result, reconcileAutomerge };
+    }
+
+    it.each([
+      ['the maintainer', { login: 'jlapenna', association: 'OWNER' }],
+      ['a collaborator', { login: 'someone', association: 'COLLABORATOR' }],
+      // App reviews arrive with no association.
+      ['the fleet App', { login: 'agent-lcars[bot]', association: 'NONE' }],
+    ])('runs the sweep once for an approval by %s', async (_, reviewer) => {
+      const { reconcileAutomerge } = await deliver(
+        review('approved', { reviewer }),
+      );
+      expect(reconcileAutomerge).toHaveBeenCalledExactlyOnceWith(REPO, 'main');
+    });
+
+    it.each([
+      ['a comment review', review('commented')],
+      ['a change request', review('changes_requested')],
+      ['a dismissed approval', review('approved', { action: 'dismissed' })],
+      ['a draft', review('approved', { pr: { draft: true } })],
+      ['a closed PR', review('approved', { pr: { state: 'closed' } })],
+      [
+        'a fork',
+        review('approved', {
+          pr: { head: { repo: { full_name: 'someone/agent-lcars' } } },
+        }),
+      ],
+      ['a deleted fork', review('approved', { pr: { head: { repo: null } } })],
+      [
+        'an outside reviewer',
+        review('approved', {
+          reviewer: { login: 'drive-by', association: 'NONE' },
+        }),
+      ],
+      [
+        'a repository outside the control plane',
+        review('approved', { repo: 'someone/elsewhere' }),
+      ],
+    ])('leaves the sweep alone for %s', async (_, payload) => {
+      const { reconcileAutomerge } = await deliver(payload);
+      expect(reconcileAutomerge).not.toHaveBeenCalled();
+    });
+
+    it('acknowledges the delivery when the dispatch fails', async () => {
+      const { deps } = fixture();
+      deps.reconcileAutomerge = vi
+        .fn()
+        .mockRejectedValue(new Error('403 Resource not accessible'));
+
+      const result = await handleWebhookDelivery(deps, {
+        event: 'pull_request_review',
+        deliveryId: 'approval-dispatch-fails',
+        payload: review('approved'),
+      });
+
+      expect(result.status).toBe(200);
+    });
+  });
+
   it('ignores a delivery with no trigger label', async () => {
     const { deps } = fixture();
     const result = await handleWebhookDelivery(deps, {
