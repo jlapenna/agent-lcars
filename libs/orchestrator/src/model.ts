@@ -650,9 +650,24 @@ export type Task = z.infer<typeof taskSchema>;
 /** The durable task document includes the mutex revision alongside its task.
  * Kept next to {@link taskSchema} so every persisted-record tool validates
  * exactly the same fixed document shape as the normal store. */
+/**
+ * A task's item state as `libs/work`'s `deriveItemState` computes it from the
+ * task and its runs, stored with the task so readers can query by it (#3566).
+ * Written in the same transaction as the task and runs it derives from.
+ */
+export const taskDerivedSchema = z.strictObject({
+  /** An `ItemState` (`running`, `parked`, `failed`, `done`, `canceled`). */
+  state: z.string().min(1).max(32),
+  latestRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH).optional(),
+  /** Some run carries a `sourceRevision` (event-driven work). */
+  event: z.boolean(),
+});
+export type TaskDerived = z.infer<typeof taskDerivedSchema>;
+
 export const taskDocumentSchema = z.strictObject({
   task: taskSchema,
   revision: z.number().int().nonnegative(),
+  derived: taskDerivedSchema.optional(),
 });
 
 /**

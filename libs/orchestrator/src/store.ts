@@ -19,6 +19,7 @@ import type {
   Run,
   RunMessageOverflow,
   Task,
+  TaskDerived,
   TaskId,
   WorkRevision,
 } from './model';
@@ -645,6 +646,8 @@ export interface TaskListCursor {
 export interface VersionedTask {
   readonly task: Task;
   readonly revision: number;
+  /** Stored item state (#3566); absent until a write or the backfill sets it. */
+  readonly derived?: TaskDerived;
 }
 
 /** The single consistent snapshot supplied to a request transaction. */
