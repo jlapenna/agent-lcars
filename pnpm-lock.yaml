@@ -14,7 +14,7 @@ overrides:
   undici@>=7 <7.30.1: 8.13.1
   postcss-selector-parser@<7.1.6: 7.2.1
   qs@<6.16.1: 6.17.1
-  uuid@<11.1.1: 11.1.1
+  uuid@<11.1.1: 14.0.3
   katex@<0.18.2: 0.19.1
   minimatch@>=7.0.0 <11.0.1: 11.0.9
   nx>minimatch: 10.2.5
@@ -7405,8 +7405,8 @@ packages:
     resolution: {integrity: sha512-pMZTvIkT1d+TFGvDOqodOclx0QWkkgi6Tdoa8gC8ffGAAqz9pzPTZWAybbsHHoED/ztMtkv/VoYTYyShUn81hA==}
     engines: {node: '>= 0.4.0'}
 
-  uuid@11.1.1:
-    resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
+  uuid@14.0.3:
+    resolution: {integrity: sha512-Sc5u1VVln93y1Xnz4R+CunOZc7R9LUcTmhj7Rc7Eg3HVcf7rVn2FOoa812fe0W8p3jD7xeoGSYbfqCGGH2B6xw==}
     hasBin: true
 
   valid-url@1.0.9:
@@ -12780,7 +12780,7 @@ snapshots:
       https-proxy-agent: 7.0.6(supports-color@7.2.0)
       is-stream: 2.0.1
       node-fetch: 2.7.0
-      uuid: 11.1.1
+      uuid: 14.0.3
     transitivePeerDependencies:
       - encoding
       - supports-color
@@ -16100,7 +16100,7 @@ snapshots:
 
   utils-merge@1.0.1: {}
 
-  uuid@11.1.1: {}
+  uuid@14.0.3: {}
 
   valid-url@1.0.9: {}
 
