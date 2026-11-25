@@ -530,9 +530,12 @@ at that same head in the final readback. If it merged during the request,
 verify the exact merge and rules evaluation rather than treating the arming
 command as proof of protected delivery.
 
-When implement mode takes over an existing PR, apply this handoff only if its
-author is a registered fleet bot. Leave a human-authored PR's merge state
-unchanged unless the maintainer explicitly asked this run to merge it.
+When implement mode takes over an existing PR, apply this handoff if its
+author is a registered fleet bot, or if the maintainer approved the PR — an
+`APPROVE` review or a reply approving it ("approved", "LGTM", "ship it").
+Approval is the request to land it; the ruleset still decides when it merges.
+Otherwise leave a human-authored PR's merge state unchanged unless the
+maintainer explicitly asked this run to merge it.
 
 The repository's Agent PR Auto-Merge workflow is a reconciliation backstop,
 not a substitute for this worker-owned handoff. If arming or the readback
