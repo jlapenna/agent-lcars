@@ -68,9 +68,10 @@ _does_ anything with it is separate, ordinary code:
   belong to `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES`, which matches
   `AGENT_LCARS_WATCHED_REPOS`.
 
-`push` is not a required or admitted event. Repository updates do not create
-LCARS work. An existing GitHub App subscription may still deliver pushes;
-the console acknowledges them as unsupported without queueing or dispatching.
+`push` is consumed for agent-event delivery. A branch push schedules a
+delayed mergeability read for subscribed PRs targeting that base branch; a
+head update schedules the same check for that PR. Unknown mergeability
+retries through the durable Cloud Task. These pushes do not admit issue Work.
 Agent events do not consume them yet either, which is why `behind` and
 `conflict` are not produced (see below).
 

@@ -100,6 +100,19 @@ describe('hosted GitHub webhook queue', () => {
 });
 
 describe('hosted GitHub agent event queue', () => {
+  it('preserves the mergeability delay in the actual queue task shape', async () => {
+    const enqueue = vi.fn().mockResolvedValue(undefined);
+    await enqueueGitHubAgentEvents(
+      { ...envelope, notBefore: new Date('2026-11-25T12:00:05Z') },
+      { enqueue },
+    );
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scheduleTime: { seconds: Date.UTC(2026, 10, 25, 12, 0, 5) / 1000 },
+      }),
+    );
+  });
+
   it('queues the same envelope to the events route under its own task name', async () => {
     const enqueue = vi.fn().mockResolvedValue(undefined);
 

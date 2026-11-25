@@ -57,6 +57,15 @@ checks, and the homelab oncall runbook
 (`jlapenna/homelab` `docs/incidents.md` and `.agents/skills/oncall/SKILL.md`
 §1) for the full incident writeup.
 
+## Agent event enqueue failures
+
+The `LCARS agent event enqueue failed` log-based policy catches the bounded
+`lcars-agent-events` enqueue failure outcome before a delivery enters Cloud
+Tasks. It uses the existing maintainer channel, limits notifications to one
+per fifteen minutes, and closes after thirty quiet minutes. The queue backlog
+policy cannot see these lost enqueues. Verify the loaded filter against the
+Console's natural structured outcomes; do not generate failures to page it.
+
 ## Custom domain DNS handoff
 
 Terraform owns the App Hosting association for `lcars.jlapenna.net`; the public

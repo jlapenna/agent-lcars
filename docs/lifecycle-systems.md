@@ -286,6 +286,14 @@ GitHub read. See
 for the path and `apps/console/src/lib/github-agent-events.ts` for the
 payload-to-kind mapping and the actor rule per kind.
 
+Base pushes and trusted PR head/base-ref changes also schedule a delayed
+mergeability read. Only subscribed PR keys are read, once per PR; a base push
+is limited to PRs targeting that branch. Known `conflict`/`behind` outcomes
+are routed before unknown or unreadable PRs trigger a durable task retry.
+Stable delivery IDs suppress repeats. A bounded `lcars-agent-events` enqueue
+failure outcome feeds the repository-owned GCP log alert, because a failed
+enqueue never appears in queue backlog telemetry.
+
 ## Event-resume for dispatched Work
 
 A dispatched run of native Work that must continue after an outside event
