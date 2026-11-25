@@ -83,7 +83,9 @@ export interface Refusal {
     | 'not-native' // closeTask on a GitHub anchor: closedAt is native-only
     | 'credential-operation-pending' // external CAS must be resolved before replacement
     | 'not-claimant' // exit report from a principal/runner that did not claim the run
-    | 'event-resume-limit' // MAX_EVENT_RESUMES or MAX_PENDING_EVENT_RESUMES reached
+    | 'event-resume-limit' // MAX_EVENT_RESUMES resumes in a row without a human reply
+    | 'event-resume-full' // MAX_PENDING_EVENT_RESUMES already wait; transient
+    | 'work-canceled' // an operator canceled the item; no event reopens it
     | 'no-pending-event'; // event-resume admission found nothing waiting
   /** For `duplicate-request`, the run the request already maps to. */
   readonly existingRun?: Run;
@@ -199,6 +201,13 @@ export const MAX_AUTO_RETRIES = 2;
  * settles with events waiting, `<prefix><taskKey>/e<seq>` when an event
  * arrives for an idle Work. */
 export const EVENT_RESUME_OUTBOX_PREFIX = 'event-resume/';
+
+const EMPTY_EVENT_RESUMES: EventResumeState = {
+  received: 0,
+  admitted: 0,
+  pending: [],
+  recent: [],
+};
 
 /** Pipelines whose attempts may already have performed external effects.
  *  Their lost and failed attempts settle terminally: no automatic rerun of
@@ -358,15 +367,18 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
       ? {}
       : { providerRouting: input.task.providerRouting }),
     // Waiting events survive every admission. A human reply is the turn that
-    // restarts the event-resume budget, as it restarts remediation rounds.
+    // restarts the event-resume budget, as it restarts remediation rounds;
+    // any caller request (reply or redispatch) reopens a canceled item to
+    // events.
     ...(input.task?.eventResumes === undefined
       ? {}
       : {
-          eventResumes:
+          eventResumes: reopenedEventResumes(
+            input.task.eventResumes,
             input.params?.mode === 'reply' &&
-            input.params.replyPrincipal !== undefined
-              ? { ...input.task.eventResumes, admitted: 0 }
-              : input.task.eventResumes,
+              input.params.replyPrincipal !== undefined,
+            (input.requestSource ?? 'caller') === 'caller',
+          ),
         }),
     updatedAt: now,
   };
@@ -990,7 +1002,20 @@ export function cancelRun(input: {
     ],
     updatedAt: now,
   };
-  const released = resetLossBudgets(releaseLock(task, run.runId, now));
+  const lockReleased = resetLossBudgets(releaseLock(task, run.runId, now));
+  // Canceling the item drops the events waiting on it and refuses later
+  // ones, so no event restarts what an operator stopped.
+  const released =
+    input.nativeTask === undefined
+      ? lockReleased
+      : {
+          ...lockReleased,
+          eventResumes: {
+            ...(lockReleased.eventResumes ?? EMPTY_EVENT_RESUMES),
+            pending: [],
+            canceledAt: now,
+          },
+        };
   const closeDelivery = input.nativeTask !== undefined && deliveryWaiting(task);
   return settle(
     closeDelivery ? { ...released, closedAt: now } : released,
@@ -1476,22 +1501,17 @@ export function eventResumeRequestId(seq: number): string {
   return `event:e${seq}`;
 }
 
-const EMPTY_EVENT_RESUMES: EventResumeState = {
-  received: 0,
-  admitted: 0,
-  pending: [],
-  recent: [],
-};
-
 /**
  * Accepts an event for a native Work that a dispatched run subscribed it to
  * (#3570). The event waits on the task until a run can take it:
  *
  * - a repeated delivery id is a `duplicate-request`;
  * - the Work must exist, be native and not be closed;
- * - `MAX_EVENT_RESUMES` resume runs in a row without a human reply, or
- *   `MAX_PENDING_EVENT_RESUMES` waiting events, refuse further events
- *   (`event-resume-limit`), so a subscription cannot wake its Work forever;
+ * - an item an operator canceled refuses every event (`work-canceled`);
+ * - `MAX_EVENT_RESUMES` resume runs in a row without a human reply refuse
+ *   further events (`event-resume-limit`), so a subscription cannot wake
+ *   its Work forever; `MAX_PENDING_EVENT_RESUMES` events already waiting
+ *   refuse one more (`event-resume-full`) until a run takes them;
  * - while a run holds the Work the event only waits: that run's settlement
  *   hands it to the drain (`settle`). Otherwise an `event-resume` outbox
  *   entry hands it to the drain now. Both are writes to the task under its
@@ -1509,17 +1529,16 @@ export function queueEventResume(input: {
   if (!isWorkAnchor(task.task)) return refused('not-native');
   if (task.closedAt !== undefined) return refused('task-closed');
   const state = task.eventResumes ?? EMPTY_EVENT_RESUMES;
+  if (state.canceledAt !== undefined) return refused('work-canceled');
   if (state.recent.includes(event.deliveryId))
     return refused('duplicate-request');
-  if (
-    state.admitted >= MAX_EVENT_RESUMES ||
-    state.pending.length >= MAX_PENDING_EVENT_RESUMES
-  )
-    return refused('event-resume-limit');
+  if (state.admitted >= MAX_EVENT_RESUMES) return refused('event-resume-limit');
+  if (state.pending.length >= MAX_PENDING_EVENT_RESUMES)
+    return refused('event-resume-full');
   const seq = state.received + 1;
   const next: EventResumeState = {
+    ...state,
     received: seq,
-    admitted: state.admitted,
     pending: [
       ...state.pending,
       {
@@ -1582,6 +1601,7 @@ export function admitEventResume(input: {
   if (task.closedAt !== undefined) return refused('task-closed');
   const state = task.eventResumes;
   const oldest = state?.pending[0];
+  if (state?.canceledAt !== undefined) return refused('work-canceled');
   if (state === undefined || oldest === undefined)
     return refused('no-pending-event');
   if (eventResumeRequestId(oldest.seq) !== requestId)
@@ -1611,4 +1631,17 @@ export function admitEventResume(input: {
     priority: input.priority,
     params,
   });
+}
+
+/** The event-resume state a new caller request leaves: a human reply
+ * restarts the resume budget, and any caller request reopens a canceled
+ * item to events. */
+function reopenedEventResumes(
+  state: EventResumeState,
+  humanReply: boolean,
+  callerRequest: boolean,
+): EventResumeState {
+  const { canceledAt: _canceledAt, ...open } = state;
+  const next = callerRequest ? open : state;
+  return humanReply ? { ...next, admitted: 0 } : next;
 }

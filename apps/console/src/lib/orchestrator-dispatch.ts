@@ -179,6 +179,8 @@ export interface DispatchDeps {
   /** Session telemetry for an event-resume run to continue its Work's own
    *  conversation (`admitWorkEventResume`); absent, it starts fresh. */
   sessionDocsForRuns?: WorkEventResumeDeps['sessionDocsForRuns'];
+  /** Clears session expiry when an event-resume reopens a closed item. */
+  expireItemSessions?: WorkEventResumeDeps['expireItemSessions'];
 }
 
 export interface DrainOutboxResult {
@@ -410,6 +412,9 @@ async function handleEventResume(
       ...(deps.sessionDocsForRuns === undefined
         ? {}
         : { sessionDocsForRuns: deps.sessionDocsForRuns }),
+      ...(deps.expireItemSessions === undefined
+        ? {}
+        : { expireItemSessions: deps.expireItemSessions }),
     },
     entry.task,
   );

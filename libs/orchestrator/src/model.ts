@@ -691,6 +691,9 @@ export const eventResumeStateSchema = z.strictObject({
   pending: z.array(pendingEventResumeSchema).max(MAX_PENDING_EVENT_RESUMES),
   /** The most recently accepted delivery ids, so a repeat is a no-op. */
   recent: z.array(z.string().min(1).max(400)).max(EVENT_RESUME_MEMORY),
+  /** An operator canceled the item: no event resumes it until a caller
+   * request (a human reply or a redispatch) reopens it. */
+  canceledAt: isoUtc.optional(),
 });
 export type EventResumeState = z.infer<typeof eventResumeStateSchema>;
 

@@ -217,6 +217,9 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
           store,
           orchestrator,
           sessionDocsForRuns,
+          ...(cached?.expireItemSessions === undefined
+            ? {}
+            : { expireItemSessions: cached.expireItemSessions }),
           ...github,
         },
         limit,

@@ -313,11 +313,23 @@ The router does not publish a Work target. It hands the rendered notice to
   took the Work first makes admission refuse `task-busy`; its own settlement
   hands the events on. The request history makes a repeated admission return
   the first run.
-- `MAX_EVENT_RESUMES` (10) resume runs in a row without a human reply, or
-  `MAX_PENDING_EVENT_RESUMES` (8) waiting events, refuse further events as
-  `event-resume-limit`. A human reply restarts the count. The router removes a
-  subscription whose Work refuses an event (closed, unknown or over the
-  limit).
+- `MAX_EVENT_RESUMES` (10) resume runs in a row without a human reply
+  refuse further events as `event-resume-limit`; a human reply restarts the
+  count. With `MAX_PENDING_EVENT_RESUMES` (8) events already waiting on a
+  busy Work, one more is refused as `event-resume-full`: the router drops
+  that event (`resume-dropped`) and keeps the subscription.
+- An operator's cancel of the item (`cancel` with the native Work) drops the
+  waiting events and records `eventResumes.canceledAt`; later events are
+  refused as `work-canceled` until a caller request (a reply or redispatch)
+  reopens the item. Closing a parked item sets `closedAt`, which refuses
+  events the same way.
+- The router removes a subscription whose Work refuses an event for good:
+  unknown, closed, canceled or over its limit.
+- Every source resumes Work the same way: Work state and session events
+  through `routeAgentEvent`, and GitHub App deliveries through
+  `routeGithubAgentEvents`, which drains the outbox after it queues a
+  resume. A resume that reopens a done or failed item clears its sessions'
+  expiry, as a reply does.
 
 An event-resume is not a reply: it carries no principal, does not reset or
 count toward PR remediation rounds, and ignores a waiting delivery the same

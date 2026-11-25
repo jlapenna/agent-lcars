@@ -10,8 +10,9 @@ import {
   type WorkAnchor,
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { latestRun } from '@agent-lcars/work/derive';
+import { deriveItemState, latestRun } from '@agent-lcars/work/derive';
 
+import { isClosedItemState } from './session-expiry';
 import { resumeParamsFor } from './work-resume-session';
 
 /**
@@ -25,8 +26,11 @@ import { resumeParamsFor } from './work-resume-session';
 
 export type WorkResumeOutcome =
   | { readonly outcome: 'queued' | 'duplicate' }
-  /** The Work can never take this event: unknown, closed, not native, or
-   * over its event-resume limit. */
+  /** Too many events already wait for a busy Work: this one is dropped, and
+   * the subscription stays for later events. */
+  | { readonly outcome: 'dropped' }
+  /** The Work can never take this event: unknown, closed, canceled, not
+   * native, or over its event-resume limit. */
   | { readonly outcome: 'refused'; readonly reason: string };
 
 export interface WorkResumeRequest {
@@ -45,6 +49,7 @@ export function queueWorkEventResume(
     );
     if (!isRefusal(outcome)) return { outcome: 'queued' };
     if (outcome.reason === 'duplicate-request') return { outcome: 'duplicate' };
+    if (outcome.reason === 'event-resume-full') return { outcome: 'dropped' };
     return { outcome: 'refused', reason: outcome.reason };
   };
 }
@@ -57,6 +62,9 @@ export interface WorkEventResumeDeps {
   readonly sessionDocsForRuns?: (
     runIds: readonly string[],
   ) => Promise<SessionDoc[]>;
+  /** Clears the session expiry a closed item's sessions were stamped with,
+   * as a human reply does when it reopens one. */
+  readonly expireItemSessions?: (workId: string) => Promise<void>;
 }
 
 export type AdmitOutcome =
@@ -81,6 +89,7 @@ export async function admitWorkEventResume(
     return 'busy';
   const latest = latestRun(runs);
   if (latest === undefined) return 'nothing';
+  const before = deriveItemState(task, runs);
   const runIds = new Set(runs.map((run) => run.runId));
   const params =
     deps.sessionDocsForRuns === undefined
@@ -97,7 +106,13 @@ export async function admitWorkEventResume(
     ...(latest.priority === undefined ? {} : { priority: latest.priority }),
     params,
   });
-  if (!isRefusal(outcome)) return 'admitted';
+  if (!isRefusal(outcome)) {
+    // Reopening a done or failed item: its close stamped every session's
+    // expiry, which the workflow clears once it reads the item running.
+    if (isClosedItemState(before))
+      await deps.expireItemSessions?.(taskId.workId);
+    return 'admitted';
+  }
   switch (outcome.reason) {
     case 'task-busy':
       return 'busy';

@@ -743,6 +743,22 @@ describe('drainOutbox event-resume (#3570)', () => {
     expect(result.dispatched).toContain(resumed!.runId);
   });
 
+  it('clears session expiry when an event reopens a closed item', async () => {
+    const f = fixture();
+    const first = await requestedWithOrigin(f.orchestrator, origin, WORK_ID);
+    await f.orchestrator.report(first.runId, { ok: false, summary: 'failed' });
+    await drainOutbox(deps(f));
+    await f.orchestrator.queueEventResume(
+      { workId: WORK_ID },
+      { deliveryId: 'sub:ev-1', notice: 'notice' },
+    );
+    const expireItemSessions = vi.fn(async () => undefined);
+    expect(
+      (await drainOutbox({ ...deps(f), expireItemSessions })).failed,
+    ).toEqual([]);
+    expect(expireItemSessions).toHaveBeenCalledWith(WORK_ID);
+  });
+
   it('settles the entry while the Work is busy and resumes after the run settles', async () => {
     const f = fixture();
     const first = await requestedWithOrigin(f.orchestrator, origin, WORK_ID);

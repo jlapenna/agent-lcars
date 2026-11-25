@@ -241,8 +241,9 @@ describe('event-resume (#3570)', () => {
     await startRun(f);
     for (let i = 1; i <= MAX_PENDING_EVENT_RESUMES; i += 1)
       expect(refusal(await queue(f, `sub:ev-${i}`))).toBeUndefined();
+    // Transient: the waiting list is full, not the Work's resume budget.
     expect(refusal(await queue(f, 'sub:ev-overflow'))).toBe(
-      'event-resume-limit',
+      'event-resume-full',
     );
   });
 
@@ -261,6 +262,59 @@ describe('event-resume (#3570)', () => {
     const settled = await finish(f, reply.runId);
     expect(settled.outbox.map((entry) => entry.kind)).toContain('event-resume');
     expect(refusal(await admit(f))).toBeUndefined();
+  });
+
+  it('drops a waiting event when an operator cancels the item while its run is finishing', async () => {
+    const f = fixture();
+    const first = await startRun(f);
+    await queue(f, 'sub:ev-1');
+    const canceled = await f.orchestrator.cancel(
+      first.runId,
+      'canceled by operator',
+      WORK,
+    );
+    if (isRefusal(canceled)) throw new Error(canceled.reason);
+    expect(canceled.outbox.map((entry) => entry.kind)).not.toContain(
+      'event-resume',
+    );
+    expect(canceled.task.eventResumes).toMatchObject({
+      pending: [],
+      canceledAt: T0,
+    });
+    expect(refusal(await admit(f))).toBe('work-canceled');
+  });
+
+  it('refuses an event after the item was canceled until a caller reopens it', async () => {
+    const f = fixture();
+    const first = await startRun(f);
+    await queue(f, 'sub:ev-1');
+    await f.orchestrator.cancel(first.runId, 'canceled', WORK);
+    expect(refusal(await queue(f, 'sub:ev-2'))).toBe('work-canceled');
+
+    const reply = await startRun(f, 'reply-1', {
+      mode: 'reply',
+      reply: 'pick it back up',
+      replyPrincipal: 'github:jlapenna',
+    });
+    expect(
+      (await f.store.readTask(WORK))?.task.eventResumes?.canceledAt,
+    ).toBeUndefined();
+    await finish(f, reply.runId);
+    expect(refusal(await queue(f, 'sub:ev-3'))).toBeUndefined();
+  });
+
+  it('does not treat a run cancel that is not an item cancel as canceling the item', async () => {
+    const f = fixture();
+    const first = await startRun(f);
+    await queue(f, 'sub:ev-1');
+    const canceled = await f.orchestrator.cancel(
+      first.runId,
+      'provider switch',
+    );
+    if (isRefusal(canceled)) throw new Error(canceled.reason);
+    expect(canceled.outbox.map((entry) => entry.kind)).toContain(
+      'event-resume',
+    );
   });
 
   it('refuses events for closed, unknown and GitHub-anchored tasks', async () => {

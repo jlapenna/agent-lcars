@@ -75,8 +75,17 @@ export type RoutedDelivery =
   | {
       readonly subscriptionId: string;
       readonly deliveryId: string;
+      /** A Work target that cannot take this event now: its waiting list is
+       * full while a run holds it. This event is dropped; the subscription
+       * stays. */
+      readonly outcome: 'resume-dropped';
+      readonly workId: string;
+    }
+  | {
+      readonly subscriptionId: string;
+      readonly deliveryId: string;
       /** A Work target that can never take the event (unknown, closed,
-       * or over its event-resume limit); the subscription is
+       * canceled, or over its event-resume limit); the subscription is
        * removed. */
       readonly outcome: 'resume-refused';
       readonly workId: string;
@@ -220,6 +229,17 @@ async function resumeWorkTarget(
         workId,
         reason: resumed.reason,
       };
+    case 'dropped':
+      // Settled as routed so a redelivery is not retried, but never as
+      // ended: the Work keeps waiting for its later events.
+      await deps.store.settleRouted(subscription.id, event.id, false);
+      logger.warn(
+        'agent-lcars: work %s dropped event %s for subscription %s: too many events waiting',
+        workId,
+        event.id,
+        subscription.id,
+      );
+      return { ...base, outcome: 'resume-dropped', workId };
     case 'duplicate':
       await deps.store.settleRouted(subscription.id, event.id, ended);
       return { ...base, outcome: 'duplicate' };
