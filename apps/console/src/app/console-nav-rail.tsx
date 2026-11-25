@@ -1,6 +1,7 @@
 'use client';
 
 import Link, { useLinkStatus } from 'next/link';
+import { type ReactNode, useState } from 'react';
 
 import { archiveDaysParam, DEFAULT_ARCHIVE_DAYS } from '@/lib/archive-window';
 import type { SessionArchiveQuery } from '@/lib/session-archive';
@@ -57,6 +58,40 @@ function PendingSignal() {
   ) : null;
 }
 
+/**
+ * A rail pill that prefetches on intent, not on sight. Every page shows all
+ * eight pills, and each section's App Shell is rendered per session on the
+ * server, so viewport prefetching rendered every section on the instance
+ * serving the page in view, for sections the user mostly never opened.
+ * Hover, keyboard focus or touch switches the pill to the default
+ * (App Shell) prefetch a moment before the click: the hover pattern in
+ * Next's Prefetching guide, with `false` before intent because "Using
+ * `false` before intent disables the App Shell prefetch".
+ */
+function IntentPrefetchLink({
+  href,
+  children,
+  ...props
+}: Omit<React.ComponentProps<typeof Link>, 'prefetch' | 'href'> & {
+  href: string;
+  children: ReactNode;
+}) {
+  const [intent, setIntent] = useState(false);
+  const showIntent = () => setIntent(true);
+  return (
+    <Link
+      href={href}
+      prefetch={intent ? 'auto' : false}
+      onMouseEnter={showIntent}
+      onFocus={showIntent}
+      onTouchStart={showIntent}
+      {...props}
+    >
+      {children}
+    </Link>
+  );
+}
+
 /** Per-destination counts beside the rail position: decisions waiting,
  * live runs and admitted-but-not-running work. */
 function navCounts(
@@ -96,7 +131,7 @@ export function ConsoleNavRail({
   return (
     <nav className="lcars-nav" aria-label="Console sections">
       {consoleDestinations(allowedKeys).map((item) => (
-        <Link
+        <IntentPrefetchLink
           key={item.key}
           href={navHref(item, archiveQuery, repoFilter)}
           className="lcars-nav-pill"
@@ -113,7 +148,7 @@ export function ConsoleNavRail({
           </small>
           <span className="lcars-nav-label">{item.label}</span>
           <PendingSignal />
-        </Link>
+        </IntentPrefetchLink>
       ))}
     </nav>
   );
