@@ -94,6 +94,19 @@ describe('parseSessionEventV1', () => {
     },
   );
 
+  it('keeps a safe parent session and drops an unsafe or self-referencing one', () => {
+    const parentOf = (parentSessionId: string) => {
+      const result = parseSessionEventV1({
+        ...event,
+        summary: { ...summary, parentSessionId },
+      });
+      return result.ok ? result.event.summary?.parentSessionId : 'rejected';
+    };
+    expect(parentOf('root-1')).toBe('root-1');
+    expect(parentOf('../root')).toBeUndefined();
+    expect(parentOf('sess-1')).toBeUndefined();
+  });
+
   it('accepts a well-formed event and copies only known fields', () => {
     const result = parseSessionEventV1({
       ...event,
@@ -224,6 +237,36 @@ describe('livenessForSessionEvent', () => {
     };
     for (const kind of SESSION_EVENT_KINDS) {
       expect(livenessForSessionEvent(kind)).toBe(expected[kind]);
+    }
+  });
+});
+
+describe('parseSessionSummaryV1 herdr pane', () => {
+  it('keeps a herdr-core terminal address', () => {
+    for (const herdrPaneId of ['t36', 't1b', 'T-2.a_b']) {
+      expect(
+        parseSessionSummaryV1({ ...summary, herdrPaneId }, 'sess-1')
+          ?.herdrPaneId,
+      ).toBe(herdrPaneId);
+    }
+  });
+
+  it("drops another machine's terminal and anything that is not an identifier", () => {
+    for (const herdrPaneId of [
+      'laptop/t7',
+      'w1:p1',
+      't36&view=terminal',
+      '../t36',
+      '',
+      36,
+      'x'.repeat(65),
+    ]) {
+      const parsed = parseSessionSummaryV1(
+        { ...summary, herdrPaneId },
+        'sess-1',
+      );
+      expect(parsed).toBeDefined();
+      expect(parsed?.herdrPaneId).toBeUndefined();
     }
   });
 });

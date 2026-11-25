@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { isHerdrPaneId, type SessionLiveness } from '@agent-lcars/telemetry';
 import { optional, required } from '@agent-lcars/util-server';
 
 import { repoKey } from './watched-repo';
@@ -236,6 +237,70 @@ export function shareArtifactUrl(
 }
 
 /**
+ * Where each host's Ovis is served: a JSON object from the host name a
+ * session reports (`CliSessionDoc.host`) to that host's Ovis base URL.
+ *
+ * `optional()`, with no fallback to this fleet's hosts: a deployment that
+ * runs no Ovis, or a host that has none, simply gets no live link. A value
+ * that is set but malformed fails at startup, like a missing required one.
+ */
+export function ovisUrlByHost(): ReadonlyMap<string, string> {
+  const name = 'AGENT_LCARS_OVIS_URL_BY_HOST';
+  const raw = optional(name);
+  if (raw === undefined || raw.trim() === '') return new Map();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${name} must be a JSON object of host to URL`);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${name} must be a JSON object of host to URL`);
+  }
+  const urls = new Map<string, string>();
+  for (const [host, value] of Object.entries(parsed)) {
+    let url: URL | undefined;
+    try {
+      url = typeof value === 'string' ? new URL(value) : undefined;
+    } catch {
+      url = undefined;
+    }
+    if (!url || url.protocol !== 'https:' || url.search || url.hash) {
+      throw new Error(`${name} needs a plain https URL for host ${host}`);
+    }
+    urls.set(host, url.toString());
+  }
+  return urls;
+}
+
+/**
+ * The address of one session's own pane in its host's Ovis, or `undefined`
+ * when there is nothing live to open: the session is not live or idle, it
+ * did not report a herdr terminal, or its host has no configured Ovis.
+ *
+ * The browser opens this address itself, in a new tab. Session content
+ * goes from the host to the browser over the LAN or the VPN and never
+ * through this console.
+ */
+export function sessionLiveViewUrl(session: {
+  liveness: SessionLiveness;
+  host?: string;
+  herdrPaneId?: string;
+}): string | undefined {
+  if (session.liveness !== 'live' && session.liveness !== 'idle') {
+    return undefined;
+  }
+  if (!session.host || !session.herdrPaneId) return undefined;
+  if (!isHerdrPaneId(session.herdrPaneId)) return undefined;
+  const base = ovisUrlByHost().get(session.host);
+  if (!base) return undefined;
+  const url = new URL(base);
+  url.searchParams.set('pane', session.herdrPaneId);
+  url.searchParams.set('view', 'chat');
+  return url.toString();
+}
+
+/**
  * Eagerly reads every `required()` deployment-identity variable once at
  * process startup (`instrumentation.ts`'s `register()`), so a missing one
  * fails the boot with a clear `process.env.<NAME> not defined` message
@@ -251,4 +316,6 @@ export function validateDeploymentIdentity(): void {
   artifactShareBaseUrl();
   consoleRepositoryUrl();
   codexCentralAuthObject();
+  // Optional, but a malformed value must not wait for a session page.
+  ovisUrlByHost();
 }

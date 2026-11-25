@@ -37,7 +37,7 @@ describe('Bridge native Inbox evidence', () => {
             },
           },
         });
-        vi.spyOn(store, 'listRuns').mockRejectedValue(
+        vi.spyOn(store, 'listRunsForTasks').mockRejectedValue(
           new Error('runs unavailable'),
         );
       }

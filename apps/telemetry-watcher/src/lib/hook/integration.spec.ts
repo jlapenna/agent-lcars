@@ -56,7 +56,7 @@ describe('lcars integration', () => {
     expect(status).toMatchObject({
       installed: true,
       stubVersion: INTEGRATION_VERSION,
-      entriesPresent: 5,
+      entriesPresent: 6,
     });
 
     const stub = fs.readFileSync(
@@ -95,6 +95,11 @@ describe('lcars integration', () => {
     expect(hooks['PostToolUse'][0].hooks[0]).toEqual({
       type: 'command',
       command: stubCommand('claude', 'Stop'),
+      async: true,
+    });
+    expect(hooks['SubagentStop'][0].hooks[0]).toEqual({
+      type: 'command',
+      command: stubCommand('claude', 'SubagentStop'),
       async: true,
     });
     expect(hooks['SessionEnd'][0].hooks[0]).toMatchObject({ timeout: 5 });
@@ -307,7 +312,7 @@ describe('lcars integration', () => {
       }
       fs.writeFileSync(settingsPath, JSON.stringify(settings));
       const stopDuplicates = runtime === 'codex' ? 4 : 3;
-      const entriesExpected = runtime === 'codex' ? 7 : 5;
+      const entriesExpected = runtime === 'codex' ? 7 : 6;
       expect(integrationStatus(runtime, home, env)).toMatchObject({
         stubCurrent: true,
         entriesPresent: entriesExpected,

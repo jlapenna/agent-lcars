@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   runtime: vi.fn(),
   drain: vi.fn(),
   enqueue: vi.fn(),
-  revalidate: vi.fn(),
 }));
 vi.mock('@/lib/work-auth', () => ({ googleIdTokenVerifier: mocks.audience }));
 vi.mock('@/lib/linear-config', () => ({ linearConfig: mocks.config }));
@@ -24,7 +23,6 @@ vi.mock('@/lib/linear-intake', async (original) => ({
 vi.mock('@/lib/hosted-webhook-queue', () => ({
   enqueueLinearWebhook: mocks.enqueue,
 }));
-vi.mock('next/cache', () => ({ revalidateTag: mocks.revalidate }));
 import { POST } from './route';
 const raw = JSON.stringify({
   type: 'Issue',

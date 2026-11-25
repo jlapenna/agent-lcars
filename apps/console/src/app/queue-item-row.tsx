@@ -4,6 +4,7 @@ import { Loader } from '@mantine/core';
 import Link from 'next/link';
 import type { MouseEvent } from 'react';
 
+import { issueHumanAsk } from '../lib/human-ask';
 import { repoDisplayName } from '../lib/watched-repo';
 import type { BoardCard } from './board-card';
 import { DecisionWaiting } from './decision-waiting';
@@ -32,6 +33,7 @@ export function QueueItemRow({
   const reason = queueReasonFor(item);
   const agent = inboxCardAgent(card);
   const hiddenLabels = queueDisclosureLabels(item);
+  const preview = issueHumanAsk(item) ?? card.decisionSummary;
   const handleNavigate = (event: MouseEvent<HTMLAnchorElement>) => {
     if (
       event.defaultPrevented ||
@@ -70,10 +72,8 @@ export function QueueItemRow({
           >
             {item.title}
           </span>
-          {card.decisionSummary && (
-            <span className="queue-item-row__question">
-              {card.decisionSummary}
-            </span>
+          {preview && (
+            <span className="queue-item-row__question">{preview}</span>
           )}
           <div className="ops-inbox__meta">
             <span className="ops-ref">

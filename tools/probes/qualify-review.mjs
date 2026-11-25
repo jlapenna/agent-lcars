@@ -82,10 +82,7 @@ for (const path of [...files].sort()) {
 }
 const procedure = join(output, 'procedure');
 mkdirSync(procedure, { mode: 0o700 });
-const packager = join(
-  root,
-  'apps/runner-autoscaler/runner-image/package-anthropic-review.sh',
-);
+const packager = join(root, 'packages/anthropic-code-review/package-review.sh');
 run('bash', [packager, procedure]);
 const adapter = readFileSync(join(procedure, 'README.md'));
 const imageId = process.env.LCARS_REVIEW_QUALIFICATION_IMAGE_ID;
@@ -183,12 +180,14 @@ const payload = join(output, 'review.json');
 const prompt = `Review jlapenna/agent-lcars#${pull} at the immutable head ${head}.
 This is a live native-harness qualification of the LCARS review procedure.
 Read ${join(imageId ? baked : procedure, 'README.md')} and its packaged upstream.md. Apply their
-four independent review passes and fresh validation to the actual source change.
+Full 2-pass review (guardrails and bugs), deduplicate overlapping root-cause
+candidates before validation, and run fresh validation on the actual source change.
 The full diff is ${join(output, 'change.diff')}; scoped guidance is
 ${join(output, 'guidance.md')}; PR metadata is ${join(output, 'pr.json')}.
 Give every child the full diff, guidance, PR metadata and exact head. Children
 return evidence only, never recursively delegate and never write to GitHub.
 ${dependencyContext}
+${provider === 'opencode' ? 'In the procedure receipt, cite the packaged upstream revision ' + readFileSync(join(procedure, 'revision'), 'utf8').trim() + '.' : ''}
 All passes, validators and captured publication share this ${seconds}-second
 provider budget, ending by ${reviewDeadline}. Give the shared deadline to every
 child and reserve time for validation and publication.
@@ -205,10 +204,12 @@ ${sourceRef ? `This is an explicitly labelled historical snapshot of the real PR
 For this qualification ONLY, replace remote publication with a captured GitHub
 review payload in ${payload}: {commit_id, event, body, comments}. Use COMMENT
 with an explicit verdict because this run must not approve or block a real PR.
+A passing verdict (<!-- lcars-review:pass -->) must set comments to [] so no
+non-blocking inline threads are created.
 Its body must include this exact line: ${marker}
 Write ${receipt} with {head, complete, verdict, reviewers, candidates, validators,
 limitations}. reviewers is an array of {role, nativeSessionId, complete}; roles
-are guidance-a, guidance-b, bugs-a, bugs-b. candidates is an array of {id,
+are guardrails, bugs. candidates is an array of {id,
 description, path, line}; validators is an array of {candidateId, nativeSessionId,
 decision, evidence}, with decision exactly confirmed or rejected. Identify the
 actual fresh native sessions, not invented IDs.
@@ -278,15 +279,33 @@ if (provider === 'codex' && process.env.LCARS_REVIEW_CODEX_ISOLATE === '1') {
   );
 }
 if (provider === 'opencode') {
+  const sourceConfig = join(root, 'agents/opencode');
+  const effectiveConfig = imageId
+    ? '/home/runner/.config/opencode'
+    : sourceConfig;
+  if (imageId) {
+    for (const name of ['review-overlay.json', 'instructions.md']) {
+      if (
+        !readFileSync(join(sourceConfig, name)).equals(
+          readFileSync(join(effectiveConfig, name)),
+        )
+      )
+        throw new Error(
+          'Candidate image OpenCode review input mismatch: ' + name,
+        );
+    }
+  }
   // Match the direct runner's effective per-review configuration.
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
-    permission: { task: 'allow' },
+    ...JSON.parse(
+      readFileSync(join(effectiveConfig, 'review-overlay.json'), 'utf8'),
+    ),
     provider: {
       homelab: {
         models: { default: { options: { reasoningEffort: 'medium' } } },
       },
     },
-    instructions: [join(root, 'agents/opencode/instructions.md')],
+    instructions: [join(effectiveConfig, 'instructions.md')],
   });
   env.MODE = 'review';
   args = [

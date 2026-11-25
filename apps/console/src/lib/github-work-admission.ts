@@ -2,11 +2,13 @@ import 'server-only';
 
 import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import { AGENT_LABELS, REVIEW_LABELS } from '@agent-lcars/dispatch-contracts';
+import { logger } from '@agent-lcars/logging';
 import {
   decidedRun,
   isRefusal,
   isWorkAnchor,
   type RequestBinding,
+  type Run,
   type TaskId,
   taskIdSchema,
 } from '@agent-lcars/orchestrator';
@@ -28,6 +30,7 @@ import { repositoryForbiddenReason } from './work-authorization';
 import { normalizeWorkPayload } from './work-from-github';
 import { forbiddenReason, type GrantsPrincipal, sameSpec } from './work-mint';
 import {
+  authorizeGithubRemediationProviderFallback,
   authorizeGithubReviewProviderFallback,
   authorizeProviderFallback,
 } from './work-provider-fallback';
@@ -50,8 +53,12 @@ export interface GithubWorkAdmissionInput {
   /** Present only for label-triggered requests; validate again at the one
    * admission boundary before any durable request or executor dispatch. */
   labelRouting?: GithubLabelRouting;
-  /** Ordered quota/cooldown fallback pipelines for signed GitHub review intake. */
+  /** Ordered quota/cooldown fallback pipelines for signed GitHub review or PR remediation intake. */
   fallbackPipelines?: readonly WorkPayload['spec']['pipeline'][];
+  /** Authorizes cross-provider quota fallback and cross-pipeline execution on a
+   * pull-request task whose stored Work may have been created by a cross-model
+   * review run. */
+  remediationFallback?: boolean;
   /** The Work's title and description were copied from the anchor's current
    * GitHub text (webhook deliveries, the unstick runbook). An edit to that
    * text after first admission is not a new Work request: the stored Work
@@ -237,7 +244,16 @@ export async function admitGithubWork(
               pipeline,
               input.fallbackPipelines,
             )
-          : undefined,
+          : input.remediationFallback === true &&
+              (input.params['mode'] === 'implement' ||
+                input.params['mode'] === 'reply') &&
+              input.fallbackPipelines?.length
+            ? authorizeGithubRemediationProviderFallback(
+                anchor.repo,
+                pipeline,
+                input.fallbackPipelines,
+              )
+            : undefined,
     params: input.params,
     work,
     ...(input.issue === undefined ? {} : { issue: input.issue }),
@@ -256,13 +272,25 @@ export async function admitGithubWork(
       if (!coding.success) return false;
       const spec = coding.data.spec;
       // Authorization changes only execution intent, never the admitted payload.
-      // Cross-model review on an existing PR task may execute on a different
-      // reviewer pipeline than the initial task's pipeline while keeping the
-      // stored Work payload immutable.
-      const candidate =
-        labelProviderRequest === undefined && input.params['mode'] !== 'review'
-          ? work.spec
-          : { ...work.spec, pipeline: spec.pipeline };
+      // Cross-model review or trusted PR remediation on an existing PR task may
+      // execute on a different pipeline than the initial task's stored pipeline
+      // while keeping the stored Work payload immutable.
+      const relaxExecutionSpec =
+        labelProviderRequest !== undefined ||
+        input.params['mode'] === 'review' ||
+        input.remediationFallback === true;
+      const candidate = relaxExecutionSpec
+        ? {
+            ...work.spec,
+            pipeline: spec.pipeline,
+            ...(input.workMirrorsAnchor === true
+              ? {
+                  priority: spec.priority,
+                  fallbackPipelines: spec.fallbackPipelines,
+                }
+              : {}),
+          }
+        : work.spec;
       return sameSpec(
         spec,
         input.workMirrorsAnchor === true
@@ -311,8 +339,9 @@ export async function admitGithubWork(
       providerRouting: outcome.task.providerRouting,
     };
   }
-  const { runId } = decidedRun(outcome);
-  const drained = await runtime.drain();
+  const decided = decidedRun(outcome);
+  const { runId } = decided;
+  const drained = await drainAndRerouteCooledProvider(runtime, decided);
   return {
     kind: 'accepted',
     runId,
@@ -402,11 +431,39 @@ export async function redispatchGithubWork(
     };
   }
 
-  const { runId } = decidedRun(outcome);
-  const drained = await runtime.drain();
+  const decided = decidedRun(outcome);
+  const { runId } = decided;
+  const drained = await drainAndRerouteCooledProvider(runtime, decided);
   return {
     kind: 'accepted',
     runId,
     dispatched: drained.dispatched.includes(runId),
   };
+}
+
+/** Drains a fresh run, then moves it to its fallback at once when its
+ * provider is in a provider-reported quota cooldown, rather than at the next
+ * five-minute maintenance pass. It is the same audited reroute that pass runs;
+ * a provider that is not cooling down is untouched. */
+async function drainAndRerouteCooledProvider(
+  runtime: Pick<OrchestratorRouteDeps, 'orchestrator' | 'drain'>,
+  run: Run,
+): Promise<Awaited<ReturnType<OrchestratorRouteDeps['drain']>>> {
+  const drained = await runtime.drain();
+  if (run.providerFallback === undefined) return drained;
+  // Admission is already committed. A failed eager reroute is logged and left
+  // to the maintenance pass; it never fails the admission.
+  try {
+    const rerouted = await runtime.orchestrator.rerouteQueued();
+    if (rerouted.some((entry) => entry.fromRunId === run.runId)) {
+      await runtime.drain();
+    }
+  } catch (error) {
+    logger.warn(
+      'agent-lcars: eager cooldown reroute failed for %s:',
+      run.runId,
+      error,
+    );
+  }
+  return drained;
 }

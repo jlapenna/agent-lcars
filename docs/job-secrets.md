@@ -98,12 +98,12 @@ lcars work secrets enable github-jlapenna
 
 The JSON input files above contain metadata and references only. Upload secret
 values directly on protected stdin. For a value the operator holds, use
-`secret-pass` with the CLI as its consumer, without writing into the age store:
+`secrets pass` with the CLI as its consumer, without writing into the age store:
 
 ```bash
-secret-pass take lcars-github-jlapenna -- lcars work secrets upload github-jlapenna
+secrets pass take lcars-github-jlapenna -- lcars work secrets upload github-jlapenna
 # In the operator's terminal on the same host:
-secret-pass give lcars-github-jlapenna
+secrets pass give lcars-github-jlapenna
 ```
 
 The upload command accepts no value argument, does not echo stdin, and prints

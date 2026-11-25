@@ -90,3 +90,35 @@ describe('hook session state', () => {
     });
   });
 });
+
+describe('hook session state herdr pane', () => {
+  it('keeps a resolved pane and drops one with an unsafe shape', () => {
+    const dir = tempState();
+    writeHookSessionState(dir, {
+      version: 1,
+      sessionId: 's1',
+      seq: 1,
+      herdrPaneId: 't36',
+      herdrPaneResolved: true,
+      herdrPaneCheckedAt: '2026-10-10T11:00:00.000Z',
+      updatedAt: '2026-10-10T12:00:00.000Z',
+    });
+    expect(readHookSessionState(dir, 's1')).toMatchObject({
+      herdrPaneId: 't36',
+      herdrPaneResolved: true,
+      herdrPaneCheckedAt: '2026-10-10T11:00:00.000Z',
+    });
+
+    writeHookSessionState(dir, {
+      version: 1,
+      sessionId: 's2',
+      seq: 1,
+      herdrPaneId: 'laptop/t7',
+      herdrPaneResolved: true,
+      updatedAt: '2026-10-10T12:00:00.000Z',
+    });
+    const read = readHookSessionState(dir, 's2');
+    expect(read?.herdrPaneId).toBeUndefined();
+    expect(read?.herdrPaneResolved).toBe(true);
+  });
+});

@@ -270,3 +270,30 @@ describe('isNewerHookWrite', () => {
     expect(isNewerHookWrite({ ...observer, seq: 9 }, undefined)).toBe(true);
   });
 });
+
+describe('sessionWriteForEvent herdr pane', () => {
+  it('carries the stored pane through a lifecycle-only event', () => {
+    const stored = sessionWriteForEvent(
+      event({ summary: { ...summary, herdrPaneId: 't36' } }),
+      undefined,
+      NOW,
+    )?.doc as SessionDoc;
+    expect(stored).toMatchObject({ herdrPaneId: 't36' });
+
+    const { summary: _omit, ...lifecycle } = { ...event({ kind: 'stop' }) };
+    const write = sessionWriteForEvent(lifecycle, stored, NOW);
+    expect(write?.doc).toMatchObject({ liveness: 'idle', herdrPaneId: 't36' });
+    expect(write?.clearFields).not.toContain('herdrPaneId');
+  });
+
+  it('clears the stored pane when a later summary reports none', () => {
+    const stored = sessionWriteForEvent(
+      event({ summary: { ...summary, herdrPaneId: 't36' } }),
+      undefined,
+      NOW,
+    )?.doc as SessionDoc;
+    const write = sessionWriteForEvent(event(), stored, NOW);
+    expect(Object.keys(write?.doc ?? {})).not.toContain('herdrPaneId');
+    expect(write?.clearFields).toContain('herdrPaneId');
+  });
+});

@@ -218,6 +218,30 @@ export function isEffectfulRun(run: {
   );
 }
 
+/** Charged lost-run auto-retries permitted for a run. Terminal-retry claw
+ *  revisions never replay; repository jobs honor their manifest `maxAttempts`
+ *  (`1` = terminal on loss, `2` = one retry); unparameterized effectful runs
+ *  stay at zero and ordinary runs use `MAX_AUTO_RETRIES`. */
+export function maxAutoRetries(run: {
+  pipeline: string;
+  params?: Readonly<Record<string, string>> | undefined;
+  sourceRevision?: { input: Readonly<Record<string, unknown>> } | undefined;
+}): number {
+  if (run.sourceRevision?.input['retry'] === 'terminal') return 0;
+  const raw = run.params?.['maxAttempts'];
+  if (raw !== undefined) {
+    const parsed = Number(raw);
+    if (
+      Number.isInteger(parsed) &&
+      parsed >= 1 &&
+      parsed <= MAX_AUTO_RETRIES + 1
+    ) {
+      return parsed - 1;
+    }
+  }
+  return isEffectfulRun(run) ? 0 : MAX_AUTO_RETRIES;
+}
+
 export interface RequestRunInput {
   now: string;
   task: Task | undefined;
@@ -1141,18 +1165,19 @@ function settleLostAndRetry(
 ): Decision | Refusal {
   if (lossRefused(loss)) return loss;
   const lost = loss;
-  // Effectful work (recipes, terminal-retry agent rounds) may already have
+  const lostRun = decidedRun(lost);
+  const retryBudget = maxAutoRetries(lostRun);
+  // Effectful work without an explicit retry allowance may already have
   // performed effects: the lost round itself is never replayed. A newer round
   // that was explicitly admitted behind it (its desired revision) still
   // advances, exactly as it would after a reported settlement.
-  if (isEffectfulRun(decidedRun(lost)))
+  if (isEffectfulRun(lostRun) && retryBudget === 0)
     return advanceSourceRevision(lost, input.now);
   const desired = advanceSourceRevision(lost, input.now);
   if (desired !== lost) return desired;
-  if (lost.task.consecutiveLost > MAX_AUTO_RETRIES) {
+  if (lost.task.consecutiveLost > retryBudget) {
     return lost;
   }
-  const lostRun = decidedRun(lost);
   // The settled run's last event is the loss; its note says whether the Job
   // ever placed (settleLost marks only expiry losses that way).
   const unplaced = lostRun.events.at(-1)?.note === PLACEMENT_WAIT_EXCEEDED_NOTE;
@@ -1219,9 +1244,11 @@ export function executorExitedAndRetry(input: {
 }
 
 /** Codex keeps its claim after settlement: server credential cleanup is
- * authorized by the original claim, so its executor exit never retires it. */
+ * authorized by the original claim, so ordinary Codex executor exits never
+ * retire it. Repository job occurrences (`jobOccurrence`) retire once any
+ * reserved Codex cleanup finishes (`retireSettledClaim` / `credential-operation`). */
 function retiresOnExit(run: Run): boolean {
-  return run.pipeline !== 'codex';
+  return run.pipeline !== 'codex' || Boolean(run.params?.['jobOccurrence']);
 }
 
 /** The claimant executor observed the worker of an already settled run exit.

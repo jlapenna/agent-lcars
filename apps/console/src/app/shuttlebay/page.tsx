@@ -1,5 +1,4 @@
 import { PIPELINES } from '@agent-lcars/work';
-import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -17,6 +16,7 @@ import {
   ToolbarSelect,
   ToolbarWindow,
 } from '../console-toolbar';
+import { NavSuspense } from '../nav-suspense';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { RunnerAutoscalerStatus } from '../runner-autoscaler-status';
 import { withConsolePageShell } from '../with-console-page-shell';
@@ -115,9 +115,9 @@ interface ShuttlebayViewProps {
 
 function ShuttlebayViewContent(props: ShuttlebayViewProps) {
   return (
-    <Suspense fallback={<PageLoading rows={4} header={false} />}>
+    <NavSuspense fallback={<PageLoading rows={4} header={false} />}>
       <ShuttlebayBody {...props} />
-    </Suspense>
+    </NavSuspense>
   );
 }
 
@@ -166,7 +166,7 @@ async function ShuttlebayPageShell({ searchParams }: PageProps) {
 // immediately recognizable while the runner projection resolves.
 export default function ShuttlebayPage({ searchParams }: PageProps) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="shuttlebay"
@@ -177,6 +177,6 @@ export default function ShuttlebayPage({ searchParams }: PageProps) {
       }
     >
       <ShuttlebayPageShell searchParams={searchParams} />
-    </Suspense>
+    </NavSuspense>
   );
 }

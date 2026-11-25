@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { withConsoleReplyMarker } from './console-reply-marker';
 import { type IngestResult, interpretDelivery } from './orchestrator-ingest';
@@ -1187,6 +1187,80 @@ describe('interpretDelivery repository allow-list (#1190)', () => {
 });
 
 describe('unified cross-model PR review intake', () => {
+  // Joe's rule: the review mechanism is the same in every repository. A
+  // branch on a repository name, or on "this repository versus the others",
+  // fails here.
+  describe('is identical in every repository', () => {
+    const OTHER_REPO = 'supersprinklesracing/sprinkles';
+    const decide = (
+      repo: string,
+      action: string,
+      author: string,
+      labels: string[],
+    ) => {
+      const result = interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: {
+          action,
+          repository: { full_name: repo },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: 91,
+            title: 'feat: change',
+            body: 'Change.',
+            user: { login: author, type: 'User' },
+            head: { ref: 'feat/change', sha: 'c'.repeat(40) },
+            labels: labels.map((name) => ({ name })),
+          },
+          sender: { login: 'jlapenna' },
+        },
+      });
+      return JSON.parse(JSON.stringify(result).replaceAll(repo, '<repo>'));
+    };
+
+    beforeEach(() => {
+      process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
+        `${REPO},${OTHER_REPO}`;
+      process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+        { owner: 'jlapenna', name: 'agent-lcars' },
+        { owner: 'supersprinklesracing', name: 'sprinkles' },
+      ]);
+    });
+    afterEach(() => {
+      delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
+      delete process.env['AGENT_LCARS_WATCHED_REPOS'];
+    });
+
+    const actions = ['opened', 'ready_for_review', 'synchronize', 'reopened'];
+    const authors = ['jlapenna', 'agent-lcars[bot]', 'github-actions[bot]'];
+    const labelSets = [
+      [],
+      ['review'],
+      ['review:codex'],
+      ['status:needs-human'],
+      ['bot:renovate'],
+    ];
+    const cases = actions.flatMap((action) =>
+      authors.flatMap((author) =>
+        labelSets.map((labels) => ({ action, author, labels })),
+      ),
+    );
+
+    it.each(cases)(
+      '$action by $author with labels $labels',
+      ({ action, author, labels }) => {
+        const here = decide(REPO, action, author, labels);
+        expect(decide(OTHER_REPO, action, author, labels)).toEqual(here);
+        expect(here).toMatchObject({
+          kind: 'request',
+          params: { mode: 'review' },
+        });
+      },
+    );
+  });
+
   it('auto-triggers Claude review with Antigravity fallback when a Codex PR opens ready for review', () => {
     const result = interpretDelivery({
       event: 'pull_request',
@@ -1284,7 +1358,7 @@ describe('unified cross-model PR review intake', () => {
     });
   });
 
-  it('ignores drafts and requests a review for dependency bot PRs in LCARS', () => {
+  it('ignores drafts and unattended dependency-bot PRs while keeping qualified runtime/submodule updates reviewable', () => {
     expect(
       interpretDelivery({
         event: 'pull_request',
@@ -1305,6 +1379,29 @@ describe('unified cross-model PR review intake', () => {
       }),
     ).toEqual({ kind: 'ignore', reason: 'draft-pull-request' });
 
+    for (const action of ['opened', 'synchronize', 'reopened']) {
+      expect(
+        interpretDelivery({
+          event: 'pull_request',
+          deliveryId: DELIVERY_ID,
+          payload: {
+            action,
+            repository: { full_name: REPO },
+            pull_request: {
+              state: 'open',
+              draft: false,
+              number: 81,
+              title: 'chore(deps): update deps',
+              user: { login: 'renovate[bot]' },
+              head: { ref: 'renovate/all-minor-patch', sha: 'd'.repeat(40) },
+              labels: [],
+            },
+            sender: { login: 'renovate[bot]' },
+          },
+        }),
+      ).toEqual({ kind: 'ignore', reason: 'excluded-review-author' });
+    }
+
     expect(
       interpretDelivery({
         event: 'pull_request',
@@ -1315,15 +1412,92 @@ describe('unified cross-model PR review intake', () => {
           pull_request: {
             state: 'open',
             draft: false,
-            number: 81,
-            title: 'chore(deps): update deps',
-            user: { login: 'renovate[bot]' },
+            number: 811,
+            title: 'chore(deps): bump actions/checkout',
+            user: { login: 'dependabot[bot]' },
+            head: {
+              ref: 'dependabot/github_actions/actions-checkout-5',
+              sha: 'e'.repeat(40),
+            },
             labels: [],
           },
-          sender: { login: 'renovate[bot]' },
+          sender: { login: 'dependabot[bot]' },
         },
       }),
-    ).toMatchObject({ kind: 'request' });
+    ).toEqual({ kind: 'ignore', reason: 'excluded-review-author' });
+
+    for (const headRef of [
+      'renovate/runner-cli-runtimes',
+      'renovate/major-runner-cli-runtimes',
+      'renovate/anthropic-review-workflow',
+    ]) {
+      expect(
+        interpretDelivery({
+          event: 'pull_request',
+          deliveryId: DELIVERY_ID,
+          payload: {
+            action: 'ready_for_review',
+            repository: { full_name: REPO },
+            pull_request: {
+              state: 'open',
+              draft: false,
+              number: 812,
+              title: 'chore(deps): update qualified dependency',
+              user: { login: 'renovate[bot]' },
+              head: { ref: headRef, sha: 'f'.repeat(40) },
+              labels: [],
+            },
+            sender: { login: 'jlapenna' },
+          },
+        }),
+      ).toMatchObject({ kind: 'request', params: { mode: 'review' } });
+    }
+
+    // A non-qualified Renovate draft major marked ready by a maintainer with
+    // untouched bot commits stays on the publisher fast path...
+    expect(
+      interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: {
+          action: 'ready_for_review',
+          repository: { full_name: REPO },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: 813,
+            title: 'chore(deps): update major dependency',
+            user: { login: 'renovate[bot]' },
+            head: { ref: 'renovate/major-nextjs', sha: '1'.repeat(40) },
+            labels: [],
+          },
+          sender: { login: 'jlapenna' },
+        },
+      }),
+    ).toEqual({ kind: 'ignore', reason: 'excluded-review-author' });
+
+    // ...whereas a maintainer or agent pushing a fix commit (`synchronize`)
+    // onto an open Renovate PR dispatches review automatically.
+    expect(
+      interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: {
+          action: 'synchronize',
+          repository: { full_name: REPO },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: 814,
+            title: 'chore(deps): update major dependency',
+            user: { login: 'renovate[bot]' },
+            head: { ref: 'renovate/major-nextjs', sha: '2'.repeat(40) },
+            labels: [],
+          },
+          sender: { login: 'jlapenna' },
+        },
+      }),
+    ).toMatchObject({ kind: 'request', params: { mode: 'review' } });
   });
 
   it('supports the unified review label and redirects same-model review:* labels to the opposite model', () => {
@@ -1437,5 +1611,119 @@ describe('unified cross-model PR review intake', () => {
       fallbackPipelines: ['agy', 'claude'],
       params: { mode: 'review' },
     });
+  });
+
+  it('reviews a push in every repository, labeled or not, while still excluding Renovate', () => {
+    const MEMBER_REPO = 'jlapenna/sync-padd';
+    process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
+      `${REPO},${MEMBER_REPO}`;
+    process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+      { owner: 'jlapenna', name: 'agent-lcars' },
+      { owner: 'jlapenna', name: 'sync-padd' },
+    ]);
+    try {
+      const synced = interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: {
+          action: 'synchronize',
+          repository: { full_name: MEMBER_REPO },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: 223,
+            title: 'ci: adopt shared lcars publisher',
+            body: 'Generated with [Claude Code]',
+            user: { login: 'jlapenna', type: 'User' },
+            head: { ref: 'claude/publisher', sha: 'd'.repeat(40) },
+            labels: [{ name: 'review:codex' }],
+          },
+          sender: { login: 'jlapenna' },
+        },
+      });
+      expect(synced).toMatchObject({
+        kind: 'request',
+        taskId: { repo: MEMBER_REPO, issue: 223 },
+        pipeline: 'codex',
+        params: { mode: 'review' },
+      });
+
+      const unlabeledSync = interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: {
+          action: 'synchronize',
+          repository: { full_name: MEMBER_REPO },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: 224,
+            title: 'feat: regular behind-branch sync without review label',
+            user: { login: 'jlapenna', type: 'User' },
+            head: { ref: 'feat/sync', sha: 'e'.repeat(40) },
+            labels: [],
+          },
+          sender: { login: 'agent-lcars[bot]' },
+        },
+      });
+      expect(unlabeledSync).toMatchObject({
+        kind: 'request',
+        taskId: { repo: MEMBER_REPO, issue: 224 },
+        params: { mode: 'review' },
+      });
+
+      const renovate = interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: {
+          action: 'synchronize',
+          repository: { full_name: MEMBER_REPO },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: 225,
+            title: 'chore(deps): bump vitest',
+            user: { login: 'renovate[bot]', type: 'Bot' },
+            head: { ref: 'renovate/vitest', sha: 'e'.repeat(40) },
+            labels: [{ name: 'review' }],
+          },
+          sender: { login: 'renovate[bot]' },
+        },
+      });
+      expect(renovate).toEqual({
+        kind: 'ignore',
+        reason: 'excluded-review-author',
+      });
+
+      const fork = interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: {
+          action: 'opened',
+          repository: { full_name: REPO },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: 226,
+            title: 'feat: external fork PR',
+            user: { login: 'attacker', type: 'User' },
+            head: {
+              ref: 'feat/fork',
+              sha: 'f'.repeat(40),
+              repo: { full_name: 'attacker/agent-lcars' },
+            },
+            labels: [],
+          },
+          sender: { login: 'attacker' },
+        },
+      });
+      expect(fork).toEqual({
+        kind: 'ignore',
+        reason: 'fork-pull-request',
+      });
+    } finally {
+      delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
+      delete process.env['AGENT_LCARS_WATCHED_REPOS'];
+    }
   });
 });

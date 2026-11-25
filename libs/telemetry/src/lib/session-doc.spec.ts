@@ -47,6 +47,16 @@ describe('buildSessionDoc', () => {
     expect(doc.resolvedModel).toBe('qwen3.8-flash-next');
   });
 
+  it('persists the parent session of a subagent and omits it on a root session', () => {
+    expect(
+      buildSessionDoc(baseSummary({ parentSessionId: 'root-1' }), 'ended')
+        .parentSessionId,
+    ).toBe('root-1');
+    expect('parentSessionId' in buildSessionDoc(baseSummary(), 'ended')).toBe(
+      false,
+    );
+  });
+
   it('clears a stale backend when OpenCode has no current observation', () => {
     const write = buildSessionWrite(
       baseSummary({ agent: 'opencode', status: 'running' }),
@@ -675,5 +685,52 @@ describe('explicit CLI archive capability', () => {
       expect.arrayContaining(['transcriptGcsUri', 'renderable']),
     );
     expect(failed.clearFields).not.toContain('cliTranscriptArchive');
+  });
+});
+
+describe('herdr pane', () => {
+  it('stores the pane on a CLI doc and clears it when the summary has none', () => {
+    const observed = buildSessionWrite(
+      baseSummary({ host: 'pike', herdrPaneId: 't36' }),
+      'live',
+    );
+    expect(observed.doc).toMatchObject({ host: 'pike', herdrPaneId: 't36' });
+    expect(observed.clearFields).not.toContain('herdrPaneId');
+
+    const gone = buildSessionWrite(baseSummary({ host: 'pike' }), 'live');
+    expect(Object.keys(gone.doc)).not.toContain('herdrPaneId');
+    expect(gone.clearFields).toContain('herdrPaneId');
+  });
+
+  it('never stores a pane for a runner session, and clears one left behind', () => {
+    const write = buildSessionWrite(
+      baseSummary({ source: 'issue-agent', herdrPaneId: 't36' }),
+      'live',
+    );
+    expect(Object.keys(write.doc)).not.toContain('herdrPaneId');
+    expect(write.clearFields).toContain('herdrPaneId');
+  });
+
+  it('drops a stored pane that is malformed or on a runner session, without refusing the document', () => {
+    expect(
+      parseSessionDoc({ source: 'cli', agent: 'codex', herdrPaneId: 't36' }),
+    ).toMatchObject({ herdrPaneId: 't36' });
+    for (const doc of [
+      { source: 'cli', agent: 'codex', herdrPaneId: 'laptop/t7' },
+      { source: 'cli', agent: 'codex', herdrPaneId: 'w1:p1' },
+      { source: 'cli', agent: 'codex', herdrPaneId: 36 },
+      {
+        source: 'issue-agent',
+        agent: 'codex',
+        repo: { owner: 'jlapenna', name: 'agent-lcars' },
+        herdrPaneId: 't36',
+      },
+    ]) {
+      const parsed = parseSessionDoc(doc);
+      expect(parsed).toMatchObject({ source: doc.source, agent: 'codex' });
+      expect(Object.keys(parsed)).not.toContain('herdrPaneId');
+      // The stored value is left alone for the next write to clear.
+      expect(Object.keys(doc)).toContain('herdrPaneId');
+    }
   });
 });

@@ -47,12 +47,16 @@ export function workForbiddenReason(
  * shared runtime. Both restrictions apply on every call/transaction. */
 export function scopedWorkGrant(
   authority: WorkAuthority,
-  granted: (principal: string, repository: string) => boolean,
-): (principal: string, repository: string) => boolean {
-  return (principal, repository) =>
+  granted: (
+    principal: string,
+    repository: string,
+    pipeline?: string,
+  ) => boolean,
+): (principal: string, repository: string, pipeline?: string) => boolean {
+  return (principal, repository, pipeline) =>
     principal === authority.principal &&
     repositoryForbiddenReason(authority, repository) === undefined &&
-    granted(principal, repository);
+    granted(principal, repository, pipeline);
 }
 
 /** Operations whose resource access is bound to the common policy below.

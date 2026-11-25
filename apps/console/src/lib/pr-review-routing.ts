@@ -7,13 +7,25 @@ import {
 export const UNIFIED_REVIEW_LABEL = 'review';
 export const UNIFIED_REVIEW_COMMAND = '/review';
 
-const AUTOMATED_BOT_LOGINS = new Set([
+const DEPENDENCY_BOT_LOGINS = new Set([
   'renovate[bot]',
   'app/renovate',
   'dependabot[bot]',
   'app/dependabot',
+]);
+
+const AUTOMATED_BOT_LOGINS = new Set([
+  ...DEPENDENCY_BOT_LOGINS,
   'github-actions[bot]',
 ]);
+
+/**
+ * Renovate groups in `jlapenna/agent-lcars` whose updates change executable
+ * review/runtime pins and require explicit review + qualification. The fleet
+ * qualifies the draft, then marks it ready for review (`renovate.json`).
+ */
+const QUALIFICATION_REQUIRED_RENOVATE_REF_RE =
+  /^renovate\/(?:major-)?(?:runner-cli-runtimes|anthropic-review-workflow)$/iu;
 
 const ATTEMPT_CLAIM_RE = /<!--\s*attempt-claim:g\d+:([^\s>]+)\s*-->/gu;
 
@@ -32,11 +44,100 @@ export function parseAttemptClaimRunId(
   return lastRunId;
 }
 
+export function isDependencyBotLogin(login: string | undefined): boolean {
+  return login !== undefined && DEPENDENCY_BOT_LOGINS.has(login.toLowerCase());
+}
+
 export function isAutomatedReviewExcludedAuthor(
   login: string | undefined,
 ): boolean {
   if (!login) return false;
   return AUTOMATED_BOT_LOGINS.has(login.toLowerCase());
+}
+
+export function isUnattendedDependencyBotPullRequest(input: {
+  userLogin: string | undefined;
+  headRef?: string | undefined;
+  action?: string | undefined;
+  senderLogin?: string | undefined;
+}): boolean {
+  if (!input.userLogin) return false;
+  if (!DEPENDENCY_BOT_LOGINS.has(input.userLogin.toLowerCase())) return false;
+  if (
+    input.action !== 'ready_for_review' &&
+    input.senderLogin !== undefined &&
+    !DEPENDENCY_BOT_LOGINS.has(input.senderLogin.toLowerCase())
+  ) {
+    return false;
+  }
+  const normalizedRef = input.headRef ?? '';
+  return !QUALIFICATION_REQUIRED_RENOVATE_REF_RE.test(normalizedRef);
+}
+
+/**
+ * A dependency update nobody but the bot has touched: every commit on the
+ * pull request is authored by the bot and signed by GitHub. LCARS approves
+ * these without a review run (CI gates the merge); the qualification branches
+ * are never covered, and a commit from anyone else ends the exemption.
+ *
+ * Author plus GitHub's signature is the proof. GitHub signs a commit made
+ * through its API or web interface only when the request carries no custom
+ * author, committer or signature, so a GitHub-signed commit whose author is
+ * the bot was made by the bot's own authenticated installation. Its committer
+ * is GitHub's web-flow identity, never the bot, so the committer is no test.
+ */
+export function isVerifiedDependencyUpdate(input: {
+  /** Normalized author login, e.g. `renovate[bot]`. */
+  authorLogin: string | undefined;
+  headRef: string | undefined;
+  headOid: string;
+  commits:
+    | {
+        totalCount: number;
+        nodes: readonly {
+          oid: string;
+          authorLogin: string | undefined;
+          signedByGitHub: boolean;
+        }[];
+      }
+    | undefined;
+}): boolean {
+  if (QUALIFICATION_REQUIRED_RENOVATE_REF_RE.test(input.headRef ?? '')) {
+    return false;
+  }
+  return isDependencyBotOnlyHead(input);
+}
+
+/** Every commit up to the head was written by the PR's dependency bot and
+ *  signed by GitHub: nobody else has put content on the branch. */
+export function isDependencyBotOnlyHead(input: {
+  authorLogin: string | undefined;
+  headOid: string;
+  commits:
+    | {
+        totalCount: number;
+        nodes: readonly {
+          oid: string;
+          authorLogin: string | undefined;
+          signedByGitHub: boolean;
+        }[];
+      }
+    | undefined;
+}): boolean {
+  const author = input.authorLogin?.toLowerCase();
+  if (author === undefined || !DEPENDENCY_BOT_LOGINS.has(author)) return false;
+  if (!author.endsWith('[bot]')) return false;
+  const commits = input.commits;
+  if (commits === undefined) return false;
+  if (commits.totalCount < 1 || commits.totalCount > 100) return false;
+  if (commits.nodes.length !== commits.totalCount) return false;
+  if (!commits.nodes.some((commit) => commit.oid === input.headOid)) {
+    return false;
+  }
+  return commits.nodes.every(
+    (commit) =>
+      commit.authorLogin?.toLowerCase() === author && commit.signedByGitHub,
+  );
 }
 
 export interface PullRequestAuthorSignals {
@@ -243,4 +344,49 @@ export function selectCrossModelReviewer(input: {
     fallbackPipelines,
     crossModelOverride,
   };
+}
+
+export interface PullRequestRemediationSelection {
+  pipeline: AgentPipeline;
+  fallbackPipelines: AgentPipeline[];
+}
+
+const DEFAULT_REMEDIATION_ORDER: readonly AgentPipeline[] = [
+  'claude',
+  'codex',
+  'agy',
+];
+
+/**
+ * Selects the primary coding pipeline and ordered quota-fallback pipelines
+ * for remediating review comments or merge conflicts on a pull request.
+ * Prefers the authoring pipeline first, then falls back across the remaining
+ * supported coding providers so a single provider's quota limit never stalls
+ * PR remediation or loops a human in.
+ */
+export function selectPullRequestRemediation(input: {
+  authorPipeline?: AgentPipeline;
+  preferredPipeline?: AgentPipeline;
+  supportedPipelines?: readonly AgentPipeline[];
+}): PullRequestRemediationSelection {
+  const repoSupported = input.supportedPipelines ?? DISPATCH_PIPELINES;
+  const supportedSet = new Set<AgentPipeline>(
+    repoSupported.length > 0 ? repoSupported : DISPATCH_PIPELINES,
+  );
+  const candidates: AgentPipeline[] = [];
+  for (const candidate of [
+    input.preferredPipeline,
+    input.authorPipeline,
+    ...DEFAULT_REMEDIATION_ORDER,
+  ]) {
+    if (
+      candidate !== undefined &&
+      supportedSet.has(candidate) &&
+      !candidates.includes(candidate)
+    ) {
+      candidates.push(candidate);
+    }
+  }
+  const [pipeline = 'claude', ...fallbackPipelines] = candidates;
+  return { pipeline, fallbackPipelines };
 }

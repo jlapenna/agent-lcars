@@ -1,6 +1,9 @@
 'use server';
 
-import { revalidatePath, updateTag } from 'next/cache';
+import { createHash } from 'node:crypto';
+
+import { taskKey } from '@agent-lcars/orchestrator';
+import { revalidatePath } from 'next/cache';
 import type { Session } from 'next-auth';
 
 import { createAdminAction } from '@/lib/auth-guards';
@@ -28,10 +31,15 @@ import {
   updateIssueContent as updateIssueContentLib,
   updatePrBranch,
 } from '../lib/backend-actions';
-import { AUTHORITATIVE_QUEUE_TAG } from '../lib/cache-tags';
 import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
+import { readGithubHumanDecision } from '../lib/github-human-decision';
 import { safeReturnPath } from '../lib/github-reauth';
+import { type HumanChoice, humanDecisionReply } from '../lib/human-ask';
 import type { Pipeline } from '../lib/primary-action';
+import { isWorkOperatorPrincipal } from '../lib/work-mint';
+import { requestReply } from '../lib/work-reply';
+import { replyAdmissionMessage } from './reply-admission-message';
+import { context } from './work/context';
 
 // LAN preview goes through the shared test-session adapter inside auth()
 // (E2E_TESTING + the x-e2e-auth-user request header), so no bypass is
@@ -122,18 +130,10 @@ export async function refreshGithubSignIn(returnTo: string): Promise<void> {
   await signIn('github', { redirectTo: safeReturnPath(returnTo) });
 }
 
-/**
- * Everything a mutation has to invalidate. `revalidatePath` alone would
- * re-render the page against the still-cached authoritative projection (see
- * lib/dashboard-data.ts), so a queued webhook update could appear not to
- * have happened until the cache lifetime elapsed.
- *
- * `updateTag`, not `revalidateTag`: this runs inside a Server Action, and
- * read-your-own-writes is exactly the semantic a mutation needs - the
- * caller must see its own effect on the very next render.
- */
+/** Re-renders the dashboard after a mutation, so the caller sees its own
+ * effect on the next render: the queue is read fresh for every request
+ * (lib/dashboard-data.ts). */
 function revalidateDashboard() {
-  updateTag(AUTHORITATIVE_QUEUE_TAG);
   revalidatePath('/');
 }
 
@@ -204,6 +204,63 @@ export async function replyToItem(
                       ? `Dispatched ${assignedPipeline ?? 'agent'}`
                       : 'No agent assigned - posted as a comment only',
     };
+  } catch (error) {
+    return toFailure(error);
+  }
+}
+
+export async function answerGithubDecision(
+  repo: WatchedRepo,
+  number: number,
+  runId: string,
+  selection: HumanChoice,
+): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    const resolved = resolveWatchedRepo(repo);
+    const work = await context();
+    if (!isWorkOperatorPrincipal(work.principal))
+      throw new ActionError('Work operator access is required', 403);
+    const task = { repo: `${resolved.owner}/${resolved.name}`, issue: number };
+    const key = taskKey(task);
+    if (
+      !Number.isSafeInteger(number) ||
+      number < 1 ||
+      typeof runId !== 'string' ||
+      !runId.startsWith(`${key}/r`) ||
+      !/^\d+$/.test(runId.slice(key.length + 2))
+    )
+      throw new ActionError('Invalid parked run', 400);
+    const run = await work.runtime.store.readRun(runId);
+    const decision =
+      run && taskKey(run.task) === key
+        ? await readGithubHumanDecision(work.runtime.store, run)
+        : undefined;
+    const choice = decision?.choices.find(
+      (candidate) =>
+        candidate.kind === selection?.kind &&
+        candidate.label === selection?.label,
+    );
+    if (!decision || !choice)
+      throw new ActionError(
+        'This decision changed. Refresh to see the current handoff.',
+        409,
+      );
+    const reply = await requestReply(
+      work,
+      {
+        task,
+        text: humanDecisionReply(decision.ask, choice),
+        channel: 'console',
+        principal: work.principal.principal,
+        expectedParkedRunId: runId,
+        requestId: `inbox-decision:${createHash('sha256').update(runId).digest('hex')}`,
+      },
+      { kind: 'work-api-reply', principal: work.principal.principal },
+    );
+    if (!reply.ok) return { ok: false, message: reply.message };
+    revalidateDashboard();
+    return { ok: true, note: replyAdmissionMessage(reply.resumed) };
   } catch (error) {
     return toFailure(error);
   }

@@ -37,6 +37,7 @@ import {
   type ProviderCooldown,
   providerCooldownForRun,
   providerIsCoolingDown,
+  shouldWriteProviderCooldown,
 } from './provider-cooldown';
 import { retainsPhysicalClaim } from './provider-routing';
 import {
@@ -262,6 +263,7 @@ export class MemoryStore implements OrchestratorStore {
     requestSource: RequestSource;
     requestBinding?: RequestBinding;
     readProviderRouting?: boolean;
+    readGithubProjection?: boolean;
     sourceRevision?: WorkRevision;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
@@ -310,6 +312,13 @@ export class MemoryStore implements OrchestratorStore {
         ? undefined
         : structuredClone(this.#sourceRevisions.get(revisionKey));
     const outcome = input.decide({
+      ...(input.readGithubProjection
+        ? {
+            githubProjection: structuredClone(
+              this.#githubAnchorProjections.get(key)?.projection,
+            ),
+          }
+        : {}),
       previousSourceRevision,
       task,
       activeRun,
@@ -443,7 +452,13 @@ export class MemoryStore implements OrchestratorStore {
     for (const run of [decision.run, ...(decision.additionalRuns ?? [])]) {
       if (run === undefined) continue;
       const cooldown = providerCooldownForRun(run);
-      if (cooldown !== undefined)
+      if (
+        cooldown !== undefined &&
+        shouldWriteProviderCooldown(
+          this.#providerCooldowns.get(cooldown.pipeline),
+          cooldown,
+        )
+      )
         this.#providerCooldowns.set(cooldown.pipeline, cooldown);
     }
     for (const entry of decision.outbox) {
@@ -539,6 +554,14 @@ export class MemoryStore implements OrchestratorStore {
       taskKey(anchor),
     )?.projection;
     return projection === undefined ? undefined : structuredClone(projection);
+  }
+
+  async readGithubAnchorProjections(
+    anchors: readonly GithubAnchorProjection['anchor'][],
+  ): Promise<(GithubAnchorProjection | undefined)[]> {
+    return Promise.all(
+      anchors.map((anchor) => this.readGithubAnchorProjection(anchor)),
+    );
   }
 
   async listOpenGithubAnchorProjections(
@@ -667,14 +690,15 @@ export class MemoryStore implements OrchestratorStore {
 
   async readWaitingDeliveryTasks(binding: {
     repo: string;
-    number: number;
+    number?: number;
   }): Promise<VersionedTask[]> {
     return [...this.#tasks.values()]
       .filter(
         (entry) =>
           entry.task.delivery?.state === 'waiting' &&
           entry.task.delivery.repo === binding.repo &&
-          entry.task.delivery.number === binding.number,
+          (binding.number === undefined ||
+            entry.task.delivery.number === binding.number),
       )
       .map((entry) => structuredClone(entry));
   }

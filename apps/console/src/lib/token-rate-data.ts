@@ -7,14 +7,12 @@ import {
   listSessionDocs,
   MAX_LIST_LIMIT,
 } from '@agent-lcars/telemetry/server';
-import { isE2eTesting } from '@agent-lcars/util-server';
-import { cacheLife } from 'next/cache';
 
-import { DASHBOARD_CACHE_LIFE } from './dashboard-data';
 import { TOKEN_RATE_MINUTES, type TokenRateSnapshot } from './token-rate';
 
 /** Reads every session active in the readout's window plus the minute in
- * progress. Throws on a store failure, so it is never cached as a zero. */
+ * progress: a few dozen documents, read fresh on every load. Throws on a
+ * store failure. */
 async function readTokenRateSnapshot(): Promise<TokenRateSnapshot> {
   const now = Date.now();
   const firestore = await getAgentTelemetryReaderFirestore();
@@ -38,20 +36,12 @@ async function readTokenRateSnapshot(): Promise<TokenRateSnapshot> {
   };
 }
 
-async function readCachedTokenRateSnapshot(): Promise<TokenRateSnapshot> {
-  'use cache';
-  cacheLife(DASHBOARD_CACHE_LIFE);
-  return readTokenRateSnapshot();
-}
-
 /** Undefined when the session store could not be read. */
 export async function getTokenRateSnapshot(): Promise<
   TokenRateSnapshot | undefined
 > {
   try {
-    return await (isE2eTesting()
-      ? readTokenRateSnapshot()
-      : readCachedTokenRateSnapshot());
+    return await readTokenRateSnapshot();
   } catch (error) {
     logger.error('agent-lcars: failed to read token rate sessions:', error);
     return undefined;

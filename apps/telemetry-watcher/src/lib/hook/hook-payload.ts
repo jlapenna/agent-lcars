@@ -21,7 +21,7 @@ export function isHookRuntime(value: unknown): value is HookRuntime {
  */
 export interface HookPayload {
   readonly hookEventName: string;
-  /** Codex subagent hooks name the parent here, not the child. */
+  /** Claude and Codex subagent hooks name the parent here, not the child. */
   readonly sessionId: string;
   /** Claude always sets it; Codex documents it as nullable. */
   readonly transcriptPath?: string;
@@ -32,11 +32,12 @@ export interface HookPayload {
   readonly reason?: string;
   /** Codex puts the model on every payload; Claude only sometimes. */
   readonly model?: string;
-  /** Present inside a subagent. Claude/OpenCode remain parent-owned;
-   * Codex requires a verified distinct child transcript and owned usage. */
+  /** Present inside a subagent. OpenCode and mid-turn Claude subagent hooks
+   * remain parent-owned; Claude SubagentStop and Codex require a verified
+   * distinct child transcript and owned usage. */
   readonly isSubagent: boolean;
   readonly agentId?: string;
-  /** Codex SubagentStop supplies the child path separately from the parent. */
+  /** Claude and Codex SubagentStop supply the child path separately from the parent. */
   readonly agentTranscriptPath?: string;
 }
 

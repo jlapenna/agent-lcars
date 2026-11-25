@@ -4,8 +4,11 @@ Status: shipped. Owner: telemetry. Hooks are the only live telemetry path for
 Claude Code, Codex, OpenCode, and Antigravity on workstations and
 QueueExecutor runners. The polling host watcher daemon (`apps/telemetry-watcher`
 host mode, #2540) and the runner's live polling sidecar are retired and their
-code is deleted; the workstation CLI installer is
-`apps/telemetry-watcher/bin/install-session-title-cli.sh`.
+code is deleted. Workstations receive the CLI from the published
+`workstation-cli` release, which homegit installs (see the Workstation CLI row
+in [deployment-boundary.md](deployment-boundary.md));
+`apps/telemetry-watcher/bin/install-session-title-cli.sh` is the development
+installer.
 
 ## GitHub actor observation for spend attribution
 
@@ -96,11 +99,11 @@ Non-goals:
 
 ## 3. Runtime hook surfaces
 
-| Runtime             | Config location                                                                  | Events used                                                                                                         | Notes                                                                                                                                                                                                                                                                                                                              |
-| ------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code 2.1.296 | `~/.claude/settings.json` (user), `--settings <file>` (runner), project settings | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `Notification`, `StopFailure`, `SessionEnd`              | stdin JSON: `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`; `SessionStart` adds `source`, `model`, `session_title`. `async: true` supported. `SessionEnd` budget 1.5 s, raised by per-hook `timeout` up to 60 s.                                                                                     |
-| Codex 0.162.1       | `~/.codex/hooks.json`, `<repo>/.codex/hooks.json`, `requirements.toml` (managed) | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, `Interrupt`                                | Same field names plus `model`, `turn_id`; under `codex exec` `transcript_path` was a real rollout file (verified). Command hooks accept `"async": true` (docs; up to eight background hooks per session). Non-managed hooks need trust against their hash; `--dangerously-bypass-hook-trust` for automation. `SessionEnd` max 3 s. |
-| OpenCode 1.18.35    | plugin in `~/.config/opencode/plugins/` or `opencode.json` `plugin: [...]`       | `event`: `session.created/updated/status/idle/error`, `message.updated`, `message.part.updated`, `permission.asked` | In-process JS. `AssistantMessage` carries `tokens.{input,output,reasoning,cache.read,cache.write}`, `cost`, `modelID`; no transcript parse needed. Already ships `agents/opencode/lcars-session.js`.                                                                                                                               |
+| Runtime             | Config location                                                                  | Events used                                                                                                            | Notes                                                                                                                                                                                                                                                                                                                              |
+| ------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code 2.1.296 | `~/.claude/settings.json` (user), `--settings <file>` (runner), project settings | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SubagentStop`, `Notification`, `StopFailure`, `SessionEnd` | stdin JSON: `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`; `SessionStart` adds `source`, `model`, `session_title`. `async: true` supported. `SessionEnd` budget 1.5 s, raised by per-hook `timeout` up to 60 s.                                                                                     |
+| Codex 0.162.1       | `~/.codex/hooks.json`, `<repo>/.codex/hooks.json`, `requirements.toml` (managed) | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, `Interrupt`                                   | Same field names plus `model`, `turn_id`; under `codex exec` `transcript_path` was a real rollout file (verified). Command hooks accept `"async": true` (docs; up to eight background hooks per session). Non-managed hooks need trust against their hash; `--dangerously-bypass-hook-trust` for automation. `SessionEnd` max 3 s. |
+| OpenCode 1.18.35    | plugin in `~/.config/opencode/plugins/` or `opencode.json` `plugin: [...]`       | `event`: `session.created/updated/status/idle/error`, `message.updated`, `message.part.updated`, `permission.asked`    | In-process JS. `AssistantMessage` carries `tokens.{input,output,reasoning,cache.read,cache.write}`, `cost`, `modelID`; no transcript parse needed. Already ships `agents/opencode/lcars-session.js`.                                                                                                                               |
 
 Rejected: Claude Code `type: "http"` hooks posting straight to LCARS. They
 would send `prompt`/`tool_input` bodies off-host, cannot compute tokens
@@ -303,17 +306,20 @@ trusted_hash = "..."` in `~/.codex/config.toml`, and homegit's
   `[hooks]` by policy and `allow_managed_hooks_only = true` can refuse
   everything else.
 - `~/.config/opencode/plugins/lcars-telemetry.js` installed by homegit.
-- `lcars` binary: stop relying on the manual
-  `bin/install-session-title-cli.sh` (formerly `deploy/`). `packages/fleet-tools`
+- `lcars` binary: delivered by homegit, not by a manual
+  `bin/install-session-title-cli.sh` run. `packages/fleet-tools`
   (`@agent-lcars/agent-tools`) is dependency-free committed scripts packed
   straight from a sparse clone by homegit's
-  `homegit-repo-tools-bootstrap.sh`, so a built esbuild bundle does not fit
-  there. Instead a workflow on `main` builds the `session-title-cli` target
-  and uploads `lcars-session-title.cjs` as a GitHub Release asset tagged
-  `lcars-cli/<sha>`; the same bootstrap script downloads the latest asset
-  (checksum pinned in the chezmoi source) to `~/.local/lib/agent-lcars/` and
-  writes the `~/.local/bin/lcars` launcher. `install-session-title-cli.sh`
-  stays for development.
+  `homegit-repo-tools-bootstrap.sh`, so built esbuild bundles do not fit
+  there. Instead `.github/workflows/publish-workstation-cli.yml` builds the
+  session-title, hook and hook-flush bundles and their launcher from each
+  `main` revision that passes CI and publishes them as one archive on the
+  `workstation-cli` release. Homegit unpacks it at
+  `~/.local/share/agent-lcars-cli` with a native archive external and links
+  `~/.local/bin/lcars` to the launcher inside. The release follows `main`: homegit does not pin
+  Joe-owned software, so there is no checksum in the chezmoi source, and the
+  archive's own `SHA256SUMS` and `REVISION` are the adoption evidence.
+  `install-session-title-cli.sh` stays for development.
 - Credentials: `~/.config/agent-lcars/writer-key.json` (mode 0600), the
   `telemetry-writer` key delivered by homegit (4.4).
 - Config: `~/.config/agent-lcars/config.json` `{ "repos": ["jlapenna/*"] }`
@@ -348,10 +354,13 @@ them:
 - **Stdin to a temp file first.** The launcher copies stdin to `mktemp`
   before doing anything else and deletes it on exit, so a slow or failing
   client never leaves the runtime blocked on a pipe.
-- **Skip what is not a session.** Claude and OpenCode payloads with
-  `agent_id` remain parent-owned. A Codex child is collected only when its
-  first rollout metadata matches `agent_id` and the hook's parent
-  `session_id`/fork relationship,
+- **Skip what is not a session.** OpenCode payloads and mid-turn Claude
+  `PostToolUse` payloads with `agent_id` remain parent-owned. Claude Code
+  `SubagentStop` collects a verified `<parentSessionId>/subagents/agent-<agentId>.jsonl`
+  child transcript under `<parentSessionId>--subagent--<agentId>` when every record
+  is bound to the parent and child IDs and carries no non-sidechain turns. A Codex child is
+  collected only when its first rollout metadata matches `agent_id` and the
+  hook's parent `session_id`/fork relationship,
   `agent_transcript_path` or an exact-ID rollout lookup supplies the child
   transcript, and an explicit child-thread boundary excludes inherited history, and matching
   thread usage is present. Its own suffix uses the normal publication guards;
@@ -369,11 +378,42 @@ them:
   same reason, but derives state on the console from the event stream
   rather than from a per-host server, because a per-host server is the
   daemon this design removes.
-- **Pane identity when present.** If `HERDR_ENV=1`, the client adds
-  `herdr: { paneId: HERDR_PANE_ID }` to the event. The console can then
-  deep-link a live session to its pane via `herdr pane get`, and a later
-  phase can join herdr's `blocked` recognition, which sees approval UIs no
-  hook reports.
+- **Pane identity when present.** On a workstation the client adds
+  `herdrPaneId` to the summary: the address herdr-core gives the session's
+  own terminal, which is also the pane ID Ovis opens it by. It is an
+  identifier observed from the hook's process, never transcript content,
+  and a dispatched runner never sets it.
+
+  A herdr-core terminal exports no identity of its own, and `herdr-core get`
+  with no target cannot resolve itself from a hook, so the client asks the
+  core for its live terminals and matches each one's shell and foreground
+  PID against its own ancestors
+  (`apps/telemetry-watcher/src/lib/hook/herdr-pane.ts`). It makes one
+  `terminal.list` call on the core's own socket and never runs the
+  `herdr-core` program: every command of that program but `--version` starts
+  a core when none is running, and finding it would depend on a `PATH` a
+  hook does not reliably inherit. No socket means no core, which is a
+  definite "not in a terminal". An exported `HERDR_PANE_ID` is not trusted:
+  every process started under a pane inherits it. The lookup runs before the per-session lock, so a slow
+  herdr-core never makes a queued event give up. Its answer is kept in the
+  per-session state file and asked for again only when the session starts
+  again, or five minutes after herdr-core failed to answer. A write with no
+  pane clears the stored one, so a session resumed elsewhere never keeps a
+  link to an address herdr-core may hand out again, and a stored value that
+  is malformed is dropped on read rather than refused.
+
+  The console links a session to that pane in its host's Ovis while the
+  session displays as live or idle and has not recorded its end
+  (`sessionLiveViewUrl` in `apps/console/src/lib/deployment.ts`,
+  `AGENT_LCARS_OVIS_URL_BY_HOST`). The link is a plain new-tab navigation
+  from the browser to the host over the LAN or VPN: session content never
+  passes through the console, Firestore or GCS, and nothing runs on the host
+  until someone opens it. A session that dies without a `SessionEnd` keeps
+  its link until it stops displaying as idle. A terminal outlives its
+  sessions, so in a session list a pane's link goes only to the session most
+  recently active in it (`getCliSessions`); a session page reads one session
+  and cannot tell. A later phase can join herdr's
+  `blocked` recognition, which sees approval UIs no hook reports.
 
 ## 5. Hook configuration
 
@@ -408,6 +448,13 @@ them:
       {
         "hooks": [
           { "type": "command", "command": "lcars hook claude", "timeout": 5 }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "lcars hook claude", "async": true }
         ]
       }
     ],

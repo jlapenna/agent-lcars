@@ -58,7 +58,7 @@ function successor(input: {
   now: string;
   settled: Decision;
   pipeline: string;
-  reason: 'provider-limit' | 'provider-cooldown';
+  reason: 'provider-limit' | 'provider-cooldown' | 'agent-timeout';
   failureRunId: string;
   wait?: { attempt: number; retryAt: string };
 }): Decision | Refusal {
@@ -146,6 +146,24 @@ export function settleProviderFallback(input: {
 }): Decision | Refusal {
   const { settled } = input;
   const previous = decidedRun(settled);
+  if (isTimedOutGithubReview(previous)) {
+    // A hung review provider (#3557) must not leave the PR unreviewed: try the
+    // next authorized provider once each, never waiting, and never re-trying a
+    // provider this round already attempted.
+    const pipeline = selectFallbackPipeline(
+      previous,
+      input.authorizedPipelines,
+      input.availablePipelines,
+    );
+    if (pipeline === undefined) return settled;
+    return successor({
+      now: input.now,
+      settled,
+      pipeline,
+      reason: 'agent-timeout',
+      failureRunId: previous.runId,
+    });
+  }
   if (providerCooldownForRun(previous) === undefined) return settled;
   // Temporary occupancy/cooldown must not erase the user's remaining intent.
   // Prefer an available alternative; otherwise queue the first still-authorized
@@ -177,6 +195,39 @@ export function settleProviderFallback(input: {
   });
 }
 
+/** A GitHub PR review whose agent ran out its execution time. */
+export function isTimedOutGithubReview(
+  run: Pick<Run, 'state' | 'result' | 'params' | 'providerFallback' | 'task'>,
+): boolean {
+  return (
+    run.state === 'finished' &&
+    run.result?.ok === false &&
+    run.result.summary === 'agent-timeout' &&
+    run.params?.['mode'] === 'review' &&
+    run.providerFallback !== undefined &&
+    !isWorkAnchor(run.task)
+  );
+}
+
+/** A failed result that can hand its intent to another provider. */
+export function isFallbackFailure(
+  run: Pick<
+    Run,
+    | 'runId'
+    | 'state'
+    | 'pipeline'
+    | 'updatedAt'
+    | 'result'
+    | 'params'
+    | 'providerFallback'
+    | 'task'
+  >,
+): boolean {
+  return (
+    providerCooldownForRun(run) !== undefined || isTimedOutGithubReview(run)
+  );
+}
+
 /** When every authorized provider of a GitHub PR review has stopped on its
  * limit or capacity, the review waits instead of failing (#3300): a deferred
  * successor on the round's first provider, the one the request was admitted
@@ -195,7 +246,8 @@ function waitForProvider(input: {
   if (
     policy === undefined ||
     isWorkAnchor(previous.task) ||
-    previous.params?.['mode'] !== 'review'
+    (previous.params?.['mode'] !== 'review' &&
+      policy.principal !== 'svc:github-pr-remediation')
   )
     return input.settled;
   const attempt = (policy.providerWait?.attempt ?? 0) + 1;

@@ -24,6 +24,7 @@ vi.mock('next/link', () => ({
   default: ({ children, ...props }: { children: React.ReactNode }) => (
     <a {...props}>{children}</a>
   ),
+  useLinkStatus: () => ({ pending: false }),
 }));
 
 const admin: ShellReadouts = {
@@ -263,6 +264,60 @@ describe('console frame readouts', () => {
       '—Queue depth',
     );
     expect(screen.queryByTestId('console-identity')).toBeNull();
+  });
+
+  it('reuses fresh figures when a navigation remounts the frame', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      respond(admin);
+      await renderFrame();
+      expect(fetch).toHaveBeenCalledTimes(1);
+
+      // A client navigation unmounts the old frame before the new one mounts.
+      cleanup();
+      await renderFrame();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('rail-readout-queue')).toHaveTextContent('9');
+
+      cleanup();
+      vi.setSystemTime(Date.now() + 30_000);
+      await renderFrame();
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the refresh period anchored to the last fetch across navigations', async () => {
+    vi.useFakeTimers({
+      toFake: [
+        'Date',
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval',
+      ],
+    });
+    try {
+      respond(admin);
+      await renderFrame();
+      expect(fetch).toHaveBeenCalledTimes(1);
+
+      // Navigate 20 s after the fetch: the figures are due 10 s later, not
+      // a full period after the remount.
+      await act(() => vi.advanceTimersByTimeAsync(20_000));
+      cleanup();
+      await renderFrame();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      await act(() => vi.advanceTimersByTimeAsync(9_999));
+      expect(fetch).toHaveBeenCalledTimes(1);
+      await act(() => vi.advanceTimersByTimeAsync(1));
+      expect(fetch).toHaveBeenCalledTimes(2);
+      await act(() => vi.advanceTimersByTimeAsync(30_000));
+      expect(fetch).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

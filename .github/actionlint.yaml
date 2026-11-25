@@ -11,9 +11,13 @@ self-hosted-runner:
 
 # GitHub supports concurrency.queue; pinned actionlint 1.7.12 does not yet.
 # Required deploy-console-source-fence contracts validate queue values and
-# queue:max cancellation rules for this one workflow. Preserve every other
-# syntax diagnostic. Remove this exception when rhysd/actionlint#657 lands.
+# queue:max cancellation rules for exactly these workflows. Preserve every
+# other syntax diagnostic. Remove this exception when rhysd/actionlint#657
+# lands.
 paths:
   .github/workflows/deploy-console.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'
+  .github/workflows/publish-workstation-cli.yml:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'

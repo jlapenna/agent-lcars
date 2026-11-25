@@ -8,7 +8,7 @@
 # pnpm-lock.yaml, or the bundled browser build won't match. The image tag used
 # by tools/e2e-docker.sh and CI is derived from this file's content hash, so
 # editing this file automatically invalidates stale images everywhere.
-FROM node:26.13.1-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS node-runtime
+FROM node:26.13.1-slim@sha256:abe7e5a82b61a8ef67b315b85497c9e65173387ccf2f4a029248184b8e020be5 AS node-runtime
 FROM mcr.microsoft.com/playwright:v1.65.1-noble
 ARG COREPACK_VERSION=0.36.0
 

@@ -1,18 +1,28 @@
-import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import {
+  externalizeRunMessage,
+  MemoryStore,
+  Orchestrator,
+} from '@agent-lcars/orchestrator';
 import { workSpecSchema } from '@agent-lcars/work';
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { describe, expect, it, vi } from 'vitest';
-import { stringify } from 'yaml';
+import { parse as parseYaml, stringify } from 'yaml';
 
 import { GcsCodexAuthStore } from './codex-auth-store';
 import { releaseCodexCredentialLease } from './codex-credential-operations';
+import { deliveryCorrectionAuthorized } from './ready-delivery';
 import {
+  gooseJobExecutionSchema,
+  harnessJobExecutionSchema,
   jobDueAt,
   jobKey,
   type JobProfile,
   jobProfileSchema,
   parseJobDefinition,
-  repositoryJobSchema,
+  renderHarnessJobPrompt,
 } from './repository-job-definition';
 import { validateJobResult } from './repository-job-result';
 import {
@@ -24,6 +34,7 @@ import {
 } from './repository-job-store';
 import { RepositoryJobs } from './repository-jobs';
 import { ConditionalCodexBucket } from './testing/codex-auth-bucket';
+import { parseWorkGrants } from './work-grants';
 
 class TestStore implements JobStore {
   jobs = new Map<string, CatalogJob>();
@@ -733,10 +744,28 @@ describe('recipe invocation parameters', () => {
   });
 });
 
-it('bounds recipe timeouts below the executor Pod deadline', () => {
-  const timeout = repositoryJobSchema.shape.execution.shape.timeout;
-  expect(timeout.safeParse('45m').success).toBe(true);
-  expect(timeout.safeParse('46m').success).toBe(false);
+it('bounds recipe and harness timeouts and maxAttempts within Pod deadlines', () => {
+  expect(gooseJobExecutionSchema.shape.timeout.safeParse('45m').success).toBe(
+    true,
+  );
+  expect(gooseJobExecutionSchema.shape.timeout.safeParse('46m').success).toBe(
+    false,
+  );
+  expect(gooseJobExecutionSchema.shape.maxAttempts.safeParse(1).success).toBe(
+    true,
+  );
+  expect(gooseJobExecutionSchema.shape.maxAttempts.safeParse(2).success).toBe(
+    true,
+  );
+  expect(gooseJobExecutionSchema.shape.maxAttempts.safeParse(3).success).toBe(
+    false,
+  );
+  expect(harnessJobExecutionSchema.shape.timeout.safeParse('80m').success).toBe(
+    true,
+  );
+  expect(harnessJobExecutionSchema.shape.timeout.safeParse('81m').success).toBe(
+    false,
+  );
 });
 
 it('pins an explicitly authorized manual profile without changing the manifest or schedule', async () => {
@@ -1244,5 +1273,530 @@ describe('provider-limit fallback', () => {
       fallbackOf: original.id,
       profile: { name: 'audit-claude', providerAuth: 'claude' },
     });
+  });
+});
+
+describe('operational extensions: maxAttempts, manual-only, native harness and apphosting', () => {
+  it('retries a maxAttempts=2 job once on worker loss and reconciles the highest generation after all claims retire', async () => {
+    const f = fixture();
+    f.definition.job.execution.maxAttempts = 2;
+    const occurrence = await f.jobs.admit(
+      f.id,
+      'retry-once',
+      'user:joe',
+      'manual',
+      f.definition.digest,
+    );
+    const r1 = (await f.native.listRuns({ workId: occurrence.workId }))[0]!;
+    await f.native.enqueueRun({
+      runId: r1.runId,
+      now: '2026-10-27T06:00:00.000Z',
+    });
+    await f.native.claimQueuedRun({
+      pipelines: ['goose'],
+      now: '2026-10-27T06:00:00.000Z',
+      claimedBy: 'executor',
+      claimedBySubject: 'executor@example.iam.gserviceaccount.com',
+      tokenHash: '1'.repeat(64),
+    });
+    // First loss mints r2 automatically; r1 is not yet retired in this simulated lease expiry.
+    f.setTime('2026-10-27T08:30:00.000Z');
+    const firstSweep = await f.orchestrator.sweepExpired();
+    expect(firstSweep.retried).toHaveLength(1);
+    const runsAfterFirstLoss = await f.native.listRuns({
+      workId: occurrence.workId,
+    });
+    expect(runsAfterFirstLoss.map((r) => [r.runId, r.state])).toEqual([
+      [`work:${occurrence.workId}/r1`, 'lost'],
+      [`work:${occurrence.workId}/r2`, 'pending'],
+    ]);
+    const r2 = runsAfterFirstLoss[1]!;
+    await f.native.enqueueRun({
+      runId: r2.runId,
+      now: '2026-10-27T08:30:00.000Z',
+    });
+    await f.native.claimQueuedRun({
+      pipelines: ['goose'],
+      now: '2026-10-27T08:31:00.000Z',
+      claimedBy: 'executor',
+      claimedBySubject: 'executor@example.iam.gserviceaccount.com',
+      tokenHash: '2'.repeat(64),
+    });
+    const artifact = validateJobResult(f.definition, {
+      report: 'Recovered on attempt 2',
+      complete: true,
+      data: { count: 9 },
+    });
+    await f.jobs.stage(occurrence, artifact);
+    await f.orchestrator.report(
+      r2.runId,
+      { ok: true, ref: `job-result:${artifact.digest}` },
+      '2'.repeat(64),
+    );
+    await f.orchestrator.executorExited(r2.runId, {
+      subject: 'executor@example.iam.gserviceaccount.com',
+      runner: 'executor',
+      claimFingerprint: '2'.repeat(64),
+    });
+    // r1 is still unretired (within backstop), so occupancy holds.
+    await f.jobs.reconcile(f.store.jobs.get(f.id)!);
+    expect(f.store.jobs.get(f.id)!.active).toBe(occurrence.id);
+    // Retire r1 and return runs in reverse order to prove generation ordering.
+    await f.orchestrator.executorExited(r1.runId, {
+      subject: 'executor@example.iam.gserviceaccount.com',
+      runner: 'executor',
+      claimFingerprint: '1'.repeat(64),
+    });
+    vi.spyOn(f.native, 'listRuns').mockResolvedValueOnce(
+      [...(await f.native.listRuns({ workId: occurrence.workId }))].reverse(),
+    );
+    await f.jobs.reconcile(f.store.jobs.get(f.id)!);
+    expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
+    expect(f.store.jobs.get(f.id)!.baseline?.occurrence).toBe(occurrence.id);
+    expect((await f.store.readOccurrence(occurrence.id))?.successful).toBe(
+      true,
+    );
+  });
+
+  it('admits unvetoed manual-only jobs without enabling a schedule, while honoring vetoes', async () => {
+    const f = fixture([
+      {
+        key: 'note',
+        description: 'Optional note',
+        input_type: 'string',
+        requirement: 'optional',
+        default: 'default-note',
+      },
+    ]);
+    // fixture with parameters omits triggers.schedule (manual-only).
+    const job = f.store.jobs.get(f.id)!;
+    job.enabled = false;
+    job.vetoedBy = null;
+    const admitted = await f.jobs.invoke(
+      'octo/repo',
+      'audit',
+      'manual-only-1',
+      'user:joe',
+    );
+    expect(admitted.skipped).toBe(false);
+    expect(f.store.jobs.get(f.id)!.active).toBe(admitted.id);
+
+    // An explicit operator disable sets vetoedBy and blocks manual-only invocation.
+    const fVeto = fixture([
+      {
+        key: 'note',
+        description: 'Optional note',
+        input_type: 'string',
+        requirement: 'optional',
+        default: 'default-note',
+      },
+    ]);
+    fVeto.store.jobs.get(fVeto.id)!.enabled = false;
+    await fVeto.jobs.enable(
+      fVeto.id,
+      fVeto.definition.digest,
+      'user:joe',
+      false,
+    );
+    await expect(
+      fVeto.jobs.invoke('octo/repo', 'audit', 'vetoed-1', 'user:joe'),
+    ).rejects.toThrow('Job disabled');
+  });
+
+  it('mints and reconciles a native harness report-v1 job with full run message and baseline carry-forward', async () => {
+    const allocation = { cpu: 2, memory: '6Gi', storage: '24Gi' };
+    const definition = parseJobDefinition(
+      'jlapenna/homelab',
+      'b'.repeat(40),
+      'onduty-daily',
+      stringify({
+        version: 1,
+        description: 'Daily Homelab duty report',
+        triggers: {
+          manual: true,
+          schedule: { cron: '0 15 * * *', timezone: 'UTC' },
+        },
+        execution: {
+          harness: 'opencode',
+          fallbackHarnesses: ['claude'],
+          prompt: './prompt.md',
+          profile: 'repository',
+          timeout: '60m',
+          maxAttempts: 2,
+          resources: { requests: { ...allocation }, limits: { ...allocation } },
+        },
+        inputs: { focus: 'fleet' },
+        parameters: [
+          {
+            key: 'window',
+            description: 'Lookback window',
+            input_type: 'string',
+            requirement: 'optional',
+            default: '24h',
+          },
+        ],
+        concurrency: { maxRuns: 1, overlap: 'skip' },
+        state: { previousSuccessfulResult: true },
+        result: { contract: 'report-v1', requiredArtifacts: ['report.md'] },
+      }),
+      'Inspect {{ focus }} over {{ window }}.\nPrior report:\n{{ baseline }}\n',
+    );
+    const store = new TestStore();
+    const native = new MemoryStore();
+    let at = new Date('2026-10-27T15:00:00.000Z');
+    const orchestrator = new Orchestrator(native, {
+      now: () => at.toISOString(),
+    });
+    const jobs = new RepositoryJobs({
+      store,
+      profiles: () => [],
+      granted: (_principal, _repo, pipeline) =>
+        ['goose', 'opencode', 'claude'].includes(pipeline ?? 'goose'),
+      automationPrincipal: () => 'svc:job-scheduler',
+      now: () => at,
+      runtime: {
+        store: native,
+        orchestrator,
+        drain: async () => ({ dispatched: [], reported: [], failed: [] }),
+      },
+    });
+    const id = jobKey('jlapenna/homelab', 'onduty-daily');
+    store.jobs.set(id, {
+      id,
+      repository: 'jlapenna/homelab',
+      name: 'onduty-daily',
+      definition,
+      enabled: true,
+      enabledBy: 'svc:job-scheduler',
+      activationFloor: '2026-10-26T00:00:00.000Z',
+      refreshedAt: at.toISOString(),
+    });
+    const first = await jobs.admit(
+      id,
+      '2026-10-27T15:00:00.000Z',
+      'svc:job-scheduler',
+      'schedule',
+      definition.digest,
+    );
+    const task = (await native.readTask({ workId: first.workId }))!.task;
+    const spec = workSpecSchema.parse(task.work['spec']);
+    expect(spec.pipeline).toBe('opencode');
+    expect(spec.deliverable).toBe('report');
+    expect(spec.fallbackPipelines).toEqual(['claude']);
+    expect(spec.description).toContain('Inspect fleet over 24h.');
+    expect(spec.description).toContain('Prior report:\nnone');
+
+    const run = (await native.listRuns({ workId: first.workId }))[0]!;
+    expect(run.params).toMatchObject({
+      mode: 'implement',
+      jobOccurrence: first.id,
+      maxAttempts: '2',
+    });
+    const largeReport = `# Daily Duty\n\n${'Healthy host check.\n'.repeat(2000)}`;
+    await orchestrator.report(
+      run.runId,
+      await externalizeRunMessage(native, run.runId, {
+        ok: true,
+        summary: 'report',
+        message: largeReport,
+      }),
+    );
+    await jobs.reconcile(store.jobs.get(id)!);
+    expect(store.jobs.get(id)!.baseline?.occurrence).toBe(first.id);
+    const settledFirst = (await store.readOccurrence(first.id))!;
+    expect(settledFirst.successful).toBe(true);
+    expect(settledFirst.artifact?.artifacts['report.md']).toBe(largeReport);
+
+    at = new Date('2026-10-28T15:00:00.000Z');
+    store.jobs.get(id)!.refreshedAt = at.toISOString();
+    const second = await jobs.admit(
+      id,
+      '2026-10-28T15:00:00.000Z',
+      'svc:job-scheduler',
+      'schedule',
+      definition.digest,
+    );
+    expect(second.baselineOccurrence).toBe(first.id);
+    const secondTask = (await native.readTask({ workId: second.workId }))!.task;
+    expect(workSpecSchema.parse(secondTask.work['spec']).description).toContain(
+      '# Daily Duty',
+    );
+
+    // A parked report-v1 run must settle unsuccessful and preserve the prior baseline.
+    const secondRun = (await native.listRuns({ workId: second.workId }))[0]!;
+    await orchestrator.report(secondRun.runId, {
+      ok: true,
+      summary: 'park',
+      message: 'Blocked waiting on operator input',
+    });
+    await jobs.reconcile(store.jobs.get(id)!);
+    expect((await store.readOccurrence(second.id))?.successful).toBe(false);
+    expect(store.jobs.get(id)!.baseline?.occurrence).toBe(first.id);
+  });
+
+  it('reconciles canceled or failed-correction deliverable-v1 harness jobs as unsuccessful and fits near-limit prompts', async () => {
+    const allocation = { cpu: 2, memory: '6Gi', storage: '24Gi' };
+    const definition = parseJobDefinition(
+      'jlapenna/agent-lcars',
+      'a'.repeat(40),
+      'auto-fix',
+      stringify({
+        version: 1,
+        description: 'Deliverable job',
+        triggers: { manual: true },
+        execution: {
+          harness: 'claude',
+          prompt: './prompt.md',
+          profile: 'repository',
+          timeout: '30m',
+          maxAttempts: 1,
+          resources: {
+            requests: { ...allocation },
+            limits: { ...allocation },
+          },
+        },
+        inputs: {},
+        concurrency: { maxRuns: 1, overlap: 'skip' },
+        state: { previousSuccessfulResult: true },
+        result: {
+          contract: 'deliverable-v1',
+          requiredArtifacts: ['report.md'],
+        },
+      }),
+      'Fix drift. Prior: {{ baseline }}',
+    );
+    const store = new TestStore();
+    const native = new MemoryStore();
+    const at = new Date('2026-10-27T15:00:00.000Z');
+    const orchestrator = new Orchestrator(native, {
+      now: () => at.toISOString(),
+    });
+    const jobs = new RepositoryJobs({
+      store,
+      profiles: () => [],
+      granted: () => true,
+      automationPrincipal: () => 'svc:job-scheduler',
+      now: () => at,
+      runtime: {
+        store: native,
+        orchestrator,
+        drain: async () => ({ dispatched: [], reported: [], failed: [] }),
+      },
+    });
+    const id = jobKey('jlapenna/agent-lcars', 'auto-fix');
+    store.jobs.set(id, {
+      id,
+      repository: 'jlapenna/agent-lcars',
+      name: 'auto-fix',
+      definition,
+      enabled: false,
+      refreshedAt: at.toISOString(),
+    });
+
+    // 1. Operator cancels while delivery is waiting: active releases, successful=false.
+    const canceledOcc = await jobs.admit(
+      id,
+      'cancel-waiting',
+      'user:jlapenna',
+      'manual',
+      definition.digest,
+    );
+    const r1 = (await native.listRuns({ workId: canceledOcc.workId }))[0]!;
+    await orchestrator.report(r1.runId, {
+      ok: true,
+      summary: 'pr',
+      ref: 'https://github.com/jlapenna/agent-lcars/pull/999',
+      message: 'Opened PR',
+    });
+    await native.transactRun({
+      runId: r1.runId,
+      decide: ({ task, run }) => ({
+        task: {
+          ...task!.task,
+          delivery: {
+            state: 'waiting',
+            repo: 'jlapenna/agent-lcars',
+            number: 999,
+            head: 'b'.repeat(40),
+            runId: r1.runId,
+            nextCheckAt: at.toISOString(),
+          },
+        },
+        run: run!,
+        outbox: [],
+      }),
+    });
+    await jobs.reconcile(store.jobs.get(id)!);
+    expect(store.jobs.get(id)!.active).toBe(canceledOcc.id);
+
+    await orchestrator.close({ workId: canceledOcc.workId });
+    await jobs.reconcile(store.jobs.get(id)!);
+    expect(store.jobs.get(id)!.active).toBeUndefined();
+    expect((await store.readOccurrence(canceledOcc.id))?.successful).toBe(
+      false,
+    );
+    expect(store.jobs.get(id)!.baseline).toBeUndefined();
+
+    // 2. Failed delivery correction while delivery.state === 'waiting' releases active as unsuccessful.
+    const failedCorrOcc = await jobs.admit(
+      id,
+      'failed-correction',
+      'user:jlapenna',
+      'manual',
+      definition.digest,
+    );
+    const cr1 = (await native.listRuns({ workId: failedCorrOcc.workId }))[0]!;
+    await orchestrator.report(cr1.runId, {
+      ok: true,
+      summary: 'pr',
+      ref: 'https://github.com/jlapenna/agent-lcars/pull/1000',
+      message: 'Opened PR',
+    });
+    const cr2Outcome = await orchestrator.request({
+      taskId: { workId: failedCorrOcc.workId },
+      requestId: `${failedCorrOcc.workId}:corr`,
+      pipeline: 'claude',
+      params: { mode: 'implement', jobOccurrence: failedCorrOcc.id },
+    });
+    if ('reason' in cr2Outcome) throw new Error(cr2Outcome.reason);
+    const cr2 = (await native.listRuns({ workId: failedCorrOcc.workId })).find(
+      (candidate) => candidate.runId.endsWith('/r2'),
+    )!;
+    await native.transactRun({
+      runId: cr2.runId,
+      decide: ({ task, run }) => ({
+        task: {
+          ...task!.task,
+          delivery: {
+            state: 'waiting',
+            repo: 'jlapenna/agent-lcars',
+            number: 1000,
+            head: 'c'.repeat(40),
+            runId: cr1.runId,
+            correctionRunId: cr2.runId,
+            nextCheckAt: at.toISOString(),
+          },
+        },
+        run: run!,
+        outbox: [],
+      }),
+    });
+    await orchestrator.report(cr2.runId, {
+      ok: false,
+      summary: 'verification-failed',
+      message: 'CI fix failed',
+    });
+    await jobs.reconcile(store.jobs.get(id)!);
+    expect(store.jobs.get(id)!.active).toBeUndefined();
+    expect((await store.readOccurrence(failedCorrOcc.id))?.successful).toBe(
+      false,
+    );
+
+    // 3. Prompt within 51 bytes of WORK_DESCRIPTION_MAX_BYTES at baseline=null still fits when baseline overflows.
+    const headerEstimate =
+      'Repository job `near-limit` in `jlapenna/homelab` (pinned definition commit `' +
+      'a'.repeat(40) +
+      '`, timeout `30m`).\n\n';
+    const padLen = 253_952 - Buffer.byteLength(headerEstimate) - 4 - 20;
+    const nearLimitDef = parseJobDefinition(
+      'jlapenna/homelab',
+      'a'.repeat(40),
+      'near-limit',
+      stringify({
+        version: 1,
+        description: 'Near-limit prompt',
+        triggers: { manual: true },
+        execution: {
+          harness: 'claude',
+          prompt: './prompt.md',
+          profile: 'repository',
+          timeout: '30m',
+          maxAttempts: 1,
+          resources: {
+            requests: { ...allocation },
+            limits: { ...allocation },
+          },
+        },
+        inputs: {},
+        concurrency: { maxRuns: 1, overlap: 'skip' },
+        state: { previousSuccessfulResult: true },
+        result: { contract: 'report-v1', requiredArtifacts: ['report.md'] },
+      }),
+      `${'x'.repeat(padLen)}{{ baseline }}`,
+    );
+    const rendered = renderHarnessJobPrompt(
+      nearLimitDef,
+      {},
+      'large-baseline-'.repeat(200),
+    );
+    expect(rendered.endsWith('none')).toBe(true);
+
+    // 4. deliveryCorrectionAuthorized requires unique work.cron+goose scheduler grant.
+    const prevGrants = process.env['AGENT_LCARS_WORK_GRANTS'];
+    try {
+      const taskSnap = (await native.readTask({
+        workId: failedCorrOcc.workId,
+      }))!.task;
+      const cronTask = {
+        ...taskSnap,
+        work: {
+          ...taskSnap.work,
+          origin: { principal: 'svc:job-scheduler', channel: 'api' },
+        },
+      };
+      process.env['AGENT_LCARS_WORK_GRANTS'] = JSON.stringify([
+        {
+          principal: 'svc:job-scheduler',
+          subjects: ['job-scheduler@agent-lcars.iam.gserviceaccount.com'],
+          pipelines: ['goose', 'claude'],
+          scopes: ['work.cron'],
+        },
+      ]);
+      expect(deliveryCorrectionAuthorized(cronTask, cr2)).toBe(true);
+
+      process.env['AGENT_LCARS_WORK_GRANTS'] = JSON.stringify([
+        {
+          principal: 'svc:job-scheduler',
+          subjects: ['job-scheduler@agent-lcars.iam.gserviceaccount.com'],
+          pipelines: ['claude'],
+          scopes: ['work.cron'],
+        },
+      ]);
+      expect(deliveryCorrectionAuthorized(cronTask, cr2)).toBe(false);
+    } finally {
+      if (prevGrants === undefined)
+        delete process.env['AGENT_LCARS_WORK_GRANTS'];
+      else process.env['AGENT_LCARS_WORK_GRANTS'] = prevGrants;
+    }
+  });
+
+  it('validates apphosting.yaml work grants and job profiles', () => {
+    const apphostingPath = existsSync(join(process.cwd(), 'apphosting.yaml'))
+      ? join(process.cwd(), 'apphosting.yaml')
+      : join(process.cwd(), 'apps/console/apphosting.yaml');
+    const apphosting = parseYaml(readFileSync(apphostingPath, 'utf8')) as {
+      env: { variable: string; value?: string }[];
+    };
+    const grantsRaw = apphosting.env.find(
+      (entry) => entry.variable === 'AGENT_LCARS_WORK_GRANTS',
+    )?.value;
+    const profilesRaw = apphosting.env.find(
+      (entry) => entry.variable === 'AGENT_LCARS_JOB_PROFILES',
+    )?.value;
+    const grants = parseWorkGrants(grantsRaw);
+    const scheduler = grants.find((g) => g.principal === 'svc:job-scheduler')!;
+    expect(scheduler.pipelines).toEqual(
+      expect.arrayContaining(['claude', 'codex', 'opencode', 'agy', 'goose']),
+    );
+    const memberAutomation = grants.find(
+      (g) => g.principal === 'workflow:member-automation',
+    )!;
+    expect(memberAutomation.pipelines).toContain('goose');
+    const profiles = (JSON.parse(profilesRaw!) as unknown[]).map((p) =>
+      jobProfileSchema.parse(p),
+    );
+    expect(profiles.map((p) => p.name)).toEqual(
+      expect.arrayContaining(['sprinkles-jobs', 'sync-padd-jobs']),
+    );
   });
 });

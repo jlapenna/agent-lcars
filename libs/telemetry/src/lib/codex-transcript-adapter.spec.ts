@@ -46,6 +46,47 @@ describe('codexAdapter', () => {
     ).not.toThrow();
   });
 
+  it('records the spawning thread of a subagent rollout, and none on the root', () => {
+    const meta = (id: string, source: unknown) =>
+      JSON.stringify({
+        type: 'session_meta',
+        timestamp: '2026-11-22T16:54:12.416Z',
+        payload: { id, source, originator: 'codex_exec' },
+      });
+    const root = '01a2042d-7822-7d50-b8c9-c89c1a18149c';
+    const child = '01a2042d-fcba-7c40-9168-0e667355b84b';
+    const spawned = {
+      subagent: {
+        thread_spawn: {
+          parent_thread_id: root,
+          depth: 1,
+          agent_path: '/root/guidance_a',
+          agent_nickname: 'Pascal',
+          agent_role: null,
+        },
+      },
+    };
+
+    expect(codexAdapter.reduce([meta(child, spawned)])[0]).toMatchObject({
+      sessionId: child,
+      parentSessionId: root,
+    });
+    expect(
+      codexAdapter.reduce([meta(root, 'exec')])[0]?.parentSessionId,
+    ).toBeUndefined();
+    // An unsafe or self-referencing parent is dropped, not persisted.
+    const unsafe = {
+      subagent: { thread_spawn: { parent_thread_id: '../other' } },
+    };
+    expect(
+      codexAdapter.reduce([meta(child, unsafe)])[0]?.parentSessionId,
+    ).toBeUndefined();
+    const self = { subagent: { thread_spawn: { parent_thread_id: child } } };
+    expect(
+      codexAdapter.reduce([meta(child, self)])[0]?.parentSessionId,
+    ).toBeUndefined();
+  });
+
   it('returns no summary when session metadata is absent', () => {
     expect(codexAdapter.reduce(['{"type":"event_msg","payload":{}}'])).toEqual(
       [],

@@ -109,6 +109,111 @@ describe('getCliSessions', () => {
     expect(warnings).toEqual([]);
   });
 
+  const paneOf = (sessions: { sessionId: string; herdrPaneId?: string }[]) =>
+    Object.fromEntries(
+      sessions.map((session) => [session.sessionId, session.herdrPaneId]),
+    );
+
+  it('leaves a pane with the session most recently seen in it', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([
+      // Died in t36 without recording its end; still idle for an hour.
+      makeCliDoc({
+        sessionId: 'old-in-t36',
+        host: 'pike',
+        herdrPaneId: 't36',
+        lastActivityAt: minutesAgo(30),
+      }),
+      makeCliDoc({
+        sessionId: 'now-in-t36',
+        host: 'pike',
+        herdrPaneId: 't36',
+        lastActivityAt: minutesAgo(1),
+      }),
+      // The same address on another host is another pane.
+      makeCliDoc({
+        sessionId: 'laptop-t36',
+        host: 'laptop',
+        herdrPaneId: 't36',
+        lastActivityAt: minutesAgo(20),
+      }),
+      makeCliDoc({
+        sessionId: 'pike-t2j',
+        host: 'pike',
+        herdrPaneId: 't2j',
+        lastActivityAt: minutesAgo(40),
+      }),
+    ]);
+
+    const { sessions } = await getCliSessions();
+
+    expect(paneOf(sessions)).toEqual({
+      'now-in-t36': 't36',
+      'laptop-t36': 't36',
+      'old-in-t36': undefined,
+      'pike-t2j': 't2j',
+    });
+  });
+
+  it('gives the pane to a session resumed a moment ago, before it takes a turn', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([
+      // Crashed in t36 half an hour ago: more recent activity, but gone.
+      makeCliDoc({
+        sessionId: 'crashed',
+        host: 'pike',
+        herdrPaneId: 't36',
+        liveness: 'idle',
+        lastActivityAt: minutesAgo(30),
+        observedAt: minutesAgo(30),
+      }),
+      // Last turn three hours ago, started again in t36 just now.
+      makeCliDoc({
+        sessionId: 'resumed',
+        host: 'pike',
+        herdrPaneId: 't36',
+        liveness: 'live',
+        startedAt: minutesAgo(240),
+        lastActivityAt: minutesAgo(180),
+        observedAt: minutesAgo(0),
+      }),
+    ]);
+
+    const { sessions } = await getCliSessions();
+
+    expect(paneOf(sessions)).toEqual({ resumed: 't36', crashed: undefined });
+    expect(
+      sessions.find((session) => session.sessionId === 'resumed')?.liveness,
+    ).toBe('live');
+  });
+
+  it('does not hand the link back when the newer session left cleanly', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([
+      makeCliDoc({
+        sessionId: 'crashed-earlier',
+        host: 'pike',
+        herdrPaneId: 't36',
+        liveness: 'idle',
+        lastActivityAt: minutesAgo(40),
+      }),
+      // Ran in t36 afterwards and recorded its end; the stored pane stays.
+      makeCliDoc({
+        sessionId: 'ended-cleanly',
+        host: 'pike',
+        herdrPaneId: 't36',
+        liveness: 'ended',
+        lastActivityAt: minutesAgo(10),
+      }),
+    ]);
+
+    const { sessions } = await getCliSessions();
+
+    // Neither: the pane's last occupant has left, and the earlier one is
+    // not in it.
+    expect(paneOf(sessions)).toEqual({
+      'ended-cleanly': undefined,
+      'crashed-earlier': undefined,
+    });
+  });
+
   it('uses the transcript-recorded PR when its repository is recorded', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ deliverables: { prNumbers: [2650, 2662], commitShas: [] } }),

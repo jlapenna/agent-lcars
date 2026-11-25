@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import { Suspense } from 'react';
 
 import { auth } from '@/auth';
 import { getWatchedRepos } from '@/lib/github-client';
@@ -7,6 +6,7 @@ import { resolvePrincipal } from '@/lib/work-grants';
 
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
 import { ConsoleMessage } from '../../console-message';
+import { NavSuspense } from '../../nav-suspense';
 import { NavPageLoading } from '../../page-loading';
 import { withConsolePageShell } from '../../with-console-page-shell';
 import { JobCredentialsPanel } from './credentials-panel';
@@ -63,7 +63,7 @@ async function AuthenticatedPage() {
 }
 export default function JobCredentialsPage() {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="jobs"
@@ -73,6 +73,6 @@ export default function JobCredentialsPage() {
       }
     >
       <AuthenticatedPage />
-    </Suspense>
+    </NavSuspense>
   );
 }

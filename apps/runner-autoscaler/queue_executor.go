@@ -24,6 +24,9 @@ type directRunnerLaunch struct {
 	runID    string
 	runToken string
 	pipeline string
+	// mode is the claimed run's Work mode ("review", "implement", ...), used
+	// only to pick the Job's resource shape.
+	mode string
 	// providerAuth is a goose recipe's admitted tool harness ("claude", "agy"
 	// or empty). It selects the one extra provider credential the worker gets.
 	providerAuth string
@@ -73,6 +76,7 @@ type claimResponse struct {
 	RunID          string `json:"runId"`
 	WorkID         string `json:"workId"`
 	Pipeline       string `json:"pipeline"`
+	Mode           string `json:"mode"`
 	ProviderAuth   string `json:"providerAuth"`
 	Token          string `json:"token"`
 	ExpiresAt      string `json:"expiresAt"`
@@ -183,6 +187,7 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 		runID:        claimed.RunID,
 		runToken:     claimed.Token,
 		pipeline:     claimed.Pipeline,
+		mode:         claimed.Mode,
 		providerAuth: claimed.ProviderAuth,
 		consoleURL:   cfg.consoleURL,
 		runner:       cfg.runnerName,

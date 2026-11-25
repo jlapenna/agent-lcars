@@ -136,16 +136,17 @@ function TranscriptEventView({ event }: { event: TranscriptTimelineEvent }) {
 
 /**
  * Renders a parsed transcript timeline (see @agent-lcars/telemetry's
- * transcript-timeline.ts) turn by turn. Server component throughout: long
- * messages, tool blocks and the middle of a very long timeline render
- * collapsed behind native disclosures, but every byte is in the page.
+ * transcript-timeline.ts) turn by turn. Long messages, tool blocks and the
+ * middle of a single-page timeline render collapsed behind native disclosures.
  */
 export function TranscriptTimelineView({
   events,
   warning,
+  hasMore = false,
 }: {
   events: (TranscriptTimelineEvent | TranscriptElisionDivider)[];
   warning?: string;
+  hasMore?: boolean;
 }) {
   return (
     <Stack gap="xs" data-testid="transcript-timeline">
@@ -154,7 +155,7 @@ export function TranscriptTimelineView({
           {warning}
         </Text>
       )}
-      {events.length === 0 && !warning && (
+      {events.length === 0 && !warning && !hasMore && (
         <Text size="sm" c="dimmed">
           No transcript events.
         </Text>

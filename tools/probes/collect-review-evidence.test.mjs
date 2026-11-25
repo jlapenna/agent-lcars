@@ -25,7 +25,7 @@ function collect(format, mutation) {
     const head = '1'.repeat(40),
       upstream = '2'.repeat(40),
       marker = '<!-- native fixture -->';
-    const roles = ['guidance-a', 'guidance-b', 'bugs-a', 'bugs-b'];
+    const roles = ['guardrails', 'bugs'];
     const reviewers = roles.map((role) => ({
       role,
       nativeSessionId: randomUUID(),
@@ -187,12 +187,12 @@ for (const mutation of [
 }
 
 for (const format of ['v1', 'v2']) {
-  test(`collects four completed isolated ${format} native children bound to this parent`, () => {
+  test(`collects two completed isolated ${format} native children bound to this parent`, () => {
     const result = collect(format);
     assert.equal(result.exit, 0);
     assert.equal(result.evaluation.passed, true);
-    assert.equal(result.native.completedChildren.length, 4);
-    assert.equal(result.native.isolatedChildren.length, 4);
+    assert.equal(result.native.completedChildren.length, 2);
+    assert.equal(result.native.isolatedChildren.length, 2);
   });
   test(`rejects an authentic ${format} child belonging to a different parent`, () => {
     const result = collect(format, 'foreign');
@@ -218,7 +218,7 @@ test('retains large native OpenCode exports and repeated child task references',
   const root = mkdtempSync(join(tmpdir(), 'lcars-review-opencode-export-'));
   try {
     const json = (path, value) => writeFileSync(path, JSON.stringify(value));
-    const roles = ['guidance-a', 'guidance-b', 'bugs-a', 'bugs-b'];
+    const roles = ['guardrails', 'bugs'];
     const reviewers = roles.map((role, i) => ({
       role,
       nativeSessionId: 'ses_child' + i,
@@ -359,13 +359,11 @@ function collectClaude(mutation) {
     const head = '1'.repeat(40),
       upstream = '2'.repeat(40),
       marker = '<!-- Claude native fixture -->';
-    const reviewers = ['guidance-a', 'guidance-b', 'bugs-a', 'bugs-b'].map(
-      (role, i) => ({
-        role,
-        nativeSessionId: 'a'.repeat(15) + i,
-        complete: true,
-      }),
-    );
+    const reviewers = ['guardrails', 'bugs'].map((role, i) => ({
+      role,
+      nativeSessionId: 'a'.repeat(15) + i,
+      complete: true,
+    }));
     const json = (path, value) => writeFileSync(path, JSON.stringify(value));
     for (const reviewer of reviewers)
       writeFileSync(
@@ -531,11 +529,11 @@ function collectClaude(mutation) {
   }
 }
 
-test('Claude binds four completed reviewers through an opaque project directory for a long cwd', () => {
+test('Claude binds two completed reviewers through an opaque project directory for a long cwd', () => {
   const result = collectClaude();
   assert.equal(result.exit, 0);
   assert.equal(result.evaluation.passed, true);
-  assert.equal(result.native.completedChildren.length, 4);
+  assert.equal(result.native.completedChildren.length, 2);
 });
 for (const mutation of ['ambiguous', 'missing-init'])
   test(
@@ -563,11 +561,11 @@ for (const mutation of [
     const result = collectClaude(mutation);
     assert.equal(result.exit, 0);
     assert.equal(result.native.errors.length, 0);
-    assert.equal(result.native.completedChildren.length, 4);
+    assert.equal(result.native.completedChildren.length, 2);
   });
 test('Claude requires a coordinator Agent call for native child identity', () => {
   const result = collectClaude('unregistered-agent');
   assert.equal(result.exit, 1);
   assert.equal(result.evaluation.passed, false);
-  assert.equal(result.native.completedChildren.length, 3);
+  assert.equal(result.native.completedChildren.length, 1);
 });

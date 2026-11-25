@@ -1,5 +1,8 @@
 import { logger } from '@agent-lcars/logging';
-import { type SessionWrite } from '@agent-lcars/telemetry';
+import {
+  SESSION_WRITTEN_AT_FIELD,
+  type SessionWrite,
+} from '@agent-lcars/telemetry';
 import { FieldValue, Firestore, Timestamp } from '@google-cloud/firestore';
 
 const AGENT_TELEMETRY_DATABASE_ID =
@@ -66,6 +69,7 @@ export function createFirestoreStore(
             ...Object.fromEntries(
               clearFields.map((field) => [field, FieldValue.delete()]),
             ),
+            [SESSION_WRITTEN_AT_FIELD]: FieldValue.serverTimestamp(),
           },
           { merge: true },
         );

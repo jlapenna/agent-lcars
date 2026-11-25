@@ -8,6 +8,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { aggregateSessionSpend } from './session-spend';
 import { loadSpendProjections } from './session-spend-projections';
 
+/** Adapts a one-anchor reader to the batched reader the loader takes. */
+const many =
+  <T>(read: (anchor: GithubAnchorProjection['anchor']) => Promise<T>) =>
+  (anchors: GithubAnchorProjection['anchor'][]) =>
+    Promise.all(anchors.map((anchor) => read(anchor)));
+
 function doc(prNumbers: number[]): CliSessionDoc {
   return {
     sessionId: 's',
@@ -41,7 +47,7 @@ describe('stored spend evidence boundary', () => {
     const read = vi.fn().mockResolvedValue(undefined);
     const result = await loadSpendProjections(
       [doc(Array.from({ length: 205 }, (_, i) => i + 1)), doc([1, 2, 2])],
-      read,
+      many(read),
     );
     expect(read).toHaveBeenCalledTimes(205);
     expect(read).toHaveBeenCalledWith({
@@ -65,7 +71,10 @@ describe('stored spend evidence boundary', () => {
       (
         await loadSpendProjections(
           [doc(Array.from({ length: 20 }, (_, i) => i + 1))],
-          read,
+          many(read),
+          5000,
+          [],
+          1,
         )
       ).incomplete,
     ).toBe(true);
@@ -79,7 +88,7 @@ describe('stored spend evidence boundary', () => {
           resolve = done;
         }),
     );
-    const result = await loadSpendProjections([doc([1])], read, 10);
+    const result = await loadSpendProjections([doc([1])], many(read), 10);
     expect(result.incomplete).toBe(true);
     resolve({
       anchor: { repo: 'jlapenna/agent-lcars', issue: 1 },
@@ -125,7 +134,7 @@ describe('canonical stored projection identities (#2303)', () => {
       },
     };
     const read = vi.fn((target) => store.readGithubAnchorProjection(target));
-    const loaded = await loadSpendProjections([session], read, 5000, [
+    const loaded = await loadSpendProjections([session], many(read), 5000, [
       { owner: 'Acme', name: 'Other-Project' },
     ]);
     expect(read).toHaveBeenCalledTimes(1);
@@ -144,8 +153,8 @@ describe('canonical stored projection identities (#2303)', () => {
       aggregateSessionSpend(
         [canonicalSession],
         (
-          await loadSpendProjections([canonicalSession], (target) =>
-            store.readGithubAnchorProjection(target),
+          await loadSpendProjections([canonicalSession], (targets) =>
+            store.readGithubAnchorProjections(targets),
           )
         ).projections,
       ).mergedPRs,
@@ -157,9 +166,22 @@ describe('canonical stored projection identities (#2303)', () => {
     }));
     const result = await loadSpendProjections(
       [doc(Array.from({ length: 450 }, (_, i) => i + 1))],
-      read as unknown as Parameters<typeof loadSpendProjections>[1],
+      many(read) as unknown as Parameters<typeof loadSpendProjections>[1],
     );
     expect(read).toHaveBeenCalledTimes(450);
+    expect(result.projections.size).toBe(450);
+    expect(result.incomplete).toBe(false);
+  });
+  it('reads a busy window in a few batched lookups', async () => {
+    const readMany = vi.fn(
+      async (anchors: GithubAnchorProjection['anchor'][]) =>
+        anchors.map((anchor) => ({ anchor }) as GithubAnchorProjection),
+    );
+    const result = await loadSpendProjections(
+      [doc(Array.from({ length: 450 }, (_, i) => i + 1))],
+      readMany,
+    );
+    expect(readMany).toHaveBeenCalledTimes(5);
     expect(result.projections.size).toBe(450);
     expect(result.incomplete).toBe(false);
   });

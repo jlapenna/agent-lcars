@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { AGENT_BOT_LOGINS } from '@agent-lcars/dispatch-contracts';
 import {
   formatAttemptId,
   formatClaimMarker,
@@ -16,7 +17,16 @@ import { z } from 'zod';
 
 import { isControlPlaneRepository } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
-import { grantForPrincipal, resolvePrincipal, workGrants } from './work-grants';
+import {
+  graphqlActorSchema,
+  normalizeGraphqlActorLogin,
+} from './graphql-actor';
+import {
+  grantForPrincipal,
+  jobAutomationPrincipalForGrants,
+  resolvePrincipal,
+  workGrants,
+} from './work-grants';
 import { currentFallbackPipelines } from './work-provider-fallback';
 
 export interface DeliveryGithubDeps {
@@ -63,8 +73,18 @@ const prSchema = z.object({
   user: z.object({ login: z.string() }),
   merged: z.boolean(),
   merge_commit_sha: sha.nullable(),
+  mergeable: z.boolean().nullable().optional(),
+  mergeable_state: z.string().nullable().optional(),
   auto_merge: z.object({ merge_method: z.string() }).nullable(),
 });
+
+function hasReviewLineMarker(
+  body: string | null | undefined,
+  marker: string,
+): boolean {
+  if (!body) return false;
+  return body.split('\n').some((line) => line.replace(/\r$/u, '') === marker);
+}
 
 async function github(deps: DeliveryGithubDeps, repo: string, path: string) {
   const token = await deps.tokens.tokenFor(repo);
@@ -142,6 +162,33 @@ async function protectedChecks(
   throw new Error('Protected delivery policy read was truncated');
 }
 
+const TRUSTED_REVIEW_ASSOCIATIONS = new Set([
+  'OWNER',
+  'MEMBER',
+  'COLLABORATOR',
+]);
+
+const TRUSTED_REVIEW_BOTS = new Set([
+  ...AGENT_BOT_LOGINS.map((login) => login.toLowerCase()),
+  'chatgpt-codex-connector[bot]',
+  'gemini-code-assist[bot]',
+  'copilot-pull-request-reviewer[bot]',
+  'github-actions[bot]',
+]);
+
+function isTrustedDeliveryReviewer(
+  login: string | undefined,
+  association: string | null | undefined,
+): boolean {
+  if (login !== undefined && TRUSTED_REVIEW_BOTS.has(login.toLowerCase())) {
+    return true;
+  }
+  // Absent association occurs only on synthetic unit-test fixtures; live GitHub
+  // GraphQL responses always populate CommentAuthorAssociation.
+  if (association === undefined || association === null) return true;
+  return TRUSTED_REVIEW_ASSOCIATIONS.has(association);
+}
+
 async function reviews(
   deps: DeliveryGithubDeps,
   repo: string,
@@ -161,7 +208,7 @@ async function reviews(
       },
       signal: AbortSignal.timeout(10_000),
       body: JSON.stringify({
-        query: `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid reviews(last:100){pageInfo{hasPreviousPage} nodes{state author{login} commit{oid}}} reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved}}}}}`,
+        query: `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid reviews(last:100){pageInfo{hasPreviousPage} nodes{state body authorAssociation author{__typename login} commit{oid}}} reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:1){nodes{authorAssociation author{__typename login}}}}}}}}`,
         variables: { owner, name, number },
       }),
     },
@@ -179,14 +226,32 @@ async function reviews(
               nodes: z.array(
                 z.object({
                   state: z.string(),
-                  author: z.object({ login: z.string() }).nullable(),
+                  body: z.string().nullable().optional(),
+                  authorAssociation: z.string().nullable().optional(),
+                  author: graphqlActorSchema.nullable(),
                   commit: z.object({ oid: sha }).nullable(),
                 }),
               ),
             }),
             reviewThreads: z.object({
               pageInfo: z.object({ hasNextPage: z.literal(false) }),
-              nodes: z.array(z.object({ isResolved: z.boolean() })),
+              nodes: z.array(
+                z.object({
+                  isResolved: z.boolean(),
+                  comments: z
+                    .object({
+                      nodes: z.array(
+                        z
+                          .object({
+                            authorAssociation: z.string().nullable().optional(),
+                            author: graphqlActorSchema.nullable().optional(),
+                          })
+                          .nullable(),
+                      ),
+                    })
+                    .optional(),
+                }),
+              ),
             }),
           }),
         }),
@@ -203,24 +268,45 @@ async function reviews(
     (
       review,
     ): review is typeof review & {
-      author: { login: string };
+      author: NonNullable<typeof review.author>;
       commit: { oid: string };
     } => review.author !== null && review.commit !== null,
   );
-  const latest = new Map(
-    usableReviews
-      .filter(
-        (review) =>
-          review.commit.oid === head &&
-          ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state),
-      )
-      .map((review) => [review.author.login, review]),
-  );
+  const latestVerdict = new Map<string, 'blocked' | 'clear'>();
+  for (const review of usableReviews) {
+    if (review.commit.oid !== head) continue;
+    const login = normalizeGraphqlActorLogin(review.author);
+    if (!login || !isTrustedDeliveryReviewer(login, review.authorAssociation))
+      continue;
+    const authorKey = login.toLowerCase();
+    if (review.state === 'CHANGES_REQUESTED') {
+      latestVerdict.set(authorKey, 'blocked');
+    } else if (review.state === 'APPROVED' || review.state === 'DISMISSED') {
+      latestVerdict.set(authorKey, 'clear');
+    } else if (
+      review.state === 'COMMENTED' &&
+      authorKey === 'agent-lcars[bot]'
+    ) {
+      if (hasReviewLineMarker(review.body, '<!-- lcars-review:block -->')) {
+        latestVerdict.set(authorKey, 'blocked');
+      } else if (
+        hasReviewLineMarker(review.body, '<!-- lcars-review:pass -->')
+      ) {
+        latestVerdict.set(authorKey, 'clear');
+      }
+    }
+  }
   return {
-    changesRequested: [...latest.values()].some(
-      (review) => review.state === 'CHANGES_REQUESTED',
-    ),
-    unresolved: pr.reviewThreads.nodes.some((thread) => !thread.isResolved),
+    changesRequested: [...latestVerdict.values()].includes('blocked'),
+    unresolved: pr.reviewThreads.nodes.some((thread) => {
+      if (thread.isResolved) return false;
+      const firstComment = thread.comments?.nodes[0];
+      if (firstComment === undefined || firstComment === null) return true;
+      return isTrustedDeliveryReviewer(
+        normalizeGraphqlActorLogin(firstComment.author),
+        firstComment.authorAssociation,
+      );
+    }),
   };
 }
 
@@ -399,11 +485,17 @@ export function deliveryCorrectionAuthorized(
         isControlPlaneRepository,
       ).includes(run.pipeline)
     );
+  const grants = workGrants();
+  const exactGrant = grantForPrincipal(payload.data.origin.principal, grants);
   const grant =
-    grantForPrincipal(payload.data.origin.principal) ??
-    resolvePrincipal(payload.data.origin.principal);
+    exactGrant ?? resolvePrincipal(payload.data.origin.principal, grants);
+  const isJobAutomation =
+    Boolean(run.params?.['jobOccurrence']) &&
+    exactGrant !== undefined &&
+    exactGrant.principal === jobAutomationPrincipalForGrants(grants);
   if (
-    grant?.scopes.includes('work.operator') === true &&
+    grant !== undefined &&
+    (grant.scopes.includes('work.operator') || isJobAutomation) &&
     grant.pipelines.includes(
       run.pipeline as 'claude' | 'codex' | 'opencode' | 'agy',
     )
@@ -459,6 +551,12 @@ export async function observeGithubDelivery(
     return { kind: 'waiting', head: binding.head };
   if (pr.head.sha !== binding.head)
     return { kind: 'revision', head: binding.head, newHead: pr.head.sha };
+  if (pr.mergeable === false || pr.mergeable_state?.toLowerCase() === 'dirty')
+    return {
+      kind: 'correction',
+      head: binding.head,
+      reason: 'Pull request has merge conflicts with base branch',
+    };
   const review = await reviews(deps, binding.repo, binding.number, pr.head.sha);
   if (review.changesRequested || review.unresolved)
     return {
