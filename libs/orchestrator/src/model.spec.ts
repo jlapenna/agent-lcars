@@ -412,11 +412,32 @@ describe('taskDocumentSchema derived state (#3566)', () => {
     ).toEqual({ state: 'parked', latestRunId: 'run-1', event: false });
   });
 
+  it('reads stopped and event sort keys and ignores fields it does not know', () => {
+    expect(
+      taskDocumentSchema.parse({
+        task,
+        revision: 3,
+        derived: {
+          state: 'failed',
+          event: true,
+          stoppedAt: '2026-11-25T12:00:00.000Z',
+          eventAt: '2026-11-25T12:00:00.000Z',
+          fromANewerWriter: 1,
+        },
+      }).derived,
+    ).toEqual({
+      state: 'failed',
+      event: true,
+      stoppedAt: '2026-11-25T12:00:00.000Z',
+      eventAt: '2026-11-25T12:00:00.000Z',
+    });
+  });
+
   it('rejects malformed stored item state', () => {
     for (const derived of [
       { state: '', event: false },
       { state: 'parked' },
-      { state: 'parked', event: false, extra: true },
+      { state: 'parked', event: false, stoppedAt: 'yesterday' },
     ])
       expect(() =>
         taskDocumentSchema.parse({ task, revision: 3, derived }),

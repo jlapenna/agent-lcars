@@ -654,13 +654,22 @@ export type Task = z.infer<typeof taskSchema>;
  * A task's item state as `libs/work`'s `deriveItemState` computes it from the
  * task and its runs, stored with the task so readers can query by it (#3566).
  * Written in the same transaction as the task and runs it derives from.
+ * Not strict, unlike the task document: it is a cache of derivable values,
+ * so a reader ignores fields a newer writer adds instead of failing.
  */
-export const taskDerivedSchema = z.strictObject({
+export const taskDerivedSchema = z.object({
   /** An `ItemState` (`running`, `parked`, `failed`, `done`, `canceled`). */
   state: z.string().min(1).max(32),
   latestRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH).optional(),
   /** Some run carries a `sourceRevision` (event-driven work). */
   event: z.boolean(),
+  /** The task's `updatedAt` while it is parked or failed, else absent. A
+   * query ordered by this field skips documents without it, so the newest
+   * stopped tasks need only the automatic single-field index. */
+  stoppedAt: z.iso.datetime({ offset: false }).optional(),
+  /** The task's `updatedAt` for event-driven work, else absent: the same
+   * ordering trick for the newest event items. */
+  eventAt: z.iso.datetime({ offset: false }).optional(),
 });
 export type TaskDerived = z.infer<typeof taskDerivedSchema>;
 
