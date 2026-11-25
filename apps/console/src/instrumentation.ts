@@ -9,6 +9,11 @@ export async function register() {
       // eslint-disable-next-line no-restricted-syntax -- Next.js runtime-specific instrumentation must load Node imports inside register().
       await import('./lib/startup-configuration');
     initNodeLogging();
+    // Attributes the server's Firestore document reads by operation.
+    const { installReadAccounting } =
+      // eslint-disable-next-line no-restricted-syntax -- Next.js runtime-specific instrumentation must load Node imports inside register().
+      await import('./lib/read-accounting');
+    installReadAccounting();
     // Fail the boot with a clear message when static deployment
     // configuration is missing or malformed, rather than on whichever
     // request happens to touch it first (#1731, #2033).

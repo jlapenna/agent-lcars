@@ -32,6 +32,7 @@ import {
   reconcileOpenPullRequestRemediations,
   reconcilePullRequestRemediation,
 } from './pr-remediation';
+import { labelStoreReads } from './read-accounting';
 import { observeRepositoryAgents } from './repository-agents-runtime';
 import { maintainRepositoryJobs } from './repository-jobs-runtime';
 
@@ -102,10 +103,13 @@ export function orchestratorGithubRuntimeDeps(
 export function createOrchestratorRuntime(): OrchestratorRouteDeps {
   if (cached !== undefined) return cached;
 
-  const store = new FirestoreStore({
-    projectId: required('PROJECT_ID'),
-    databaseId: required('DISPATCH_FIRESTORE_DATABASE_ID'),
-  });
+  // Reads are labelled by store method for read accounting (read-accounting.ts).
+  const store = labelStoreReads(
+    new FirestoreStore({
+      projectId: required('PROJECT_ID'),
+      databaseId: required('DISPATCH_FIRESTORE_DATABASE_ID'),
+    }),
+  );
   const orchestrator = new Orchestrator(
     store,
     utcClock,
