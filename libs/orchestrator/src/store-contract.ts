@@ -3418,7 +3418,7 @@ export function runOrchestratorStoreContract(
     });
 
     describe('runs by reported summary', () => {
-      it('lists every run that reported a summary, whatever its task', async () => {
+      it('lists the task and update time of every run that reported a summary', async () => {
         const { store, orchestrator } = await fixture();
         const parked = await started(orchestrator, 'req-park');
         await orchestrator.report(parked.run.runId, {
@@ -3427,12 +3427,14 @@ export function runOrchestratorStoreContract(
         });
         const live = await started(orchestrator, 'req-live');
 
-        const parks = await store.listRunsWithSummary('park');
+        const parks = await store.listRunRefsWithSummary('park');
+        const settled = await store.readRun(parked.run.runId);
 
-        expect(parks.map((run) => run.runId)).toEqual([parked.run.runId]);
-        expect(parks[0]?.result).toMatchObject({ summary: 'park' });
-        expect(await store.listRunsWithSummary('report')).toEqual([]);
-        expect(parks.map((run) => run.runId)).not.toContain(live.run.runId);
+        expect(parks).toEqual([
+          { task: parked.run.task, updatedAt: settled?.updatedAt },
+        ]);
+        expect(await store.listRunRefsWithSummary('report')).toEqual([]);
+        expect(live.run.task).toEqual(parked.run.task);
       });
     });
 

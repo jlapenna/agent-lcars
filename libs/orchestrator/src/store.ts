@@ -245,6 +245,12 @@ export interface OpenGithubAnchorProjectionPage {
  * itself — the task document's revision is the lock's ground truth, and
  * Firestore transactions provide both guarantees natively.
  */
+/** A run's task and last update, without the rest of the run document. */
+export interface RunRef {
+  task: TaskId;
+  updatedAt: string;
+}
+
 export interface OrchestratorStore {
   readTrackerIssue(
     reference: IssueReference,
@@ -285,12 +291,13 @@ export interface OrchestratorStore {
    */
   listRunsForTasks(ids: readonly TaskId[]): Promise<Map<string, Run[]>>;
   /**
-   * Every run whose reported `result.summary` is exactly `summary` (for
-   * example `park` or `report`), across all tasks and states, in no
-   * particular order. Lets a reader find the few tasks a result can matter
-   * to without scanning every task and run.
+   * The task and last update of every run whose reported `result.summary`
+   * is exactly `summary` (for example `park` or `report`), across all tasks
+   * and states, in no particular order. Lets a reader find the few tasks a
+   * result can matter to without scanning every task and run. Only these two
+   * fields are read: a run document carries its whole event history.
    */
-  listRunsWithSummary(summary: string): Promise<Run[]>;
+  listRunRefsWithSummary(summary: string): Promise<RunRef[]>;
   /** Store a run's whole final message out of line, as the chunks
    * `splitRunMessage` produced. Content-addressed by `overflow.sha256` and
    * idempotent; never changes the run document. */

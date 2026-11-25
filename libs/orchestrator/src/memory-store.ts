@@ -53,6 +53,7 @@ import {
   type RequestBinding,
   type RequestTransactionState,
   type RunListCursor,
+  type RunRef,
   type RunTransactionState,
   selectFairQueuedRun,
   StoreConflict,
@@ -257,10 +258,13 @@ export class MemoryStore implements OrchestratorStore {
     return runs;
   }
 
-  async listRunsWithSummary(summary: string): Promise<Run[]> {
+  async listRunRefsWithSummary(summary: string): Promise<RunRef[]> {
     return [...this.#runs.values()]
       .filter((run) => run.result?.summary === summary)
-      .map((run) => structuredClone(run));
+      .map((run) => ({
+        task: structuredClone(run.task),
+        updatedAt: run.updatedAt,
+      }));
   }
 
   async transactRequest(input: {

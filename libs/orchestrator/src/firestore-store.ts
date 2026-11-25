@@ -51,6 +51,7 @@ import {
   settleOutboxEntry,
   taskDocumentSchema,
   type TaskId,
+  taskIdSchema,
   taskKey,
   wakeOutboxEntry,
   type WorkRevision,
@@ -79,12 +80,19 @@ import {
   type RequestBinding,
   type RequestTransactionState,
   type RunListCursor,
+  type RunRef,
   type RunTransactionState,
   selectFairQueuedRun,
   StoreConflict,
   type TaskListCursor,
   type VersionedTask,
 } from './store';
+
+/** The two fields `listRunRefsWithSummary` projects from a run document. */
+const runRefSchema = z.object({
+  task: taskIdSchema,
+  updatedAt: z.iso.datetime({ offset: false }),
+});
 
 /** Live states, derived from the schema rather than re-listed by hand so it
  *  can never drift from `model.ts`'s own notion of "live". */
@@ -1429,12 +1437,20 @@ export class FirestoreStore implements OrchestratorStore {
     });
   }
 
-  async listRunsWithSummary(summary: string): Promise<Run[]> {
+  async listRunRefsWithSummary(summary: string): Promise<RunRef[]> {
     // Equality on one field: the automatic single-field index serves it.
+    // Projected to two fields: for 250 runs this reads 0.16 MB instead of
+    // 2.4 MB of event history (production, 2026-11-25).
     const snapshot = await this.#runs
       .where('result.summary', '==', summary)
+      .select('task', 'updatedAt')
       .get();
-    return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
+    return snapshot.docs.map((doc) =>
+      runRefSchema.parse({
+        task: doc.get('task'),
+        updatedAt: doc.get('updatedAt'),
+      }),
+    );
   }
 
   async listQueuedRuns(limit?: number): Promise<Run[]> {
