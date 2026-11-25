@@ -1,14 +1,14 @@
 import {
-  agentEventDeliverySchema,
-  type AgentEventSubscription,
-} from '@agent-lcars/work';
-import {
   decidedRun,
   isRefusal,
   MAX_PENDING_EVENT_RESUMES,
   MemoryStore,
   Orchestrator,
 } from '@agent-lcars/orchestrator';
+import {
+  agentEventDeliverySchema,
+  type AgentEventSubscription,
+} from '@agent-lcars/work';
 import { describe, expect, it, vi } from 'vitest';
 
 import { routeAgentEvent } from './agent-event-routing';
