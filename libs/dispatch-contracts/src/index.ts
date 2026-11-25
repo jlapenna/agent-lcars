@@ -19,12 +19,12 @@ export {
 export type { AgentPipeline, PipelineContract } from './pipelines';
 export {
   AGENT_BOT_LOGINS,
-  PULL_REQUEST_AUTHOR_BOT_LOGIN,
   AGENT_LABELS,
   DISPATCH_PIPELINES,
   isDispatchPipeline,
   PIPELINE_CONTRACTS,
   pipelineContract,
+  PULL_REQUEST_AUTHOR_BOT_LOGIN,
   REPLY_COMMANDS,
   REVIEW_LABELS,
 } from './pipelines';
