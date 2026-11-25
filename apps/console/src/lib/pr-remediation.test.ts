@@ -1099,6 +1099,83 @@ describe('automatic pull-request review & conflict remediation', () => {
       ).toEqual([]);
     });
 
+    it('qualifies a ready dependency update whose finished checks fail', async () => {
+      const f = createFixture();
+      f.setPr(
+        REPO,
+        4040,
+        draft({
+          isDraft: false,
+          checks: [
+            { name: 'test', status: 'COMPLETED', conclusion: 'FAILURE' },
+            {
+              name: 'renovate/artifacts',
+              status: 'COMPLETED',
+              conclusion: 'FAILURE',
+            },
+          ],
+        }),
+      );
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({ action: 'remediated', outcome: { kind: 'accepted' } });
+      const [run] = await f.store.listRuns(anchor);
+      expect(run?.requestId).toMatch(/^dependency-qualification:4040:/u);
+      expect(run?.params?.['context']).toContain(
+        'its checks fail on the update',
+      );
+    });
+
+    it('leaves a ready dependency update with passing checks to the bot', async () => {
+      const f = createFixture();
+      f.setPr(
+        REPO,
+        4040,
+        draft({
+          isDraft: false,
+          headRefName: 'renovate/runner-cli-runtimes',
+          checks: [
+            { name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' },
+          ],
+        }),
+      );
+
+      expect(
+        (await reconcilePullRequestRemediation(f.remediationDeps, anchor))
+          .action,
+      ).toBe('ignored');
+      expect(await f.store.listRuns(anchor)).toHaveLength(0);
+    });
+
+    it('hands a qualified dependency update with failing checks to ordinary remediation', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4040, draft());
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
+      await f.orchestrator.report(`${REPO}#4040/r1`, { ok: true });
+
+      f.setPr(
+        REPO,
+        4040,
+        draft({
+          isDraft: false,
+          headRefOid: HEAD_2,
+          commits: [
+            { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+            { oid: HEAD_2, author: 'agent-lcars[bot]', signedByGitHub: true },
+          ],
+          checks: [
+            { name: 'test', status: 'COMPLETED', conclusion: 'FAILURE' },
+          ],
+        }),
+      );
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({ action: 'remediated', outcome: { kind: 'accepted' } });
+      const runs = await f.store.listRuns(anchor);
+      expect(runs.at(-1)?.requestId).toMatch(/^pr-remediation:4040:/u);
+    });
+
     it('still ignores a draft that a person opened', async () => {
       const f = createFixture();
       f.setPr(REPO, 4040, draft({ author: { login: 'jlapenna' } }));
