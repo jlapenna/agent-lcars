@@ -61,14 +61,16 @@ resuming stale work or before publishing a long-running implementation.
 ## When an approved pull request is not landing
 
 In an enrolled repository an approved pull request lands without a person,
-whoever opened it. The author is never the reason: most PRs under the
-maintainer's login are agent-written, and approval is the merge gate. Do not
-tell the maintainer to merge it or describe that as the design.
+whoever opened it. A person or agent author is never the reason: most PRs
+under the maintainer's login are agent-written, and approval is the merge
+gate. Do not tell the maintainer to merge it or describe that as the design.
+Renovate and Dependabot PRs are the exception: they land through their own
+automerge, never this sweep.
 
 The landing path: a trusted approval makes the console run the repository's
 `agent-automerge.yml` sweep, which arms squash auto-merge on every open,
-same-repository, non-draft, non-parked PR that is agent-authored or approved
-(the [admission contract](https://github.com/jlapenna/agent-lcars/blob/main/docs/published-actions.md#published-reusable-workflows)).
+same-repository, non-draft, non-parked PR that is agent-authored or approved,
+except dependency-bot PRs (the [admission contract](https://github.com/jlapenna/agent-lcars/blob/main/docs/published-actions.md#published-reusable-workflows)).
 A push to the base branch, a successful PR CI run and the daily schedule also
 run it. GitHub then merges once the ruleset's required checks pass.
 
