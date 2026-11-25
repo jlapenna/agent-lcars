@@ -812,13 +812,25 @@ function countConsecutiveAutoRemediations(runs: readonly Run[]): {
       continue;
     }
     allRounds.add(round.requestId);
-    if (
-      round.params?.['remediationReason'] !== CONFLICT_ONLY_REMEDIATION_REASON
-    ) {
+    if (!isConflictOnlyRound(round)) {
       distinctRounds.add(round.requestId);
     }
   }
   return { counted: distinctRounds.size, total: allRounds.size };
+}
+
+/** Rounds dispatched before `remediationReason` existed carry no tag, so
+ * recognize their conflict-only brief from `buildRemediationContext`'s
+ * reason list. Remove once no open PR has an untagged remediation round. */
+const LEGACY_CONFLICT_ONLY_CONTEXT = / \(merge conflicts with [^;()]+\)\. /u;
+
+export function isConflictOnlyRound(round: Run): boolean {
+  if (round.params?.['remediationReason'] !== undefined) {
+    return (
+      round.params['remediationReason'] === CONFLICT_ONLY_REMEDIATION_REASON
+    );
+  }
+  return LEGACY_CONFLICT_ONLY_CONTEXT.test(round.params?.['context'] ?? '');
 }
 
 function buildRemediationContext(input: {
