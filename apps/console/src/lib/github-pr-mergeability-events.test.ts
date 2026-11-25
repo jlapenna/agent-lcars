@@ -186,5 +186,19 @@ describe('base branch pushes to agent events', () => {
     expect(
       mergeabilityTrigger({ ...delivery, event: 'pull_request', payload }),
     ).toMatchObject({ repository: repo, key: `github:pr:${repo}#7` });
+    expect(
+      mergeabilityTrigger({
+        ...delivery,
+        event: 'pull_request',
+        payload: {
+          ...payload,
+          pull_request: {
+            ...payload.pull_request,
+            user: null,
+            author_association: undefined,
+          },
+        },
+      }),
+    ).toMatchObject({ repository: repo, key: `github:pr:${repo}#7` });
   });
 });

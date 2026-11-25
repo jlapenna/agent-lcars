@@ -24,8 +24,8 @@ const triggerPayload = z.object({
   pull_request: z
     .object({
       number: z.number().int().positive(),
-      user: z.object({ login: z.string() }),
-      author_association: z.string(),
+      user: z.object({ login: z.string().optional() }).nullable().optional(),
+      author_association: z.string().optional(),
     })
     .optional(),
 });
@@ -61,7 +61,7 @@ export function mergeabilityTrigger(
     const pr = payload.pull_request;
     if (
       !trustedGitHubSender(actor, {
-        login: pr.user.login,
+        login: pr.user?.login,
         association: pr.author_association,
       })
     )
