@@ -17,6 +17,7 @@ import {
   REPORT_INBOX_WINDOW_MS,
 } from '../app/inbox-card';
 import { readHandoffActions } from './handoff-summary-work';
+import { shareInFlight } from './in-flight';
 import type { WorkPrincipal } from './work-auth';
 import { forbiddenReason } from './work-mint';
 
@@ -30,7 +31,31 @@ const NATIVE_TASK_PAGE = 1000;
  * giving an anchor represented by both a task and a label exactly one row.
  * A report that settled within REPORT_INBOX_WINDOW_MS is listed too; older
  * ones stay readable from Work. */
-export async function getNativeInboxCards(
+export function getNativeInboxCards(
+  store: OrchestratorStore,
+  principal: WorkPrincipal | undefined,
+  selectedItemKey?: string,
+  now?: number,
+): Promise<NativeDecisionCard[]> {
+  // Bridge and the frame's inbox count read the same cards at the same
+  // moment; share a read in flight (in-flight.ts). Cards depend on the
+  // principal (Reply), so its grant is part of the key.
+  if (selectedItemKey !== undefined || now !== undefined)
+    return readNativeInboxCards(store, principal, selectedItemKey, now);
+  const grant = principal
+    ? JSON.stringify([
+        principal.principal,
+        [...principal.scopes].sort(),
+        [...principal.pipelines].sort(),
+        principal.sourceRepository ?? null,
+      ])
+    : 'anonymous';
+  return shareInFlight(`native-inbox-cards:${grant}`, () =>
+    readNativeInboxCards(store, principal),
+  );
+}
+
+async function readNativeInboxCards(
   store: OrchestratorStore,
   principal: WorkPrincipal | undefined,
   selectedItemKey?: string,
