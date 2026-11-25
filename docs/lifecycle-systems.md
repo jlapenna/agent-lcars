@@ -192,7 +192,11 @@ decision rechecks current operator scope, repository admission, any signed OIDC
 repository restriction, provider cooldowns and serialized provider occupancy.
 The ordinary queue claim still enforces the executor's grant and provider
 ceilings. Rerouting runs in a bounded maintenance batch outside the executor's
-claim deadline; deferred, claimed and unavailable work stays untouched.
+claim deadline; deferred, claimed and unavailable work stays untouched. GitHub
+admission and redispatch of a run with provider fallback run the same batch
+once right after their drain, so a fresh review or remediation whose provider
+is already in a provider-reported cooldown moves to its fallback at once
+instead of waiting up to five minutes for the next maintenance tick.
 
 Run provenance records the original intent, predecessor, triggering failure
 and attempted providers. Within one fallback round, alternatives are tried

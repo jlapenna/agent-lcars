@@ -811,7 +811,8 @@
                                       "type": "string",
                                       "enum": [
                                         "provider-limit",
-                                        "provider-cooldown"
+                                        "provider-cooldown",
+                                        "agent-timeout"
                                       ]
                                     },
                                     "failureRunId": {
@@ -2869,7 +2870,8 @@
                                       "type": "string",
                                       "enum": [
                                         "provider-limit",
-                                        "provider-cooldown"
+                                        "provider-cooldown",
+                                        "agent-timeout"
                                       ]
                                     },
                                     "failureRunId": {
@@ -4732,7 +4734,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -6066,7 +6069,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -7404,7 +7408,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -8783,7 +8788,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -10202,7 +10208,8 @@
                                           "type": "string",
                                           "enum": [
                                             "provider-limit",
-                                            "provider-cooldown"
+                                            "provider-cooldown",
+                                            "agent-timeout"
                                           ]
                                         },
                                         "failureRunId": {
@@ -11532,7 +11539,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -12908,7 +12916,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -14320,7 +14329,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -17603,6 +17613,11 @@
                     },
                     "pipeline": {
                       "type": "string"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
                     },
                     "providerAuth": {
                       "type": "string",

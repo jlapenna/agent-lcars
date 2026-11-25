@@ -24,7 +24,10 @@ const state = vi.hoisted(() => ({
   uploadedChunks: [] as Buffer[],
 }));
 vi.mock('@google-cloud/firestore', () => ({
-  FieldValue: { delete: () => state.deletes },
+  FieldValue: {
+    delete: () => state.deletes,
+    serverTimestamp: () => 'server-time',
+  },
   Firestore: class {
     collection() {
       return {

@@ -731,6 +731,7 @@ if [ "${1:-}" = --pure ] && [ "${2:-}" = export ]; then
   exit 0
 fi
 echo "$@" >> "$OPENCODE_ARGS_LOG"
+printf '%s' "${OPENCODE_CONFIG_CONTENT:-null}" > "$OPENCODE_ENV_LOG.config"
 worker-control-fixture
 printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${GH_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
@@ -2350,7 +2351,12 @@ grep -Fq 'the pull-request review body must contain this exact literal' "$OPENCO
   fail "github review: review prompt did not require the marker on the review body ($(cat "$OPENCODE_ARGS_LOG"))"
 grep -Fq 'the Anthropic review procedure at $AGENT_REVIEW_PATH' "$OPENCODE_ARGS_LOG" ||
   fail "github review: provider was not directed to the trusted review procedure"
-jq -e '.permission.task == "allow"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
+expected_revision=$(cat "$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review/revision")
+grep -Fq "cite the packaged upstream revision $expected_revision." "$OPENCODE_ARGS_LOG" ||
+  fail "github review: missing packaged revision in the coordinator prompt"
+jq -e '.agent["lcars-review"].steps == 12 and .agent["lcars-review"].mode == "subagent"' "$OPENCODE_ENV_LOG.config" >/dev/null ||
+  fail "github review: missing inline general-agent finish reminder"
+jq -e '.default_agent == "lcars-review-coordinator" and .agent[.default_agent].permission.task["lcars-review"] == "allow"' "$OPENCODE_ENV_LOG.config" >/dev/null ||
   fail "github review: OpenCode independent reviewers remain disabled"
 jq -e '.provider.homelab.models.default.options.reasoningEffort == "medium"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
   fail "github review: OpenCode review reasoning budget was not configured"
@@ -2361,6 +2367,8 @@ echo "scenario github-review: OK"
 
 run_scenario implement-delegation-policy opencode
 [ "$rc" -eq 0 ] || fail "implement delegation policy: expected exit 0, got $rc"
+jq -e '.agent["lcars-review"] == null' "$OPENCODE_ENV_LOG.config" >/dev/null ||
+  fail "implement delegation policy: review-only inline agent settings leaked into implementation"
 jq -e '.permission.task == "deny"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
   fail "implement delegation policy: review-only task permission leaked into implementation"
 jq -e '(.provider.homelab.models.default.options.reasoningEffort // null) == null' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||

@@ -454,7 +454,11 @@ export const providerFallbackSchema = z
     fromRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH).optional(),
     trigger: z
       .strictObject({
-        reason: z.enum(['provider-limit', 'provider-cooldown']),
+        reason: z.enum([
+          'provider-limit',
+          'provider-cooldown',
+          'agent-timeout',
+        ]),
         failureRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
         limitedPipeline: z.string().min(1).max(128),
       })

@@ -1416,12 +1416,20 @@ else
   jq --arg base_url "http://127.0.0.1:${OPENCODE_PROXY_PORT}/v1" --arg mode "$MODE" \
     '.provider.homelab.options.baseURL = $base_url |
      if $mode == "review" then
-       .permission.task = "allow" |
        .provider.homelab.models.default.options.reasoningEffort = "medium"
      else . end' \
     "$OPENCODE_CONFIG_DIR/opencode.json" > "$opencode_proxy_config"
   mv "$opencode_proxy_config" "$OPENCODE_CONFIG_DIR/opencode.json"
   export OPENCODE_CONFIG="$OPENCODE_CONFIG_DIR/opencode.json"
+  if [ "$MODE" = review ]; then
+    # OpenCode loads inline configuration after the reviewed project's config.
+    opencode_review_config=$(jq -cs '(.[0] // {}) * .[1]' \
+      <(printf '%s' "${OPENCODE_CONFIG_CONTENT:-null}") "$OPENCODE_CONFIG_DIR/review-overlay.json")
+    export OPENCODE_CONFIG_CONTENT="$opencode_review_config"
+    review_revision=$(cat "$(dirname "$AGENT_REVIEW_PATH")/revision")
+    AGENT_PROMPT="$AGENT_PROMPT
+In the procedure receipt, cite the packaged upstream revision $review_revision."
+  fi
   worker_policy_bootstrap "$OPENCODE_CONFIG"
   activate_hook_telemetry
   # OpenCode has

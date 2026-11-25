@@ -18,7 +18,9 @@ import {
   type OrchestratorRouteDeps,
 } from './orchestrator-routes';
 import {
+  isConflictOnlyRound,
   MAX_AUTO_PR_REMEDIATION_ROUNDS,
+  MAX_AUTO_PR_REMEDIATION_ROUNDS_TOTAL,
   reconcileMergedPullRequestConflicts,
   reconcileOpenPullRequestRemediations,
   reconcilePullRequestRemediation,
@@ -57,6 +59,8 @@ interface MockPrSnapshot {
   assignees?: string[];
   reviewRequests?: string[];
   commits?: { oid: string; author: string | null; signedByGitHub: boolean }[];
+  checks?: { name: string; status: string; conclusion: string | null }[];
+  checksOid?: string;
   reviews?: {
     databaseId?: number;
     state: string;
@@ -119,6 +123,28 @@ function makeGraphqlPr(overrides: MockPrSnapshot = {}) {
         requestedReviewer: { __typename: 'User', login },
       })),
     },
+    ...(overrides.checks === undefined
+      ? {}
+      : {
+          headCommit: {
+            nodes: [
+              {
+                commit: {
+                  oid: overrides.checksOid ?? overrides.headRefOid ?? HEAD_1,
+                  statusCheckRollup: {
+                    contexts: {
+                      pageInfo: { hasNextPage: false },
+                      nodes: overrides.checks.map((check) => ({
+                        __typename: 'CheckRun',
+                        ...check,
+                      })),
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        }),
     ...(overrides.commits === undefined
       ? {}
       : {
@@ -872,7 +898,6 @@ describe('automatic pull-request review & conflict remediation', () => {
           ],
         },
       ],
-      ['the pull request is a draft', { isDraft: true }],
       ['the commits were not read', { commits: undefined }],
       [
         'someone dismissed LCARS approval of this head',
@@ -952,6 +977,191 @@ describe('automatic pull-request review & conflict remediation', () => {
       await reconcilePullRequestRemediation(f.remediationDeps, anchor);
 
       expect(reviewPosts(f)).toEqual([]);
+    });
+  });
+
+  describe('dependency drafts awaiting qualification', () => {
+    const RENOVATE = { __typename: 'Bot', login: 'renovate' };
+    const anchor = { repo: REPO, issue: 4040 };
+    const draft = (
+      overrides: Partial<MockPrSnapshot> = {},
+    ): MockPrSnapshot => ({
+      author: RENOVATE,
+      isDraft: true,
+      headRefName: 'renovate/major-node-runtime',
+      labels: ['type:dependency-update', 'bot:renovate'],
+      commits: [
+        {
+          oid: overrides.headRefOid ?? HEAD_1,
+          author: 'renovate[bot]',
+          signedByGitHub: true,
+        },
+      ],
+      ...overrides,
+    });
+
+    it('dispatches one qualification run per head and never approves the draft', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4040, draft());
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({
+        action: 'remediated',
+        outcome: { kind: 'accepted', runId: `${REPO}#4040/r1` },
+      });
+      const [run] = await f.store.listRuns(anchor);
+      expect(run?.requestId).toBe(
+        `dependency-qualification:4040:${HEAD_1.slice(0, 12)}`,
+      );
+      expect(run?.params?.['mode']).toBe('implement');
+      expect(run?.params?.['context']).toContain(
+        'Qualify the dependency update',
+      );
+      expect(run?.params?.['context']).toContain('gh pr ready');
+      await f.orchestrator.report(`${REPO}#4040/r1`, { ok: true });
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({
+        action: 'remediated',
+        outcome: { kind: 'duplicate', runId: `${REPO}#4040/r1` },
+      });
+      expect(
+        vi
+          .mocked(f.fetchImpl)
+          .mock.calls.filter(
+            ([url, init]) =>
+              String(url).endsWith(`/pulls/4040/reviews`) &&
+              init?.method === 'POST',
+          ),
+      ).toEqual([]);
+    });
+
+    it.each([
+      ['held for a human', { labels: ['bot:renovate', 'status:needs-human'] }],
+      ['blocked', { labels: ['bot:renovate', 'status:blocked'] }],
+    ])(
+      'leaves a dependency draft alone when it is %s',
+      async (_case, overrides) => {
+        const f = createFixture();
+        f.setPr(REPO, 4040, draft(overrides));
+
+        expect(
+          await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+        ).toEqual({ action: 'ignored', reason: 'parked-or-excluded-label' });
+        expect(await f.store.listRuns(anchor)).toHaveLength(0);
+      },
+    );
+
+    it.each([
+      [
+        'someone else pushed a commit',
+        [
+          { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+          { oid: HEAD_2, author: 'mallory', signedByGitHub: false },
+        ],
+      ],
+      [
+        'a commit is not GitHub-signed',
+        [{ oid: HEAD_2, author: 'renovate[bot]', signedByGitHub: false }],
+      ],
+    ])('dispatches nothing when %s', async (_case, commits) => {
+      const f = createFixture();
+      f.setPr(REPO, 4040, draft({ headRefOid: HEAD_2, commits }));
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'ignored', reason: 'unverified-dependency-head' });
+      expect(await f.store.listRuns(anchor)).toHaveLength(0);
+    });
+
+    it('never gives a qualified major the unattended dependency approval', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4040, draft());
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
+      await f.orchestrator.report(`${REPO}#4040/r1`, { ok: true });
+
+      // The agent pushed nothing and marked it ready: still only bot commits.
+      f.setPr(REPO, 4040, draft({ isDraft: false }));
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
+
+      expect(
+        vi
+          .mocked(f.fetchImpl)
+          .mock.calls.filter(
+            ([url, init]) =>
+              String(url).endsWith(`/pulls/4040/reviews`) &&
+              init?.method === 'POST',
+          ),
+      ).toEqual([]);
+    });
+
+    it('still ignores a draft that a person opened', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4040, draft({ author: { login: 'jlapenna' } }));
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'ignored', reason: 'draft-pull-request' });
+    });
+
+    it('caps qualification rounds and hands the draft to a human', async () => {
+      const f = createFixture();
+      for (let round = 1; round <= MAX_AUTO_PR_REMEDIATION_ROUNDS; round += 1) {
+        f.setPr(REPO, 4040, draft({ headRefOid: String(round).repeat(40) }));
+        expect(
+          await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+        ).toMatchObject({ action: 'remediated' });
+        await f.orchestrator.report(`${REPO}#4040/r${round}`, { ok: true });
+      }
+      f.setPr(REPO, 4040, draft({ headRefOid: '9'.repeat(40) }));
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'ignored', reason: 'qualification-cap-reached' });
+      expect(f.fetchImpl).toHaveBeenCalledWith(
+        expect.stringContaining(`/repos/${REPO}/issues/4040/labels`),
+        expect.objectContaining({
+          body: JSON.stringify({ labels: ['status:needs-human'] }),
+        }),
+      );
+    });
+
+    it('remediates a qualified dependency PR like any fleet PR, but not an unqualified one', async () => {
+      const f = createFixture();
+      const conflicted = {
+        isDraft: false,
+        headRefOid: HEAD_2,
+        mergeable: 'CONFLICTING',
+        mergeStateStatus: 'DIRTY',
+        commits: [
+          { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+          { oid: HEAD_2, author: 'agent-lcars[bot]', signedByGitHub: true },
+        ],
+      };
+
+      // No qualification run yet: the bot still owns the branch.
+      f.setPr(REPO, 4040, draft(conflicted));
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'ignored', reason: 'excluded-author' });
+
+      f.setPr(REPO, 4040, draft());
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
+      await f.orchestrator.report(`${REPO}#4040/r1`, { ok: true });
+
+      const UPSTREAM = 'UPSTREAM-RELEASE-NOTES-SENTINEL';
+      f.setPr(REPO, 4040, draft({ ...conflicted, body: UPSTREAM }));
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({
+        action: 'remediated',
+        outcome: { kind: 'accepted', runId: `${REPO}#4040/r2` },
+      });
+      // The bot's body quotes upstream text and must not become the task.
+      const task = await f.store.readTask(anchor);
+      expect(JSON.stringify(task?.task.work)).not.toContain(UPSTREAM);
     });
   });
 
@@ -1319,6 +1529,76 @@ describe('automatic pull-request review & conflict remediation', () => {
     structured.mockRestore();
   });
 
+  it('sweeps dependency drafts into qualification without counting dependency PRs in the census', async () => {
+    const f = createFixture();
+    const structured = vi
+      .spyOn(logger, 'structured')
+      .mockImplementation(() => undefined);
+    const seed = async (
+      issue: number,
+      overrides: Partial<GithubAnchorProjection>,
+    ) => {
+      const anchor = { repo: REPO, issue };
+      const generation =
+        await f.store.beginGithubAnchorProjectionRefresh(anchor);
+      await f.store.applyGithubAnchorProjectionRefresh({
+        anchor,
+        generation,
+        projection: {
+          anchor,
+          kind: 'pr',
+          state: 'open',
+          draft: false,
+          mergedAt: null,
+          title: `PR ${issue}`,
+          body: '',
+          url: `https://github.com/${REPO}/pull/${issue}`,
+          author: 'renovate[bot]',
+          labels: ['bot:renovate'],
+          assigneeLogins: [],
+          sourceUpdatedAt: T0,
+          observedAt: T0,
+          ...overrides,
+        },
+      });
+    };
+    await seed(4050, { draft: true });
+    await seed(4051, { mergeableState: 'dirty' });
+    await seed(4052, { draft: true, author: 'jlapenna', labels: [] });
+    f.setPr(REPO, 4050, {
+      author: { __typename: 'Bot', login: 'renovate' },
+      isDraft: true,
+      headRefName: 'renovate/major-node-runtime',
+      labels: ['bot:renovate'],
+      commits: [{ oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true }],
+    });
+    f.setPr(REPO, 4051, {
+      author: { __typename: 'Bot', login: 'renovate' },
+      mergeable: 'CONFLICTING',
+      mergeStateStatus: 'DIRTY',
+      labels: ['bot:renovate'],
+    });
+    f.advanceMinutes(180);
+
+    await reconcileOpenPullRequestRemediations(
+      f.remediationDeps,
+      Date.now() + 60_000,
+    );
+
+    expect(await f.store.listRuns({ repo: REPO, issue: 4050 })).toMatchObject([
+      { requestId: expect.stringMatching(/^dependency-qualification:4050:/u) },
+    ]);
+    expect(await f.store.listRuns({ repo: REPO, issue: 4051 })).toEqual([]);
+    expect(await f.store.listRuns({ repo: REPO, issue: 4052 })).toEqual([]);
+    expect(structured).toHaveBeenCalledWith(
+      'info',
+      'LCARS PR remediation census',
+      expect.objectContaining({ complete: true, blocked: 0, stalled: 0 }),
+      { enrich: false },
+    );
+    structured.mockRestore();
+  });
+
   it('parks a PR whose remediation round found no change warranted at the same head', async () => {
     const f = createFixture();
     const anchor = { repo: REPO, issue: 4006 };
@@ -1366,6 +1646,87 @@ describe('automatic pull-request review & conflict remediation', () => {
     ).toMatchObject({
       action: 'remediated',
       outcome: { kind: 'accepted', runId: `${REPO}#4006/r2` },
+    });
+  });
+
+  describe('failing checks on the current head', () => {
+    const anchor = { repo: REPO, issue: 4060 };
+    const approved = {
+      author: { login: 'jlapenna' },
+      reviews: [
+        {
+          state: 'APPROVED',
+          author: { __typename: 'Bot', login: 'agent-lcars' },
+          commit: { oid: HEAD_1 },
+        },
+      ],
+    };
+
+    it('remediates an approved PR whose finished checks failed', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4060, {
+        ...approved,
+        checks: [
+          {
+            name: 'repository validation',
+            status: 'COMPLETED',
+            conclusion: 'FAILURE',
+          },
+          { name: 'gitleaks', status: 'COMPLETED', conclusion: 'SUCCESS' },
+        ],
+      });
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({
+        action: 'remediated',
+        outcome: { kind: 'accepted', runId: `${REPO}#4060/r1` },
+      });
+      const [run] = await f.store.listRuns(anchor);
+      expect(run?.params?.['context']).toContain(
+        'failing checks: repository validation',
+      );
+      expect(run?.params?.['context']).toContain('gh run rerun --failed');
+      expect(run?.params?.['remediationReason']).toBeUndefined();
+    });
+
+    it.each([
+      [
+        'a check is still running',
+        [
+          { name: 'Verify', status: 'COMPLETED', conclusion: 'FAILURE' },
+          { name: 'E2E', status: 'IN_PROGRESS', conclusion: null },
+        ],
+        undefined,
+      ],
+      [
+        'the failure was a superseded run beside a newer success',
+        [
+          { name: 'Verify', status: 'COMPLETED', conclusion: 'FAILURE' },
+          { name: 'Verify', status: 'COMPLETED', conclusion: 'SUCCESS' },
+        ],
+        undefined,
+      ],
+      [
+        'the only failures are cancellations',
+        [{ name: 'Verify', status: 'COMPLETED', conclusion: 'CANCELLED' }],
+        undefined,
+      ],
+      [
+        'the rollup belongs to an older commit',
+        [{ name: 'Verify', status: 'COMPLETED', conclusion: 'FAILURE' }],
+        HEAD_2,
+      ],
+    ])('does nothing when %s', async (_case, checks, checksOid) => {
+      const f = createFixture();
+      f.setPr(REPO, 4060, { ...approved, checks, checksOid });
+
+      const result = await reconcilePullRequestRemediation(
+        f.remediationDeps,
+        anchor,
+      );
+      expect(result.action).not.toBe('remediated');
+      expect(await f.store.listRuns(anchor)).toHaveLength(0);
     });
   });
 
@@ -1431,6 +1792,146 @@ describe('automatic pull-request review & conflict remediation', () => {
         body: JSON.stringify({ labels: ['status:needs-human'] }),
       }),
     );
+  });
+
+  it('does not count conflict-only rounds caused by the base moving toward the cap', async () => {
+    const f = createFixture();
+    const anchor = { repo: REPO, issue: 4002 };
+
+    // Each round resolves a conflict that a later merge to the base recreates.
+    for (let round = 1; round <= MAX_AUTO_PR_REMEDIATION_ROUNDS; round += 1) {
+      f.setPr(REPO, 4002, {
+        headRefOid: String(round).repeat(40),
+        mergeable: 'CONFLICTING',
+        mergeStateStatus: 'DIRTY',
+      });
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({
+        action: 'remediated',
+        outcome: { kind: 'accepted', runId: `${REPO}#4002/r${round}` },
+      });
+      const [run] = (await f.store.listRuns(anchor)).filter(
+        (candidate) => candidate.runId === `${REPO}#4002/r${round}`,
+      );
+      expect(run?.params?.['remediationReason']).toBe('conflict-only');
+      await f.orchestrator.report(`${REPO}#4002/r${round}`, { ok: true });
+    }
+
+    f.setPr(REPO, 4002, {
+      headRefOid: '9'.repeat(40),
+      mergeable: 'CONFLICTING',
+      mergeStateStatus: 'DIRTY',
+    });
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+    ).toMatchObject({
+      action: 'remediated',
+      outcome: {
+        kind: 'accepted',
+        runId: `${REPO}#4002/r${MAX_AUTO_PR_REMEDIATION_ROUNDS + 1}`,
+      },
+    });
+    expect(f.fetchImpl).not.toHaveBeenCalledWith(
+      expect.stringContaining(`/repos/${REPO}/issues/4002/labels`),
+      expect.objectContaining({
+        body: JSON.stringify({ labels: ['status:needs-human'] }),
+      }),
+    );
+
+    // Conflict-only rounds are still bounded by the hard total cap.
+    await f.orchestrator.report(
+      `${REPO}#4002/r${MAX_AUTO_PR_REMEDIATION_ROUNDS + 1}`,
+      { ok: true },
+    );
+    for (
+      let round = MAX_AUTO_PR_REMEDIATION_ROUNDS + 2;
+      round <= MAX_AUTO_PR_REMEDIATION_ROUNDS_TOTAL;
+      round += 1
+    ) {
+      f.setPr(REPO, 4002, {
+        headRefOid: round.toString(16).padStart(40, 'a'),
+        mergeable: 'CONFLICTING',
+        mergeStateStatus: 'DIRTY',
+      });
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({ action: 'remediated' });
+      await f.orchestrator.report(`${REPO}#4002/r${round}`, { ok: true });
+    }
+    f.setPr(REPO, 4002, {
+      headRefOid: 'f'.repeat(40),
+      mergeable: 'CONFLICTING',
+      mergeStateStatus: 'DIRTY',
+    });
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+    ).toEqual({ action: 'ignored', reason: 'remediation-cap-reached' });
+  });
+
+  it('recognizes untagged conflict-only rounds dispatched before remediationReason existed', () => {
+    const legacy = (reasons: string) =>
+      ({
+        params: {
+          mode: 'implement',
+          context:
+            `Remediate pull request https://github.com/${REPO}/pull/3760 ` +
+            `at ${HEAD_1} (${reasons}). Fetch origin/main, resolve any merge ` +
+            'conflicts cleanly on incident/x, address every actionable review ' +
+            'comment and thread, push to incident/x.',
+        },
+      }) as unknown as Run;
+
+    expect(isConflictOnlyRound(legacy('merge conflicts with main'))).toBe(true);
+    expect(
+      isConflictOnlyRound(
+        legacy('merge conflicts with main; 1 unresolved review thread'),
+      ),
+    ).toBe(false);
+    expect(
+      isConflictOnlyRound(
+        legacy('merge conflicts with main; blocking code review feedback'),
+      ),
+    ).toBe(false);
+    expect(isConflictOnlyRound(legacy('2 unresolved review threads'))).toBe(
+      false,
+    );
+    expect(
+      isConflictOnlyRound({
+        params: {
+          remediationReason: 'conflict-only',
+          context: legacy('2 unresolved review threads').params?.['context'],
+        },
+      } as unknown as Run),
+    ).toBe(true);
+  });
+
+  it('still counts a conflict round that also carries review threads', async () => {
+    const f = createFixture();
+    const anchor = { repo: REPO, issue: 4003 };
+
+    for (let round = 1; round <= MAX_AUTO_PR_REMEDIATION_ROUNDS; round += 1) {
+      f.setPr(REPO, 4003, {
+        headRefOid: String(round).repeat(40),
+        mergeable: 'CONFLICTING',
+        mergeStateStatus: 'DIRTY',
+        reviewThreads: [{ id: 'PRRT_1', isResolved: false }],
+      });
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject({ action: 'remediated' });
+      await f.orchestrator.report(`${REPO}#4003/r${round}`, { ok: true });
+    }
+
+    f.setPr(REPO, 4003, {
+      headRefOid: '9'.repeat(40),
+      mergeable: 'CONFLICTING',
+      mergeStateStatus: 'DIRTY',
+      reviewThreads: [{ id: 'PRRT_1', isResolved: false }],
+    });
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+    ).toEqual({ action: 'ignored', reason: 'remediation-cap-reached' });
   });
 
   it('ignores untrusted external commenter threads, spoofed review markers, and review-assigned untrusted PR authors', async () => {

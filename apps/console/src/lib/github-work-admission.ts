@@ -2,11 +2,13 @@ import 'server-only';
 
 import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import { AGENT_LABELS, REVIEW_LABELS } from '@agent-lcars/dispatch-contracts';
+import { logger } from '@agent-lcars/logging';
 import {
   decidedRun,
   isRefusal,
   isWorkAnchor,
   type RequestBinding,
+  type Run,
   type TaskId,
   taskIdSchema,
 } from '@agent-lcars/orchestrator';
@@ -337,8 +339,9 @@ export async function admitGithubWork(
       providerRouting: outcome.task.providerRouting,
     };
   }
-  const { runId } = decidedRun(outcome);
-  const drained = await runtime.drain();
+  const decided = decidedRun(outcome);
+  const { runId } = decided;
+  const drained = await drainAndRerouteCooledProvider(runtime, decided);
   return {
     kind: 'accepted',
     runId,
@@ -428,11 +431,39 @@ export async function redispatchGithubWork(
     };
   }
 
-  const { runId } = decidedRun(outcome);
-  const drained = await runtime.drain();
+  const decided = decidedRun(outcome);
+  const { runId } = decided;
+  const drained = await drainAndRerouteCooledProvider(runtime, decided);
   return {
     kind: 'accepted',
     runId,
     dispatched: drained.dispatched.includes(runId),
   };
+}
+
+/** Drains a fresh run, then moves it to its fallback at once when its
+ * provider is in a provider-reported quota cooldown, rather than at the next
+ * five-minute maintenance pass. It is the same audited reroute that pass runs;
+ * a provider that is not cooling down is untouched. */
+async function drainAndRerouteCooledProvider(
+  runtime: Pick<OrchestratorRouteDeps, 'orchestrator' | 'drain'>,
+  run: Run,
+): Promise<Awaited<ReturnType<OrchestratorRouteDeps['drain']>>> {
+  const drained = await runtime.drain();
+  if (run.providerFallback === undefined) return drained;
+  // Admission is already committed. A failed eager reroute is logged and left
+  // to the maintenance pass; it never fails the admission.
+  try {
+    const rerouted = await runtime.orchestrator.rerouteQueued();
+    if (rerouted.some((entry) => entry.fromRunId === run.runId)) {
+      await runtime.drain();
+    }
+  } catch (error) {
+    logger.warn(
+      'agent-lcars: eager cooldown reroute failed for %s:',
+      run.runId,
+      error,
+    );
+  }
+  return drained;
 }

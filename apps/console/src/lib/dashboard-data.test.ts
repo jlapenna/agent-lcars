@@ -1,20 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  e2eTesting: true,
   getAuthoritativeQueueItems: vi.fn(),
   getAgentActivity: vi.fn(),
-  cacheLife: vi.fn(),
-  cacheTag: vi.fn(),
 }));
 
-vi.mock('@agent-lcars/util-server', () => ({
-  isE2eTesting: () => mocks.e2eTesting,
-}));
-vi.mock('next/cache', () => ({
-  cacheLife: mocks.cacheLife,
-  cacheTag: mocks.cacheTag,
-}));
 vi.mock('./authoritative-queue', () => ({
   getAuthoritativeQueueItems: mocks.getAuthoritativeQueueItems,
 }));
@@ -26,13 +16,12 @@ const { getCachedQueueItems, getCachedAgentActivity } =
   // eslint-disable-next-line no-restricted-syntax -- imported dynamically so it evaluates AFTER the vi.mock factories above; a static import would bind the unmocked module.
   await import('./dashboard-data');
 
-describe('dashboard data cache boundary', () => {
+describe('dashboard data', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.e2eTesting = true;
   });
 
-  it('reads every E2E fixture generation fresh without entering Next cache', async () => {
+  it('reads the queue and agent activity fresh outside a render', async () => {
     mocks.getAuthoritativeQueueItems
       .mockResolvedValueOnce({ items: [{ number: 20001, title: 'body A' }] })
       .mockResolvedValueOnce({ items: [{ number: 20001, title: 'body B' }] });
@@ -53,21 +42,8 @@ describe('dashboard data cache boundary', () => {
     });
     expect(firstActivity.data).toEqual({ recentRuns: [{ id: 1 }] });
     expect(secondActivity.data).toEqual({ recentRuns: [{ id: 2 }] });
-    expect(mocks.cacheTag).not.toHaveBeenCalled();
-    expect(mocks.cacheLife).not.toHaveBeenCalled();
-  });
-
-  it('retains the existing cache policy outside E2E', async () => {
-    mocks.e2eTesting = false;
-    mocks.getAuthoritativeQueueItems.mockResolvedValue({ items: [] });
-    mocks.getAgentActivity.mockResolvedValue({ recentRuns: [] });
-
-    await getCachedQueueItems();
-    await getCachedAgentActivity();
-
-    expect(mocks.cacheTag).toHaveBeenCalledTimes(2);
-    expect(mocks.cacheTag).toHaveBeenNthCalledWith(1, 'authoritative-queue');
-    expect(mocks.cacheTag).toHaveBeenNthCalledWith(2, 'authoritative-queue');
-    expect(mocks.cacheLife).toHaveBeenCalledTimes(2);
+    expect(Date.parse(secondActivity.fetchedAt)).toBeGreaterThanOrEqual(
+      Date.parse(firstActivity.fetchedAt),
+    );
   });
 });
