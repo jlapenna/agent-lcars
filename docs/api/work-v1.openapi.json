@@ -20724,7 +20724,7 @@
       "post": {
         "operationId": "createAgentEventSubscription",
         "summary": "Subscribe a live session on the calling host, or a dispatched run's Work, to an event key",
-        "description": "With events.deliver: accepted only when the session telemetry reports the calling host and the session has not ended. With a run token and runId: the subscription targets the run’s own native Work (a workId naming any other Work is refused), and a matching event starts a resume run of that Work with the event notice as its input. Idempotent: the same target, key, kinds and until return the existing subscription.",
+        "description": "With events.deliver: accepted only when the session telemetry reports the calling host and the session has not ended. With a run token and runId: the subscription targets the run’s own native Work (a workId naming any other Work is refused), and a matching event starts a resume run of that Work with the event notice as its input. Sources without an available producer are refused. Idempotent: the same target, key, kinds and until return the existing subscription.",
         "tags": ["events"],
         "requestBody": {
           "required": true,
@@ -20876,7 +20876,7 @@
             }
           },
           "403": {
-            "description": "No live session on the calling host, or not the run’s own resumable Work",
+            "description": "No live session on the calling host, not the run’s own resumable Work, or source unavailable",
             "content": {
               "application/json": {
                 "schema": {
