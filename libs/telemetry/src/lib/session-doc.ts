@@ -12,6 +12,7 @@ import {
   SessionSummary,
   SessionWrite,
 } from './types';
+import { isHerdrPaneId } from './unknown-value';
 
 /** Horizon past `lastActivityAt` at which a `source: 'cli'` session doc
  * becomes eligible for Firestore TTL deletion (see issue #2708). CLI
@@ -30,6 +31,13 @@ export const CLI_SESSION_RETENTION_DAYS = 30;
  * from the console. 365d keeps that index alive for a full year (#3107
  * follow-up 2), well past the 30d `cli` docs get. */
 export const ISSUE_AGENT_SESSION_RETENTION_DAYS = 365;
+
+/** Field every session writer stamps with the Firestore server's commit time
+ * (`FieldValue.serverTimestamp()`). Readers that keep an archive in memory
+ * ask for the documents written since their last read, which keeps their
+ * view current without re-reading the window. It is storage metadata, not
+ * part of {@link SessionDoc}: readers drop it before parsing. */
+export const SESSION_WRITTEN_AT_FIELD = 'writtenAt';
 
 /** `intentId` prefix of a run that belongs to a native work item
  * (`work:<ulid>/r<n>`, the orchestrator's `taskKey` plus run generation). */
@@ -116,6 +124,9 @@ export function buildSessionDoc(
     sessionId: summary.sessionId,
     liveness,
     agent,
+    ...(summary.parentSessionId && {
+      parentSessionId: summary.parentSessionId,
+    }),
     startedAt: summary.startedAt,
     lastActivityAt: summary.lastActivityAt,
     ...(expireAt && { expireAt }),
@@ -196,6 +207,7 @@ export function buildSessionDoc(
     ...(summary.cwd && { cwd: summary.cwd }),
     ...(summary.worktree && { worktree: summary.worktree }),
     ...(summary.branch && { branch: summary.branch }),
+    ...(summary.herdrPaneId && { herdrPaneId: summary.herdrPaneId }),
     ...(summary.githubActor && { githubActor: summary.githubActor }),
     ...(summary.repo && { repo: summary.repo }),
     ...(summary.artifacts &&
@@ -344,6 +356,19 @@ export function parseSessionDoc(value: unknown): SessionDoc {
       );
     }
   }
+  // A pane is a convenience link, never evidence. One that is malformed, or
+  // left on a document a runner has since taken over, is dropped rather than
+  // refused, so it can never make a session unreadable.
+  const herdrPaneId = value['herdrPaneId'];
+  if (
+    herdrPaneId !== undefined &&
+    (source !== 'cli' ||
+      typeof herdrPaneId !== 'string' ||
+      !isHerdrPaneId(herdrPaneId))
+  ) {
+    const { herdrPaneId: _dropped, ...rest } = value;
+    return rest as unknown as SessionDoc;
+  }
   return value as unknown as SessionDoc;
 }
 
@@ -359,7 +384,8 @@ export function parseSessionDoc(value: unknown): SessionDoc {
  * `clearFields` is derived solely from the current summary and options.
  * Missing status clears both status fields; a missing OpenCode backend
  * observation clears `resolvedModel`, preventing a resumed run from
- * displaying the backend from an earlier request; a native work item's
+ * displaying the backend from an earlier request; any write with no
+ * observed herdr-core terminal clears `herdrPaneId`; a native work item's
  * session omits `expireAt` but never clears it: the close stamp may land
  * before the sidecar's final write, and clearing would make the session
  * permanent (see {@link isNativeWorkSessionWrite}). Deleting an absent Firestore field is a no-op, and the
@@ -378,6 +404,12 @@ export function buildSessionWrite(
   }
   if (summary.agent === 'opencode' && summary.resolvedModel === undefined) {
     clearFields.push('resolvedModel');
+  }
+  // A session resumed outside herdr-core, or taken over by a runner, must not
+  // keep a link to a terminal address that may since have been handed out
+  // again.
+  if (doc.source !== 'cli' || !doc.herdrPaneId) {
+    clearFields.push('herdrPaneId');
   }
   if (doc.source === 'cli') {
     if (!doc.githubActor) clearFields.push('githubActor');

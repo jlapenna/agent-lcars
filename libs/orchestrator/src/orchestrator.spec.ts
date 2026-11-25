@@ -952,6 +952,58 @@ describe('native anchors', () => {
 });
 
 describe('GitHub anchors', () => {
+  it('fences a parked answer against the current tracker projection', async () => {
+    const { store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+    await orchestrator.report(run.runId, { ok: true, summary: 'park' });
+    const projection = {
+      anchor: TASK,
+      kind: 'issue' as const,
+      state: 'open' as const,
+      title: 'Choose a release window',
+      body: '',
+      url: 'https://github.com/octo/example/issues/7',
+      labels: ['status:needs-human', 'agent-option:cross-repo'],
+      assigneeLogins: [],
+      sourceUpdatedAt: T0,
+      observedAt: T0,
+    };
+    const publish = async (labels: string[]) => {
+      const generation = await store.beginGithubAnchorProjectionRefresh(TASK);
+      await store.applyGithubAnchorProjectionRefresh({
+        anchor: TASK,
+        generation,
+        projection: { ...projection, labels },
+      });
+    };
+    const answer = () =>
+      orchestrator.request({
+        taskId: TASK,
+        requestId: 'clicked-decision',
+        pipeline: 'claude',
+        expectedParkedRunId: run.runId,
+        params: { mode: 'reply', replyPrincipal: 'user:operator' },
+        githubDecisionParams: (current) =>
+          current.labels.includes('status:needs-human')
+            ? {
+                crossRepo: String(
+                  current.labels.includes('agent-option:cross-repo'),
+                ),
+              }
+            : undefined,
+      });
+    await publish([]);
+    expect(await answer()).toMatchObject({
+      refused: true,
+      reason: 'stale-lease',
+    });
+    await publish(projection.labels);
+    const admitted = await answer();
+    if (isRefusal(admitted)) throw new Error(admitted.reason);
+    expect(decidedRun(admitted).params).toMatchObject({ crossRepo: 'true' });
+    expect(await store.listRuns(TASK)).toHaveLength(2);
+  });
+
   // `requestRun` (decide.ts) stores `work` for any anchor, not only native
   // ones -- console-side derivation (sub-project 5) populates it for a
   // GitHub-anchored task the same way it always has for a native one.

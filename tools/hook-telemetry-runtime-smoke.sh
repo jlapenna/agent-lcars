@@ -14,12 +14,21 @@ cd "$repo_root"
 ./tools/nx hook-flush-cli @agent-lcars/telemetry-watcher
 
 # `lcars hook` starts the flusher from beside its own bundle, as in the image.
+# Keep the 30 s process-drain bound: airgapped image builds (`RUN --network=none`)
+# still hard-fail if a fixture leaks a client, while this runtime CI smoke sets
+# HOOK_SMOKE_DEGRADE_DEADLINE=1 so a slow background child past 30 s logs culprit
+# command names, retains private scratch/bundles for inspection, and emits a
+# GitHub Actions warning rather than blocking Verify and Console deploys (#3421).
 lib_dir="$(mktemp -d)"
 cleanup() {
+  local exit_status=$?
   if [ -f "$lib_dir/.hook-smoke-drained" ]; then
-    rm -rf "$lib_dir"
+    rm -rf "$lib_dir" || exit 1
   else
     echo "hook smoke cleanup: retaining private bundles after refused smoke" >&2
+    if [ "$exit_status" -eq 0 ] && [ -f "$lib_dir/.hook-smoke-deadline-degraded" ]; then
+      echo "::warning::hook smoke cleanup retained private scratch after process drain deadline (see stderr for culprit process names)"
+    fi
   fi
 }
 trap cleanup EXIT
@@ -43,5 +52,7 @@ cp apps/runner-autoscaler/runner-image/{hook-telemetry.test.sh,hook-telemetry-as
 node -p 'require(process.argv[1]).version' \
   "$opencode_config/node_modules/@opencode-ai/plugin/package.json" > "$lib_dir/opencode-version"
 
-HOOK_TEST_LIB_DIR="$lib_dir" HOOK_TEST_OPENCODE_CONFIG_DIR="$opencode_config" \
+HOOK_TEST_LIB_DIR="$lib_dir" \
+HOOK_TEST_OPENCODE_CONFIG_DIR="$opencode_config" \
+HOOK_SMOKE_DEGRADE_DEADLINE="${HOOK_SMOKE_DEGRADE_DEADLINE:-1}" \
   bash "$lib_dir/hook-telemetry.test.sh"

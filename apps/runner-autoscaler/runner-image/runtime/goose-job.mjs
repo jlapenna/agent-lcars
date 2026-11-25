@@ -20,19 +20,26 @@ const required = (name) => {
   if (!process.env[name]) throw new Error(`${name} required`);
   return process.env[name];
 };
-const controller = new AbortController();
+const externalController = new AbortController();
+const timeoutController = new AbortController();
+const runSignal = AbortSignal.any([
+  externalController.signal,
+  timeoutController.signal,
+]);
 for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'])
-  process.once(signal, () => controller.abort());
+  process.once(signal, () => externalController.abort());
 const base = `${required('LCARS_CONSOLE_URL')}/api/work/v1/runs/${encodeURIComponent(required('LCARS_RUN_ID'))}`;
 async function call(path, body) {
-  controller.signal.throwIfAborted();
+  const activeSignal =
+    path === 'complete' ? externalController.signal : runSignal;
+  activeSignal.throwIfAborted();
   const headers = { Authorization: `Bearer ${required('LCARS_RUN_TOKEN')}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const response = await fetch(`${base}/${path}`, {
     method: body === undefined ? 'GET' : 'POST',
     headers,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+    signal: AbortSignal.any([activeSignal, AbortSignal.timeout(10000)]),
     redirect: 'error',
   });
   if (!response.ok) throw new Error(`Work API HTTP ${response.status}`);
@@ -48,17 +55,19 @@ async function call(path, body) {
       throw new Error('Work API response exceeds supported size');
     chunks.push(chunk);
   }
-  controller.signal.throwIfAborted();
+  activeSignal.throwIfAborted();
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
+let brief;
 let home;
 let secretHome;
 let timeout;
+let timedOut = false;
 let codexAuth;
 let claudeAuth;
 let agyAuth;
 try {
-  const brief = await call('recipe');
+  brief = await call('recipe');
   await cgroupAllocation(brief.definition.job.execution.resources);
   // Job-specific credentials arrive below from the profile's credential set.
   const environment = await loadGooseEnvironment();
@@ -90,7 +99,10 @@ try {
     );
   }
   timeout = setTimeout(
-    () => controller.abort(),
+    () => {
+      timedOut = true;
+      timeoutController.abort();
+    },
     parseInt(brief.definition.job.execution.timeout, 10) * 60000,
   );
   // Use the same credential helper as coding runtimes to materialize the
@@ -105,11 +117,12 @@ try {
     await subprocess('git', args, {
       cwd: workingDirectory,
       environment,
-      signal: controller.signal,
+      signal: runSignal,
+      label: 'git',
     });
   if (brief.profile?.providerAuth === 'codex') {
     codexAuth = await codexJobAuth({
-      signal: controller.signal,
+      signal: runSignal,
       environment,
       request: (method, body) =>
         fetch(`${base}/codex-auth`, {
@@ -122,10 +135,7 @@ try {
           signal:
             method === 'PUT'
               ? AbortSignal.timeout(60000)
-              : AbortSignal.any([
-                  controller.signal,
-                  AbortSignal.timeout(60000),
-                ]),
+              : AbortSignal.any([runSignal, AbortSignal.timeout(60000)]),
           redirect: 'error',
         }),
     });
@@ -145,21 +155,30 @@ try {
     onProviderStarted: () =>
       call('heartbeat', { providerProcessStarted: true }),
   });
-  const result = await execute({
-    run: { definition: brief.definition, fileRecipeText: brief.fileRecipeText },
-    baseline: brief.baseline,
-    parameters: brief.parameters,
-    signal: controller.signal,
-  });
-  clearTimeout(timeout);
-  controller.signal.throwIfAborted();
+  let result;
+  try {
+    result = await execute({
+      run: {
+        definition: brief.definition,
+        fileRecipeText: brief.fileRecipeText,
+      },
+      baseline: brief.baseline,
+      parameters: brief.parameters,
+      signal: runSignal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+  runSignal.throwIfAborted();
   if (codexAuth) await codexAuth.persist();
   await call('recipe', { result });
 } catch (error) {
-  const aborted = controller.signal.aborted;
+  const aborted = externalController.signal.aborted;
   clearTimeout(timeout);
   const { settled } = await settleGooseFailure(error, {
     aborted,
+    timedOut,
+    timeoutMinutes: brief?.definition?.job?.execution?.timeout,
     codexAuth,
     complete: (payload) => call('complete', payload),
   });

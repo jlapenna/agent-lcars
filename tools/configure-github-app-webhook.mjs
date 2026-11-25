@@ -13,6 +13,9 @@ const REQUIRED_EVENTS = [
   'pull_request',
   'pull_request_review',
   'pull_request_review_thread',
+  // Forwarded to the GitHub Actions exporter over Pub/Sub (#3525).
+  'workflow_job',
+  'workflow_run',
 ];
 
 function required(name) {

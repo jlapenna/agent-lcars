@@ -1,10 +1,16 @@
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { displayLiveness, totalTokens } from '@agent-lcars/telemetry';
+import {
+  displayLiveness,
+  isClaudeSubagentSessionId,
+  totalTokens,
+  watchableHerdrPaneId,
+} from '@agent-lcars/telemetry';
 import { Anchor, Badge, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
 
 import {
   agentSessionResumeScript,
+  sessionLiveViewUrl,
   shareArtifactUrl,
 } from '../../../lib/deployment';
 import { sessionDurationSeconds } from '../../../lib/session-archive';
@@ -70,6 +76,14 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
   );
   const cliHost = doc.source === 'cli' ? doc.host : undefined;
   const cliArtifacts = doc.source === 'cli' ? (doc.artifacts ?? []) : [];
+  const liveViewUrl =
+    doc.source === 'cli'
+      ? sessionLiveViewUrl({
+          liveness,
+          host: doc.host,
+          herdrPaneId: watchableHerdrPaneId(doc),
+        })
+      : undefined;
   const repo = doc.repo;
   const hasDeliverables =
     doc.deliverables.prNumbers.length > 0 ||
@@ -88,6 +102,17 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
           {LIVENESS_LABELS[liveness]}
         </Badge>
         <AgentBadge agent={doc.agent} />
+        {liveViewUrl && (
+          <Anchor
+            href={liveViewUrl}
+            target="_blank"
+            rel="noreferrer"
+            size="sm"
+            data-testid="session-header-live-view"
+          >
+            Open live ↗
+          </Anchor>
+        )}
       </Group>
 
       <SessionStatusLine
@@ -219,7 +244,8 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
           shown. */}
       {doc.source === 'issue-agent' &&
         doc.transcriptGcsUri &&
-        doc.agent === 'claude-code' && (
+        doc.agent === 'claude-code' &&
+        !isClaudeSubagentSessionId(doc.sessionId) && (
           <Stack gap={4}>
             <Eyebrow>Resume from archive</Eyebrow>
             <Text size="xs" c="dimmed">
@@ -232,24 +258,27 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
           </Stack>
         )}
 
-      {/* Codex, OpenCode, and Antigravity issue-agent sessions archive their
-          transcripts to GCS and continue on work-item replies, but
-          `fleet-tools` only ships a workstation `resume-archive` CLI for
-          Claude today. */}
+      {/* Codex, OpenCode, Antigravity, and Claude subagent issue-agent sessions
+          archive their transcripts to GCS, while `fleet-tools` workstation
+          `resume-archive` targets root Claude sessions only. */}
       {doc.source === 'issue-agent' &&
         doc.transcriptGcsUri &&
         (doc.agent === 'codex' ||
           doc.agent === 'opencode' ||
-          doc.agent === 'antigravity') && (
+          doc.agent === 'antigravity' ||
+          (doc.agent === 'claude-code' &&
+            isClaudeSubagentSessionId(doc.sessionId))) && (
           <Stack gap={4}>
             <Eyebrow>Archived transcript</Eyebrow>
             <Text size="xs" c="dimmed" data-testid="archive-no-resume-note">
               Archived at <code>{doc.transcriptGcsUri}</code>.{' '}
-              {doc.agent === 'codex'
-                ? 'No workstation resume command yet for Codex sessions, but replying on this item continues the same conversation automatically.'
-                : doc.agent === 'opencode'
-                  ? 'No workstation resume command yet for OpenCode sessions, but replying on this item continues the same conversation automatically.'
-                  : 'No workstation resume command yet for Antigravity sessions, but replying on this item continues the same work item automatically.'}
+              {doc.agent === 'claude-code'
+                ? 'Subagent transcripts are archived for inspection; resume the parent Claude session instead.'
+                : doc.agent === 'codex'
+                  ? 'No workstation resume command yet for Codex sessions, but replying on this item continues the same conversation automatically.'
+                  : doc.agent === 'opencode'
+                    ? 'No workstation resume command yet for OpenCode sessions, but replying on this item continues the same conversation automatically.'
+                    : 'No workstation resume command yet for Antigravity sessions, but replying on this item continues the same work item automatically.'}
             </Text>
           </Stack>
         )}

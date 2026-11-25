@@ -18,6 +18,7 @@ import {
   asNumber,
   asRecord,
   asString,
+  isHerdrPaneId,
   isSafeIdentifier,
   truncateTitle,
 } from './unknown-value';
@@ -323,10 +324,17 @@ export function parseSessionSummaryV1(
   const cwd = boundedString(record['cwd']);
   const worktree = boundedString(record['worktree']);
   const branch = boundedString(record['branch']);
+  const pane = asString(record['herdrPaneId']);
+  const herdrPaneId = pane && isHerdrPaneId(pane) ? pane : undefined;
   const actor = asString(record['githubActor']);
   const githubActor =
     actor && /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?$/u.test(actor)
       ? actor
+      : undefined;
+  const parent = asString(record['parentSessionId']);
+  const parentSessionId =
+    parent && parent !== sessionId && isSafeIdentifier(parent)
+      ? parent
       : undefined;
   const model = boundedString(record['model']);
   const resolvedModel = boundedString(record['resolvedModel']);
@@ -348,7 +356,9 @@ export function parseSessionSummaryV1(
     ...(cwd && { cwd }),
     ...(worktree && { worktree }),
     ...(branch && { branch }),
+    ...(herdrPaneId && { herdrPaneId }),
     ...(githubActor && { githubActor }),
+    ...(parentSessionId && { parentSessionId }),
     ...(model && { model }),
     ...(resolvedModel && { resolvedModel }),
     ...(permissionMode && { permissionMode }),

@@ -1,0 +1,252 @@
+name: Publish workstation CLI
+
+# Builds the workstation `lcars` CLI -- the session-title, hook and
+# hook-flush bundles plus their launcher -- from `main` and publishes it as
+# the one asset of the `workstation-cli` release. Homegit installs that asset
+# on every enrolled workstation and refreshes it, so a merged change to the
+# hook client reaches them without anyone rerunning an installer. See the
+# Workstation CLI row in docs/deployment-boundary.md.
+#
+# The release follows `main`; it is not a version. Its tag is created once
+# and never moves: the release notes and the archive's REVISION name the
+# commit the published bundles came from.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # CI's run conclusion is a rollup of every job in it. A non-required job
+  # that times out reports the whole run as cancelled even when Verify, the
+  # check that gated the merge, passed (#543, and Deploy console's gate).
+  # Publishing on the rollup would then skip a merged CLI change with every
+  # job of this workflow green. Ask for Verify's own conclusion instead.
+  gate:
+    name: Check that Verify passed
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+    # This GitHub-only check must not wait for fleet-runner placement.
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      verify_passed: ${{ steps.check.outputs.verify_passed }}
+    steps:
+      - name: Read Verify's conclusion
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          # A manual dispatch builds the head of main as it is, without
+          # waiting for its CI, like Deploy console's dispatch.
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            echo "verify_passed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A read that fails stops the job (errexit); it is not "did not pass".
+          conclusion="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.name == "Verify") | .conclusion] | first // ""')"
+          if [ "$conclusion" = success ]; then
+            echo "verify_passed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Not a failure of this workflow: CI's own run already shows it,
+          # and the next main revision that passes builds its own, newer head.
+          echo "verify_passed=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::Verify did not pass for CI run $RUN_ID at $HEAD_SHA (conclusion: '${conclusion:-missing}'); nothing to publish."
+
+  build:
+    name: Build and verify the archive
+    needs: gate
+    if: needs.gate.outputs.verify_passed == 'true'
+    # Three esbuild bundles and a dependency install: inside the hosted
+    # lane's 1 CPU / 5 GiB / 14 GiB / 15-minute envelope, like Deploy
+    # console's build. This job has no write access to the repository.
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+    env:
+      CI: 'true'
+      NX_DAEMON: 'false'
+      NX_PARALLEL: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Record the source revision
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup-node-pnpm
+      - name: Build the CLI bundles
+        run: |
+          ./tools/nx run-many -t session-title-cli hook-cli hook-flush-cli \
+            -p @agent-lcars/telemetry-watcher
+      - name: Pack and verify the archive
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          apps/telemetry-watcher/bin/package-workstation-cli.sh \
+            workstation-cli-out "$SOURCE_SHA"
+          apps/telemetry-watcher/bin/verify-workstation-cli.sh \
+            workstation-cli-out/lcars-workstation-cli.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: workstation-cli
+          # Not a dot-directory: upload-artifact leaves hidden paths out.
+          path: workstation-cli-out/
+          if-no-files-found: error
+          retention-days: 7
+          # A re-run of this job alone keeps the first attempt's artifact;
+          # without this the second upload is refused.
+          overwrite: true
+
+  publish:
+    name: Publish the archive
+    needs: build
+    # One publication at a time. The group is on this job, not the workflow:
+    # every CI completion starts a run of this workflow, pull requests
+    # included, and a workflow-level group would let such a run replace a
+    # pending `main` publication before the gate turned it away. Only runs
+    # that built an archive reach this job.
+    concurrency:
+      group: publish-workstation-cli
+      cancel-in-progress: false
+      # Every waiting publication keeps its place. With the default single
+      # waiting slot, an older commit whose build finished late would evict
+      # a newer one already waiting, and the descendant check below cannot
+      # bring back a run that was cancelled.
+      queue: max
+    # Holds the only write permission, and runs no code from the checkout:
+    # nothing a dependency's install script could reach can publish.
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+      TAG: workstation-cli
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: workstation-cli
+          path: workstation-cli-out
+      - name: Publish when the CLI changed
+        working-directory: workstation-cli-out
+        run: |
+          set -euo pipefail
+          asset=lcars-workstation-cli.tar.gz
+          release_api="repos/$GH_REPO/releases"
+          notes="$(printf '%s\n\nSource revision: %s\n' \
+            'The workstation lcars CLI built from main. Homegit installs and refreshes it; do not pin it.' \
+            "$SOURCE_SHA")"
+
+          # The release, or proof that there is none. Any other answer stops
+          # the job: publishing over a release that could not be read would
+          # be a guess.
+          if ! gh api "$release_api/tags/$TAG" --silent 2>"$RUNNER_TEMP/release.err"; then
+            if ! grep -q 'HTTP 404' "$RUNNER_TEMP/release.err"; then
+              cat "$RUNNER_TEMP/release.err" >&2
+              echo "::error::Could not read release $TAG."
+              exit 1
+            fi
+            # Created empty. With assets, gh makes a draft and publishes it
+            # after the uploads; a run interrupted in between would leave a
+            # draft that no later run publishes.
+            gh release create "$TAG" --target "$SOURCE_SHA" --latest=false \
+              --title 'Workstation CLI' --notes "$notes"
+          fi
+          asset_id() {
+            gh api "$release_api/tags/$TAG" \
+              --jq ".assets[] | select(.name == \"$1\") | .id"
+          }
+
+          mkdir "$RUNNER_TEMP/published"
+          if [ -n "$(asset_id "$asset")" ] &&
+             gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP/published" &&
+             cmp -s "$RUNNER_TEMP/published/SHA256SUMS" SHA256SUMS; then
+            echo "::notice::The published workstation CLI already matches $SOURCE_SHA."
+            exit 0
+          fi
+
+          # A re-run can deliver an older commit after a newer one. Never
+          # replace a descendant's build. A comparison that cannot be read
+          # stops the job (errexit) instead of counting as "not newer".
+          published="$(gh api "$release_api/tags/$TAG" --jq '.body // ""' |
+            tr -d '\r' | sed -n 's/^Source revision: \([0-9a-f]\{40\}\)$/\1/p')"
+          published="${published%%$'\n'*}"
+          if [ -n "$published" ] && [ "$published" != "$SOURCE_SHA" ]; then
+            relation="$(gh api "repos/$GH_REPO/compare/$SOURCE_SHA...$published" --jq .status)"
+            if [ "$relation" = ahead ]; then
+              echo "::notice::Release $TAG already holds descendant $published; leaving it."
+              exit 0
+            fi
+          fi
+
+          # Notes first: they are what the check above reads, so a run that
+          # stops after this line still keeps an older commit from publishing
+          # over this one, and the next run for this or a newer commit
+          # finishes the job.
+          gh release edit "$TAG" --draft=false --notes "$notes"
+
+          # Workstations fetch the archive by name. Replacing it in place
+          # deletes it first and loses it if the upload then fails, so the
+          # new build goes up under another name and takes the real one in
+          # the last two calls.
+          cp "$asset" "$RUNNER_TEMP/$asset.new"
+          gh release upload "$TAG" "$RUNNER_TEMP/$asset.new" --clobber
+          new_id="$(asset_id "$asset.new")"
+          if [ -z "$new_id" ]; then
+            echo "::error::The uploaded archive is not on release $TAG."
+            exit 1
+          fi
+          # The published checksum list describes the archive about to be
+          # replaced. Remove it first: if this run stops anywhere after the
+          # swap, no list is left to make a later run, or a revert back to
+          # these same bytes, look already published.
+          sums_id="$(asset_id SHA256SUMS)"
+          if [ -n "$sums_id" ]; then
+            gh api --method DELETE "$release_api/assets/$sums_id" --silent
+          fi
+          old_id="$(asset_id "$asset")"
+          if [ -n "$old_id" ]; then
+            gh api --method DELETE "$release_api/assets/$old_id" --silent
+          fi
+          # Between these two calls the archive has no asset under its name.
+          # Keep that as short as it can be: try the rename again before
+          # giving up. If it still fails, the next run finds the uploaded
+          # copy and finishes.
+          renamed=false
+          for attempt in 1 2 3; do
+            if gh api --method PATCH "$release_api/assets/$new_id" -f name="$asset" --silent; then
+              renamed=true
+              break
+            fi
+            echo "::warning::Renaming the uploaded archive failed (attempt $attempt of 3)."
+            sleep "$attempt"
+          done
+          if [ "$renamed" != true ]; then
+            echo "::error::Release $TAG has no $asset until the next run renames $asset.new."
+            exit 1
+          fi
+
+          # The checksum list goes last: it is what the next run compares, so
+          # anything interrupted before it is simply repeated.
+          gh release upload "$TAG" SHA256SUMS
+          echo "::notice::Published the workstation CLI from $SOURCE_SHA."

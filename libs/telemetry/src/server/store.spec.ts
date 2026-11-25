@@ -12,6 +12,7 @@ import { SessionDoc, SessionWrite } from '../lib/types';
 import {
   _resetForTesting,
   getAgentTelemetryWriterFirestore,
+  listSessionDocsWrittenSince,
   setSessionExpiry,
   upsertSession,
 } from './store';
@@ -119,6 +120,7 @@ describe('agent-telemetry store', () => {
       expect(snap.data()).toEqual({
         ...doc,
         expireAt: Timestamp.fromDate(new Date(doc.expireAt as string)),
+        writtenAt: expect.anything(),
       });
     });
 
@@ -202,9 +204,14 @@ describe('agent-telemetry store', () => {
 
       expect(update).toHaveBeenCalledOnce();
       const fields = update.mock.calls[0]?.[0] as Record<string, unknown>;
-      expect(Object.keys(fields)).toEqual(['expireAt']);
+      expect(Object.keys(fields)).toEqual(['expireAt', 'writtenAt']);
       expect(
         (fields['expireAt'] as FieldValue).isEqual(FieldValue.delete()),
+      ).toBe(true);
+      expect(
+        (fields['writtenAt'] as FieldValue).isEqual(
+          FieldValue.serverTimestamp(),
+        ),
       ).toBe(true);
     });
 
@@ -232,6 +239,39 @@ describe('agent-telemetry store', () => {
       await expect(setSessionExpiry('session-1', null)).rejects.toThrow(
         'denied',
       );
+    });
+  });
+
+  describe('listSessionDocsWrittenSince', () => {
+    it('reads by the writtenAt stamp, drops it from the doc, and returns the read time', async () => {
+      const since = Timestamp.fromMillis(1_000);
+      const readTime = Timestamp.fromMillis(2_000);
+      const where = vi.fn().mockReturnValue({
+        get: async () => ({
+          docs: [
+            {
+              data: () => ({
+                ...sessionDoc({ agent: 'claude-code' }),
+                expireAt: Timestamp.fromDate(new Date('2027-01-01T00:00:00Z')),
+                writtenAt: Timestamp.fromMillis(1_500),
+              }),
+            },
+          ],
+          readTime,
+        }),
+      });
+      const firestore = { collection: () => ({ where }) };
+
+      const result = await listSessionDocsWrittenSince(
+        firestore as never,
+        since,
+      );
+
+      expect(where).toHaveBeenCalledWith('writtenAt', '>=', since);
+      expect(result.readTime).toBe(readTime);
+      expect(result.docs).toHaveLength(1);
+      expect(result.docs[0]).not.toHaveProperty('writtenAt');
+      expect(result.docs[0]?.expireAt).toBe('2027-01-01T00:00:00.000Z');
     });
   });
 });

@@ -168,6 +168,16 @@ export interface SessionSummary {
   cwd?: string;
   worktree?: string;
   branch?: string;
+  /** The session that spawned this one, when it is a subagent: a Codex
+   * thread spawned by another thread (`session_meta.source.subagent.
+   * thread_spawn.parent_thread_id`) or a standalone Claude Code subagent
+   * transcript (`<parent>/subagents/agent-<id>.jsonl`). Absent on a root
+   * session. A run's root session is the one without it (#3496). */
+  parentSessionId?: string;
+  /** The herdr-core terminal this session runs in, observed by the host hook
+   * and never read from the transcript. Only meaningful together with
+   * `host`: it names a terminal of that host's herdr-core. */
+  herdrPaneId?: string;
   /** Hook-observed GitHub /user identity, never extracted from transcript text. */
   githubActor?: string;
   /** Which GitHub repo this session belongs to. `cli` summaries get this
@@ -223,6 +233,9 @@ export interface SessionSummary {
 export interface ReduceTranscriptOptions {
   /** Attached by the host watcher (not present in the transcript itself). */
   host?: string;
+  /** Source file path when known; identifies standalone Claude subagent files
+   * (`<parentSessionId>/subagents/agent-<agentId>.jsonl`). */
+  filePath?: string;
 }
 
 export type SessionLiveness = 'live' | 'idle' | 'ended' | 'stale';
@@ -281,6 +294,8 @@ interface BaseSessionDoc {
    * dips and recovers is not credited twice. */
   tokenMinutesBase?: number;
   lastToolCall?: ToolCallDigest;
+  /** See {@link SessionSummary.parentSessionId}. */
+  parentSessionId?: string;
   /** Persisted client-reported model selection; see SessionSummary.model. */
   model?: string;
   /** Physical backend observed behind a routed model request. */
@@ -329,6 +344,9 @@ export interface CliSessionDoc extends BaseSessionDoc {
   cwd?: string;
   worktree?: string;
   branch?: string;
+  /** See {@link SessionSummary.herdrPaneId}. Host-scoped: a runner session
+   * never runs in a herdr terminal. */
+  herdrPaneId?: string;
   /** Host-scoped, like `cwd`/`branch` - issue-agent (runner) sessions have
    * no artifact story yet, so this only ever appears on `cli` docs. */
   artifacts?: string[];
@@ -426,7 +444,8 @@ export interface BuildSessionDocOptions {
 /**
  * Closed union of `SessionDoc` fields a write can request DELETED from
  * Firestore rather than merely omitted (issue #1257) — `status` and
- * `statusUpdatedAt` (always requested together), `resolvedModel`, and CLI
+ * `statusUpdatedAt` (always requested together), `resolvedModel`,
+ * `herdrPaneId` (a session no longer observed in a herdr-core terminal), and CLI
  * archive capability fields (revoked when consent is absent; see
  * {@link buildSessionWrite}'s `clearFields` derivation in `session-doc.ts`).
  * Closed on purpose: nothing else on `SessionDoc` is deletable this way, so
@@ -435,6 +454,7 @@ export interface BuildSessionDocOptions {
  */
 export type ClearableSessionField =
   | 'githubActor'
+  | 'herdrPaneId'
   | 'status'
   | 'statusUpdatedAt'
   | 'resolvedModel'

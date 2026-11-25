@@ -41,6 +41,25 @@ export async function readNativeRuns() {
   });
 }
 
+export async function seedNativeHandoff(message: string) {
+  const store = new FirestoreStore(emulatorOptions());
+  const anchor = { workId: NATIVE_WORK_ID };
+  const [versioned, run] = await Promise.all([
+    store.readTask(anchor),
+    store.readRun(`work:${NATIVE_WORK_ID}/r1`),
+  ]);
+  if (!versioned || run?.result?.summary !== 'park')
+    throw new Error('Missing parked decision fixture');
+  await store.apply({
+    expectedRevision: versioned.revision,
+    decision: {
+      task: versioned.task,
+      run: { ...run, result: { ...run.result, message } },
+      outbox: [],
+    },
+  });
+}
+
 export async function resetSchedules() {
   const firestore = new Firestore(emulatorOptions());
   try {

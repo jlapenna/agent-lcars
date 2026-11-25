@@ -1,7 +1,6 @@
 import type { RunListCursor } from '@agent-lcars/orchestrator';
 import { PIPELINES } from '@agent-lcars/work';
 import { Anchor } from '@mantine/core';
-import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 
@@ -54,6 +53,7 @@ import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { LiveDashboard } from '../live-dashboard';
 import { MergedLastDay } from '../merged-last-day';
+import { NavSuspense } from '../nav-suspense';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { ActiveAgentsSection } from './active-agents-section';
@@ -117,6 +117,10 @@ async function AgentsPageBody({
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
 
+  const activityRead = getCachedAgentActivity();
+  const outcomeRead = outcomesCursor
+    ? getRecentOutcomesPage(outcomesCursor)
+    : undefined;
   const [
     {
       data: { items },
@@ -128,10 +132,16 @@ async function AgentsPageBody({
     outcomePage,
   ] = await Promise.all([
     getCachedQueueItems(),
-    getCachedAgentActivity(),
+    activityRead,
     getCliSessions(),
-    getRunnerSessionsByRunId(),
-    outcomesCursor ? getRecentOutcomesPage(outcomesCursor) : undefined,
+    Promise.all([activityRead, outcomeRead]).then(([{ data }, page]) =>
+      getRunnerSessionsByRunId([
+        ...data.liveRuns,
+        ...data.recentRuns,
+        ...(page?.runs ?? []),
+      ]),
+    ),
+    outcomeRead,
   ]);
   // Deduped the same way as the home page (page.tsx): parallel fetchers can
   // degrade the same way (e.g. one rate-limit hit per PR-join), and each
@@ -477,7 +487,7 @@ function AgentsViewContent({
   return (
     <>
       <LiveDashboard />
-      <Suspense fallback={<PageLoading rows={5} header={false} />}>
+      <NavSuspense fallback={<PageLoading rows={5} header={false} />}>
         <AgentsPageBody
           repoFilter={repoFilter}
           filters={filters}
@@ -485,7 +495,7 @@ function AgentsViewContent({
           watchedRepos={watchedRepos}
           outcomesCursor={outcomesCursor}
         />
-      </Suspense>
+      </NavSuspense>
     </>
   );
 }
@@ -573,7 +583,7 @@ async function AgentsPageShell({ searchParams }: PageProps) {
 // reads separately, so the header never waits on those (see #160).
 export default function AgentsPage({ searchParams }: PageProps) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="agents"
@@ -584,6 +594,6 @@ export default function AgentsPage({ searchParams }: PageProps) {
       }
     >
       <AgentsPageShell searchParams={searchParams} />
-    </Suspense>
+    </NavSuspense>
   );
 }

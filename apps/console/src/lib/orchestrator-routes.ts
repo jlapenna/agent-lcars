@@ -1,4 +1,5 @@
 import {
+  AGENT_BOT_LOGINS,
   type AgentPipeline,
   isDispatchPipeline,
   type IssueReference,
@@ -6,6 +7,7 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
+  type GithubAnchor,
   isWorkAnchor,
   type Orchestrator,
   type OrchestratorStore,
@@ -19,6 +21,7 @@ import {
 } from '@agent-lcars/work';
 import { z } from 'zod';
 
+import { isControlPlaneRepository } from '@/lib/deployment';
 import type { GithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
   githubAnchorProjectionAnchorsFromDelivery,
@@ -59,6 +62,16 @@ export interface OrchestratorRouteDeps {
     anchor: TriageAnchor,
     deleted?: boolean,
   ) => Promise<void>;
+  reconcilePullRequestRemediation?: (
+    anchor: GithubAnchor,
+    options?: { afterRun?: Run },
+  ) => Promise<unknown>;
+  reconcileMergedPullRequestConflicts?: (input: {
+    repo: string;
+    baseRef: string;
+    mergedNumber: number;
+  }) => Promise<void>;
+  reconcileOpenPullRequestRemediations?: (deadline: number) => Promise<void>;
   executeRepositoryJobs?: (deadline: number) => Promise<void>;
   observeJobCredentials?: () => Promise<JobCredentialObservation>;
   /** Repository-owned agent catalog health; a failed read omits it. */
@@ -75,6 +88,11 @@ export interface OrchestratorRouteDeps {
    * settles) or a closed item's reopen. The workflow applies whatever state
    * it then reads. Never rejects. */
   expireItemSessions?: (workId: string) => Promise<void>;
+  /** Runs the repository's Agent PR Auto-Merge sweep (`agent-automerge.yml`)
+   * on its default branch, so an approval arms the PR now instead of at the
+   * next push, CI completion or daily run. The workflow decides what to arm.
+   * May reject; the caller logs and continues. */
+  reconcileAutomerge?: (repo: string, ref: string) => Promise<void>;
   /** Exact GitHub lifecycle read that fences a close delivery against a
    * reopen. A close webhook that is dropped entirely needs no sweep: the
    * claim route repeats this read before a closed anchor's queued
@@ -89,9 +107,6 @@ export interface OrchestratorRouteDeps {
     anchor: TaskId,
     input?: { deleted?: boolean },
   ) => Promise<void>;
-  /** Invoked only after the durable projection refresh has completed. The
-   * hosted webhook route binds this to the console queue cache tag. */
-  invalidateAuthoritativeQueue?: () => void | Promise<void>;
 }
 
 type RouteResult = { status: number; body: Record<string, unknown> };
@@ -174,7 +189,6 @@ async function refreshGithubAnchorProjection(
     )(deletedAnchor, { deleted: true });
     if (!isWorkAnchor(deletedAnchor))
       await deps.reconcileIssueTriage?.(deletedAnchor, true);
-    await deps.invalidateAuthoritativeQueue?.();
     return;
   }
   for (const anchor of githubAnchorProjectionAnchorsFromDelivery(input)) {
@@ -190,7 +204,6 @@ async function refreshGithubAnchorProjection(
         await deps.reconcileIssueTriage?.(anchor);
     }
   }
-  await deps.invalidateAuthoritativeQueue?.();
 }
 
 async function refreshGithubAnchorProjectionAfterAdmission(
@@ -210,8 +223,15 @@ async function refreshGithubAnchorProjectionAfterAdmission(
 /** The pull requests a delivery names, for events that can change whether a
  * waiting delivery binding's PR merged, closed, moved or got feedback. */
 const deliveryPullRequestsSchema = z.object({
+  action: z.string().optional(),
   repository: z.object({ full_name: z.string().min(1) }),
-  pull_request: z.object({ number: z.number().int().positive() }).optional(),
+  pull_request: z
+    .object({
+      number: z.number().int().positive(),
+      merged: z.boolean().optional(),
+      base: z.object({ ref: z.string().min(1) }).optional(),
+    })
+    .optional(),
   check_run: z
     .object({
       pull_requests: z.array(z.object({ number: z.number().int().positive() })),
@@ -235,6 +255,17 @@ async function wakeDeliveryMonitors(
   const parsed = deliveryPullRequestsSchema.safeParse(input.payload);
   if (!parsed.success) return;
   const repo = parsed.data.repository.full_name;
+  // A merge into a base branch can make other waiting delivery PRs in the same
+  // repository conflict (`dirty`), so wake every waiting monitor in `repo`.
+  if (
+    input.event === 'pull_request' &&
+    parsed.data.action === 'closed' &&
+    parsed.data.pull_request?.merged === true
+  ) {
+    const woken = (await wakeDeliveryMonitor(deps, { repo })).length;
+    if (woken > 0) await deps.drain(Math.max(10, woken * 2));
+    return;
+  }
   const numbers = [
     ...(parsed.data.pull_request === undefined
       ? []
@@ -244,7 +275,171 @@ async function wakeDeliveryMonitors(
   let woken = 0;
   for (const number of new Set(numbers))
     woken += (await wakeDeliveryMonitor(deps, { repo, number })).length;
-  if (woken > 0) await deps.drain(woken);
+  if (woken > 0) await deps.drain(Math.max(10, woken * 2));
+}
+
+const approvalSchema = z.object({
+  action: z.literal('submitted'),
+  repository: z.object({
+    full_name: z.string().min(1),
+    default_branch: z.string().min(1),
+  }),
+  review: z.object({
+    state: z.literal('approved'),
+    author_association: z.string().optional(),
+    user: z.object({ login: z.string() }).nullable().optional(),
+  }),
+  pull_request: z.object({
+    state: z.literal('open'),
+    draft: z.boolean().optional(),
+    head: z.object({
+      repo: z.object({ full_name: z.string().min(1) }).nullable(),
+    }),
+  }),
+});
+
+const TRUSTED_APPROVER_ASSOCIATIONS = new Set([
+  'OWNER',
+  'MEMBER',
+  'COLLABORATOR',
+]);
+const FLEET_APPROVERS = new Set(
+  AGENT_BOT_LOGINS.map((login) => login.toLowerCase()),
+);
+
+/** Only an approval GitHub's rule could count wakes the sweep: anyone can
+ * review a public repository, and each dispatch runs privileged workflow code
+ * on a self-hosted runner. The fleet App's reviews arrive as `NONE`. */
+function isTrustedApprover(
+  review: z.infer<typeof approvalSchema>['review'],
+): boolean {
+  const login = review.user?.login.toLowerCase();
+  return (
+    (login !== undefined && FLEET_APPROVERS.has(login)) ||
+    TRUSTED_APPROVER_ASSOCIATIONS.has(review.author_association ?? '')
+  );
+}
+
+/** An approval is the request to land a pull request (jlapenna/agent-lcars#3508).
+ * Nothing else wakes the auto-merge sweep when one arrives: CI usually finished
+ * before the review did, so an approved PR waited for the next push to the
+ * base branch or the daily run. Closed PRs, forks and drafts never reach the
+ * sweep's arm, and only control-plane repositories are dispatched. */
+async function reconcileAutomergeOnApproval(
+  deps: OrchestratorRouteDeps,
+  input: { event: string; deliveryId: string; payload: unknown },
+): Promise<void> {
+  if (
+    input.event !== 'pull_request_review' ||
+    deps.reconcileAutomerge === undefined
+  )
+    return;
+  const parsed = approvalSchema.safeParse(input.payload);
+  if (!parsed.success) return;
+  const { repository, review, pull_request: pr } = parsed.data;
+  if (
+    !isControlPlaneRepository(repository.full_name) ||
+    !isTrustedApprover(review) ||
+    pr.draft === true ||
+    pr.head.repo?.full_name !== repository.full_name
+  )
+    return;
+  try {
+    await deps.reconcileAutomerge(
+      repository.full_name,
+      repository.default_branch,
+    );
+  } catch (error) {
+    logger.warn(
+      'agent-lcars: auto-merge sweep dispatch failed for %s (%s); the next push, CI completion or daily run arms it:',
+      repository.full_name,
+      input.deliveryId,
+      error,
+    );
+  }
+}
+
+const prRemediationTriggerSchema = z.object({
+  action: z.string().optional(),
+  repository: z.object({ full_name: z.string().min(1) }),
+  pull_request: z.object({
+    number: z.number().int().positive(),
+    merged: z.boolean().optional(),
+    base: z.object({ ref: z.string().min(1) }).optional(),
+  }),
+});
+
+async function maybeReconcilePullRequestRemediation(
+  deps: OrchestratorRouteDeps,
+  input: { event: string; deliveryId: string; payload: unknown },
+  admittedNewRun: boolean,
+): Promise<void> {
+  if (
+    deps.reconcilePullRequestRemediation === undefined &&
+    deps.reconcileMergedPullRequestConflicts === undefined
+  ) {
+    return;
+  }
+  if (
+    ![
+      'pull_request',
+      'pull_request_review',
+      'pull_request_review_thread',
+    ].includes(input.event)
+  ) {
+    return;
+  }
+  const parsed = prRemediationTriggerSchema.safeParse(input.payload);
+  if (!parsed.success) return;
+  const repo = parsed.data.repository.full_name;
+  const pr = parsed.data.pull_request;
+  const action = parsed.data.action;
+
+  try {
+    if (
+      input.event === 'pull_request' &&
+      action === 'closed' &&
+      pr.merged === true &&
+      pr.base?.ref !== undefined
+    ) {
+      await deps.reconcileMergedPullRequestConflicts?.({
+        repo,
+        baseRef: pr.base.ref,
+        mergedNumber: pr.number,
+      });
+      return;
+    }
+
+    if (admittedNewRun) return;
+
+    const shouldInspectPr =
+      (input.event === 'pull_request_review' &&
+        (action === 'submitted' || action === 'edited')) ||
+      (input.event === 'pull_request_review_thread' &&
+        action === 'unresolved') ||
+      (input.event === 'pull_request' &&
+        [
+          'opened',
+          'reopened',
+          'ready_for_review',
+          'synchronize',
+          'unlabeled',
+          'labeled',
+        ].includes(action ?? ''));
+    if (shouldInspectPr) {
+      await deps.reconcilePullRequestRemediation?.({
+        repo,
+        issue: pr.number,
+      });
+    }
+  } catch (error) {
+    logger.warn(
+      'agent-lcars: automatic PR remediation check failed for %s/%s:',
+      input.event,
+      input.deliveryId,
+      error,
+    );
+  }
 }
 
 export async function handleWebhookDelivery(
@@ -264,15 +459,26 @@ export async function handleWebhookDelivery(
         error,
       );
     }
+    await reconcileAutomergeOnApproval(deps, input);
     const interpreted = interpretDelivery(input);
-    if (interpreted.kind === 'ignore')
-      return await handleIgnoredDelivery(deps, input, interpreted);
+    if (interpreted.kind === 'ignore') {
+      const ignored = await handleIgnoredDelivery(deps, input, interpreted);
+      await maybeReconcilePullRequestRemediation(deps, input, false);
+      return ignored;
+    }
     const result = await decideDelivery(deps, input, interpreted);
     // Every acknowledged outcome refreshes the anchor's projection exactly
     // once, after the durable decision; a rejected admission (500) is retried
     // by Cloud Tasks and refreshes on the retry that acknowledges it.
-    if (result.status === 200)
+    if (result.status === 200) {
       await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+      await maybeReconcilePullRequestRemediation(
+        deps,
+        input,
+        typeof result.body['runId'] === 'string' &&
+          result.body['duplicate'] !== true,
+      );
+    }
     return result;
   } catch (error) {
     if (error instanceof ProjectionRefreshError) throw error;
@@ -624,6 +830,21 @@ export async function handleReconcile(
     // ten-second claim request. Every choice rechecks the requesting grant;
     // the ordinary claim transaction still enforces the executor grant.
     const rerouted = await deps.orchestrator.rerouteQueued();
+    // Enqueue any missed open-PR remediations before the single outbox drain
+    // below so newly minted `dispatch-run` entries share `drained` and its
+    // failed-entry exclusion without a second drain pass.
+    if (deps.reconcileOpenPullRequestRemediations !== undefined) {
+      try {
+        await deps.reconcileOpenPullRequestRemediations(
+          Math.min(modelDeadline, Date.now() + 25_000),
+        );
+      } catch (error) {
+        logger.warn(
+          'agent-lcars: open PR remediation sweep failed during reconcile:',
+          error,
+        );
+      }
+    }
     // One drain owns the whole bounded maintenance pass so its failed-entry
     // exclusion remains effective across all 30 claims. The five-minute
     // ticker continues any larger backlog on its next pass.

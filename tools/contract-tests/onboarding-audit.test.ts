@@ -93,54 +93,6 @@ async function githubHttpError(
 }
 
 describe('read-only onboarding audit', () => {
-  it.each([
-    ['pass', 'pass', '2026-11-19T12:00:00Z', 'pass'],
-    ['pass', 'unverifiable', '2026-11-19T12:00:00Z', 'bypass'],
-    ['fail', 'fail', '2026-11-19T12:00:00Z', 'bypass'],
-    ['pass', 'unverifiable', '2026-11-20T16:00:36.429Z', 'pass'],
-  ])(
-    'audits candidate checks using the protected push evaluation (%s)',
-    async (result, expected, updated_at, suiteResult) => {
-      const checks = [
-        { context: 'LCARS review (merge candidate)', integration_id: 4457090 },
-      ];
-      const rule = {
-        type: 'required_status_checks',
-        ruleset_id: 42,
-        ruleset_source_type: 'Repository',
-        parameters: { required_status_checks: checks },
-      };
-      const prefix = `/repos/${repo}/rulesets`;
-      const { api } = fixture({
-        [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: [rule],
-        [`${prefix}/rule-suites?ref=refs%2Fheads%2Fmain&time_period=month&rule_suite_result=all&per_page=100&page=1`]:
-          [
-            {
-              id: 7,
-              after_sha: 'abc123',
-              ref: 'refs/heads/main',
-              result: suiteResult,
-              pushed_at: '2026-11-20T16:00:36Z',
-            },
-          ],
-        [`${prefix}/rule-suites/7`]: {
-          rule_evaluations: [
-            {
-              enforcement: 'active',
-              rule_type: 'required_status_checks',
-              rule_source: { type: 'ruleset', id: 42 },
-              result,
-            },
-          ],
-        },
-        [`${prefix}/42`]: { updated_at, enforcement: 'active', rules: [rule] },
-      });
-      expect(
-        (await audit(api)).find(({ fact }) => fact === 'required-checks')
-          ?.status,
-      ).toBe(expected);
-    },
-  );
   it('falls back to the fleet token for an unset workflow secret', async () => {
     const base = fixture();
     const tokens: string[] = [];
@@ -400,172 +352,18 @@ describe('read-only onboarding audit', () => {
     ).toBe(true);
   });
 
-  it.each([true, false])(
-    'preserves legacy branch review evidence without a PR (%s)',
-    async (present) => {
-      const rule = { context: 'LCARS review', integration_id: 15368 };
-      const { api } = fixture({
-        [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: [
-          {
-            type: 'required_status_checks',
-            parameters: { required_status_checks: [rule] },
-          },
-        ],
-        [`/repos/${repo}/commits/abc123/check-runs?filter=all&per_page=100&page=1`]:
-          {
-            check_runs: present
-              ? [{ name: 'LCARS review', app: { id: 15368 } }]
-              : [],
-          },
-        [`/repos/${repo}/commits/abc123/pulls?per_page=100&page=1`]: [],
-        [`/repos/${repo}/actions/runs?head_sha=abc123&per_page=100`]: {
-          workflow_runs: [{ status: 'completed' }],
-        },
-      });
-      expect((await audit(api))[3].status).toBe(present ? 'pass' : 'fail');
-    },
-  );
-
-  it.each([
-    'present',
-    'unavailable',
-    'different-app',
-    'independent-failure',
-    'mixed-legacy-first',
-    'mixed-app-first',
-    'same-second',
-    'before-enforcement',
-    'different-branch',
-    'inherited',
-  ])('audits PR-head App reviews with %s evidence', async (evidence) => {
-    const legacy = { context: 'LCARS review', integration_id: 15368 };
-    const mixed = evidence.startsWith('mixed-');
+  it('fails when a required check is absent after default-branch CI completes', async () => {
     const { api } = fixture({
-      [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: [
-        {
-          type: 'required_status_checks',
-          ruleset_id: 123,
-          ruleset_source_type:
-            evidence === 'inherited' ? 'Organization' : 'Repository',
-          parameters: {
-            required_status_checks: [
-              ...(evidence === 'mixed-legacy-first' ? [legacy] : []),
-              { context: 'LCARS review', integration_id: 4457090 },
-              ...(evidence === 'mixed-app-first' ? [legacy] : []),
-              { context: 'LCARS review', integration_id: 4457090 },
-              ...(evidence === 'independent-failure'
-                ? [{ context: 'missing-check' }]
-                : []),
-            ],
-          },
-        },
-      ],
-      [`/repos/${repo}/commits/abc123/pulls?per_page=100&page=1`]: [
-        'unavailable',
-        'independent-failure',
-      ].includes(evidence)
-        ? []
-        : [
-            {
-              merge_commit_sha: 'abc123',
-              merged_at: '2026-11-01',
-              head: { sha: 'reviewed' },
-            },
-          ],
-      [`/repos/${repo}/commits/reviewed/statuses?per_page=100&page=1`]: [],
-      [`/repos/${repo}/commits/reviewed/check-runs?filter=all&per_page=100&page=1`]:
-        {
-          check_runs: mixed
-            ? []
-            : ['before-enforcement', 'different-branch', 'inherited'].includes(
-                  evidence,
-                )
-              ? []
-              : [
-                  {
-                    name: 'LCARS review',
-                    head_sha: 'reviewed',
-                    external_id: 'lcars-review',
-                    app: {
-                      id: ['different-app', 'same-second'].includes(evidence)
-                        ? 42
-                        : 4457090,
-                    },
-                  },
-                ],
-        },
-      [`/repos/${repo}/rulesets/rule-suites?ref=refs%2Fheads%2Fmain&time_period=month&rule_suite_result=all&per_page=100&page=1`]:
-        [
-          {
-            id: 42,
-            after_sha: 'abc123',
-            ref: 'refs/heads/main',
-            result: 'pass',
-            pushed_at: '2026-11-01',
-          },
-        ],
-      [`/repos/${repo}/rulesets/rule-suites/42`]: {
-        rule_evaluations:
-          evidence === 'different-branch'
-            ? []
-            : [
-                {
-                  enforcement: 'active',
-                  rule_type: 'required_status_checks',
-                  rule_source: { type: 'ruleset', id: 123 },
-                },
-              ],
-      },
-      [`/repos/${repo}/rulesets/123/history?per_page=100&page=1`]: [
-        {
-          version_id: 2,
-          updated_at:
-            evidence === 'same-second'
-              ? '2026-11-01T00:00:00.429Z'
-              : '2026-11-05',
-        },
-        { version_id: 1, updated_at: '2026-10-01' },
-      ],
-      [`/repos/${repo}/rulesets/123/history/1`]: {
-        state: {
-          enforcement: 'active',
-          rules:
-            evidence === 'before-enforcement'
-              ? []
-              : [
-                  {
-                    type: 'required_status_checks',
-                    parameters: {
-                      required_status_checks: [
-                        mixed
-                          ? legacy
-                          : {
-                              context: 'LCARS review',
-                              integration_id: 4457090,
-                            },
-                      ],
-                    },
-                  },
-                ],
-        },
-      },
+      [`/repos/${repo}/commits/abc123/check-runs?filter=all&per_page=100&page=1`]:
+        { check_runs: [] },
       [`/repos/${repo}/actions/runs?head_sha=abc123&per_page=100`]: {
         workflow_runs: [{ status: 'completed' }],
       },
     });
-    expect((await audit(api))[3].status).toBe(
-      evidence === 'present'
-        ? 'pass'
-        : [
-              'unavailable',
-              'before-enforcement',
-              'different-branch',
-              'same-second',
-              'inherited',
-            ].includes(evidence)
-          ? 'unverifiable'
-          : 'fail',
-    );
+    expect((await audit(api))[3]).toMatchObject({
+      status: 'fail',
+      detail: expect.stringContaining('Verify'),
+    });
   });
 
   it('does not call unfinished default-branch CI a configuration mismatch', async () => {

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,11 +38,20 @@ describe('console page-shell contract', () => {
   });
 
   it('keeps every non-route state in the same higher-order shell', () => {
-    for (const file of ['error.tsx', 'loading.tsx', 'not-found.tsx']) {
+    for (const file of ['error.tsx', 'not-found.tsx']) {
       const fileSource = source(join(APP_DIRECTORY, file));
       expect(fileSource).toContain('withConsolePageShell');
       expect(fileSource).not.toContain('ConsoleAppShell');
     }
+  });
+
+  it('keeps client navigation on the live frame instead of a loading route', () => {
+    // A segment `loading.tsx` swaps the current page's frame for a generic
+    // one (wrong title, Bridge highlighted) on every client navigation, and
+    // the page skeleton behind it then waits out React's 300 ms fallback
+    // reveal throttle. Pages stream their own skeletons through
+    // `NavSuspense`, which only exists for the first, streamed document.
+    expect(existsSync(join(APP_DIRECTORY, 'loading.tsx'))).toBe(false);
   });
 
   it('keeps the shell and higher-order wrapper server-renderable', () => {

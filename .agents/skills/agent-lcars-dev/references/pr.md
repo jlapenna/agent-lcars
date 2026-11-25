@@ -123,8 +123,41 @@
 
    Require an open, ready PR at `reviewed_head` before arming. Afterward,
    confirm either a non-null SQUASH `autoMergeRequest` at that same head or
-   an actual merge of that head. Execute the closing-scope guard and arming
-   only as the `&&`-chained sequence above: a rejected, incomplete or
+   an actual merge of that head.
+
+   **Arm once, then leave it.** An armed PR that has not merged is waiting
+   on a required check, not stuck. Do not run `gh pr merge` on it again:
+   `gh pr merge --auto` merges at once, instead of queueing, when GitHub
+   reports the PR as `CLEAN`, `HAS_HOOKS` or `UNSTABLE`, and an
+   administrator's merge bypasses a required check that is still missing.
+   To see what an armed PR is waiting for, read the requirement and the
+   head's checks:
+
+   ```bash
+   gh api repos/jlapenna/agent-lcars/rules/branches/main \
+     --jq '.[] | select(.type == "required_status_checks")
+           | .parameters.required_status_checks[].context'
+   gh api "repos/jlapenna/agent-lcars/commits/$reviewed_head/check-runs" --paginate \
+     --jq '.check_runs[] | [.name, .status, .conclusion] | @tsv'
+   gh api "repos/jlapenna/agent-lcars/commits/$reviewed_head/status" \
+     --jq '.statuses[] | [.context, .state] | @tsv'
+   ```
+
+   A required context that is not successful there is the wait. Find why it
+   has not passed or why its publisher has not run; never merge around it.
+   While a required context is still pending, arm with the shared protocol's
+   recipe in
+   [`agent-protocol.md`](../../../../agents/shared/skills/agent-protocol/reference/agent-protocol.md),
+   chained to the same guard: its `enablePullRequestAutoMerge` call can only
+   queue. GitHub refuses that call for a PR that could merge now; when every
+   required context is already successful on the head, the guarded CLI
+   sequence above is the one that merges it.
+
+   Read the rule suite after a merge, as below: a `bypass` there means the
+   merge did not satisfy the ruleset.
+
+   Execute the closing-scope guard and whichever arming call you use
+   only as an `&&`-chained sequence: a rejected, incomplete or
    changed-scope read must stop the chain. Arming does not declare checks
    passed; an already-eligible PR can merge immediately. If arming fails,
    re-read the exact PR/head and diagnose the error. Never add `--admin`,
@@ -150,8 +183,11 @@
    reads OPEN/ready with all required checks green. Record that refusal as a
    state change, not transport loss: it repeats
    identically, so re-issuing it is a blind retry. Re-read the head, closing
-   scope, reviews and required checks, then use the guarded CLI sequence
-   above; it can merge the already-eligible head normally. Do not manufacture
+   scope, reviews and required checks. Only when every context the ruleset
+   requires is successful on that head (the reads under "Arm once, then
+   leave it" above; `UNSTABLE` or "all of `gh pr checks` green" is not
+   that), use the guarded CLI sequence above, which then merges the
+   eligible head normally. Do not manufacture
    a new revision merely to make the queue-only API accept the request.
    Never add `--admin`, relax or fabricate checks/statuses, change policy,
    or introduce a wrapper or credential merely to arm.
@@ -192,7 +228,8 @@
    for the hand-over record and the admin-bypass hazard.
 
    The ruleset enforces required `E2E`, `Verify`,
-   `LCARS review`, `Runner image pnpm-store seed`, and `repository-owned Terraform`,
+   `Runner image pnpm-store seed`, and `repository-owned Terraform`, one
+   approving review of the current head (the LCARS review supplies it),
    `required_review_thread_resolution`, linear history, and no deletion or
    force-push. The up-to-date-branch policy is **non-strict** (harmonized
    with the sprinkles repo, 2026-08-11): an armed PR merges on green even
@@ -255,10 +292,12 @@
    for your own checkout. Record its absolute path, owning primary and branch,
    and stop your own watchers and servers.
 
-   This repository's Anthropic review dependency is a Git submodule. Before
-   guarded removal or parking, inspect its status, HEAD against the parent
-   gitlink, and local refs for private history. The setup script registers the
-   dependency in per-worktree Git configuration. For a clean checkout at the
+   A worktree set up before the Anthropic review dependency moved to
+   `packages/anthropic-code-review` may still have the retired
+   `third_party/anthropic-plugins` Git submodule initialized. Before guarded
+   removal or parking such a checkout, inspect the submodule's status, HEAD
+   against the branch's gitlink, and local refs for private history. Its setup
+   registered the dependency in per-worktree Git configuration. For a clean checkout at the
    locked upstream revision with no private history, first check
    `git config --local --get-regexp '^submodule[.]third_party/anthropic-plugins[.]'`:
    status 1 (no entry) is required. A shared entry or another error retains the

@@ -8,6 +8,7 @@ import {
   isEffectfulRun,
   isLive,
   MAX_AUTO_RETRIES,
+  maxAutoRetries,
   type ProviderFallback,
   type Run,
   type Task,
@@ -82,8 +83,9 @@ export function deriveItemState(
     return latest.result?.ok ? 'done' : 'failed';
   }
   // lost: the sweep retries until the budget is spent, then leaves it.
-  if (isEffectfulRun(latest)) return 'failed';
-  return task.consecutiveLost > MAX_AUTO_RETRIES ||
+  const retryBudget = maxAutoRetries(latest);
+  if (isEffectfulRun(latest) && retryBudget === 0) return 'failed';
+  return task.consecutiveLost > retryBudget ||
     (latest.sourceRevision !== undefined &&
       (latest.revisionAttempt ?? 1) > MAX_AUTO_RETRIES)
     ? 'failed'

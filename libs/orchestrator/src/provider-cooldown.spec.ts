@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   providerCooldownForRun,
   providerIsCoolingDown,
+  shouldWriteProviderCooldown,
 } from './provider-cooldown';
 
 const run = {
@@ -16,6 +17,9 @@ const run = {
     message: "You've hit your weekly limit · resets Sep 13, 12am (UTC)",
   },
 };
+
+const CODEX_FAILURE_PREFIX =
+  'Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: ';
 
 describe('provider quota holds', () => {
   it('never derives a cooldown from an unclassified failure, even with quota text', () => {
@@ -61,6 +65,127 @@ describe('provider quota holds', () => {
       })?.expiresAt,
     ).toBe('2027-01-01T00:00:00.000Z');
   });
+
+  it.each([
+    [
+      `${CODEX_FAILURE_PREFIX}You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM (UTC).`,
+      '2026-11-09T01:00:00.000Z',
+      '2026-11-11T06:48:00.000Z',
+    ],
+    [
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Jan 1st, 2027 12:00 AM (UTC).`,
+      '2026-12-31T22:00:00.000Z',
+      '2027-01-01T00:00:00.000Z',
+    ],
+    [
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Jan 2nd, 2027 12:30 PM (UTC).`,
+      '2026-12-31T22:00:00.000Z',
+      '2027-01-02T12:30:00.000Z',
+    ],
+    [
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Jan 3rd, 2027 11:59 PM (UTC).`,
+      '2026-12-31T22:00:00.000Z',
+      '2027-01-03T23:59:00.000Z',
+    ],
+    [
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Nov 9, 2026 6:48 AM (UTC).`,
+      '2026-11-09T01:00:00.000Z',
+      '2026-11-09T06:48:00.000Z',
+    ],
+    [
+      `${CODEX_FAILURE_PREFIX}You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM (UTC).\nYou’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM (UTC).`,
+      '2026-11-09T01:00:00.000Z',
+      '2026-11-11T06:48:00.000Z',
+    ],
+    [
+      `${CODEX_FAILURE_PREFIX}Reconnecting... 2/5 (stream error: try again at Nov 14th, 2026 6:48 AM (UTC).)\nYou've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (UTC).`,
+      '2026-11-09T01:00:00.000Z',
+      '2026-11-11T06:48:00.000Z',
+    ],
+  ])(
+    'uses a runner-captured Codex CLI UTC reset (%s)',
+    (message, updatedAt, expiresAt) => {
+      expect(
+        providerCooldownForRun({
+          ...run,
+          pipeline: 'codex',
+          updatedAt,
+          result: { ok: false, summary: 'provider-limit', message },
+        })?.expiresAt,
+      ).toBe(expiresAt);
+    },
+  );
+
+  it.each([
+    [
+      'assistant final-message banner without CLI failure envelope',
+      "You've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM.",
+    ],
+    [
+      'assistant final-message banner quoting literal (UTC) without CLI failure envelope',
+      "You've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (UTC).",
+    ],
+    [
+      'zone-less full date',
+      `${CODEX_FAILURE_PREFIX}You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM.`,
+    ],
+    [
+      'non-UTC zone',
+      `${CODEX_FAILURE_PREFIX}You’ve hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (PST).`,
+    ],
+    [
+      'date-less same-day time',
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at 6:48 AM (UTC).`,
+    ],
+    [
+      'expired instant',
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Nov 9th, 2026 1:00 AM (UTC).`,
+    ],
+    [
+      'past MAX_RESET_MS',
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Nov 16th, 2026 1:01 AM (UTC).`,
+    ],
+    [
+      'invalid calendar date',
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Feb 30th, 2026 6:48 AM (UTC).`,
+    ],
+    [
+      'invalid month',
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Foo 11th, 2026 6:48 AM (UTC).`,
+    ],
+    [
+      'zero hour',
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Nov 11th, 2026 0:30 AM (UTC).`,
+    ],
+    [
+      '24-hour clock value',
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Nov 11th, 2026 13:00 PM (UTC).`,
+    ],
+    [
+      'conflicting duplicate events',
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (UTC).\nYou've hit your usage limit. Try again at Nov 11th, 2026 6:49 AM (UTC).`,
+    ],
+    [
+      'mixed zoned and zone-less events',
+      `${CODEX_FAILURE_PREFIX}You've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (UTC).\nYou've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM.`,
+    ],
+    [
+      'only quoted by a retry notice before a reset-less quota event',
+      `${CODEX_FAILURE_PREFIX}Reconnecting... 2/5 (You've hit your usage limit. Try again at Nov 11th, 2026 6:48 AM (UTC).)\nReconnecting... 3/5 (try again at Nov 12th, 2026 6:48 AM.)\nYou've hit your usage limit (usage_limit_reached). Upgrade to Pro or try again later.`,
+    ],
+  ])(
+    'falls back to a bounded probe when Codex reset is %s',
+    (_label, message) => {
+      expect(
+        providerCooldownForRun({
+          ...run,
+          pipeline: 'codex',
+          updatedAt: '2026-11-09T01:00:00.000Z',
+          result: { ok: false, summary: 'provider-limit', message },
+        })?.expiresAt,
+      ).toBe('2026-11-09T01:15:00.000Z');
+    },
+  );
 
   it('uses a bounded probe for an explicit provider-limit without a known reset', () => {
     expect(
@@ -112,5 +237,37 @@ describe('provider quota holds', () => {
       false,
     );
     expect(providerIsCoolingDown(undefined, run.updatedAt)).toBe(false);
+  });
+
+  it('never shortens an active hold, while allowing extensions and expired replacements', () => {
+    const activeLong = {
+      pipeline: 'codex',
+      runId: 'work:quota/r1',
+      observedAt: '2026-11-09T01:00:00.000Z',
+      expiresAt: '2026-11-11T06:48:00.000Z',
+    };
+    const shorterProbe = {
+      pipeline: 'codex',
+      runId: 'work:quota/r2',
+      observedAt: '2026-11-09T01:01:00.000Z',
+      expiresAt: '2026-11-09T01:16:00.000Z',
+    };
+    const longerReset = {
+      pipeline: 'codex',
+      runId: 'work:quota/r3',
+      observedAt: '2026-11-09T01:02:00.000Z',
+      expiresAt: '2026-11-12T06:48:00.000Z',
+    };
+    const afterExpiry = {
+      pipeline: 'codex',
+      runId: 'work:quota/r4',
+      observedAt: '2026-11-11T06:48:00.000Z',
+      expiresAt: '2026-11-11T07:03:00.000Z',
+    };
+    expect(shouldWriteProviderCooldown(undefined, shorterProbe)).toBe(true);
+    expect(shouldWriteProviderCooldown(activeLong, shorterProbe)).toBe(false);
+    expect(shouldWriteProviderCooldown(shorterProbe, activeLong)).toBe(true);
+    expect(shouldWriteProviderCooldown(activeLong, longerReset)).toBe(true);
+    expect(shouldWriteProviderCooldown(activeLong, afterExpiry)).toBe(true);
   });
 });

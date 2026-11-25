@@ -57,6 +57,12 @@ Decisions the prototype already carries:
   total leads the counts. The prototype draws both cases as two rounds in a
   panel below Recent work; production shows them on the Work item's own
   page.
+- A CLI session row offers **Open live ↗** beside **Open session** when the
+  session runs in a terminal its host's viewer can show (a herdr-core pane on
+  a host with a configured Ovis). It opens that pane in a new tab, straight
+  from the browser to the host, so it is one tap from the list on a phone. A
+  row without such a terminal keeps the single action. When two sessions name
+  one pane, only the one most recently seen in it carries the link.
 - Bridge includes recent event-driven triage and summaries, linking into Work.
   Work exposes an event-driven filter and source activity on detail pages; source
   revisions represent admitted work, not every raw webhook delivery.
@@ -72,6 +78,17 @@ Decisions the prototype already carries:
   Refresh, the ⋯ console menu (preferences and identity, plus the
   destinations below 64em, where the pills fold away) and the
   live status, which reads "Snapshot · loaded …" on routes without a stream.
+- A client navigation keeps the current page on screen until the next one
+  is ready; it never swaps in a skeleton or a generic loading frame. The
+  control that started it carries the wait: the clicked pill flashes once the
+  wait outlasts 120 ms (held lit under reduced motion), and a destination
+  chosen from the ⋯ menu spins its trigger. Hard loads still stream page skeletons.
+- Sessions renders its newest ~200 sessions (whole issue groups, each
+  capped at its 50 newest with the rest counted) and links **Show all** to
+  the full window. Group headings always count the issue's real total.
+- Costs' by-issue disclosure carries the next 85 issues and ends with
+  **Show all**, which reopens it holding every issue. A hidden row still
+  ships in the page, so a disclosure is not a free place to put hundreds.
 - The data-warnings band says "All sources reporting" only when every read
   the page made completed.
 - Panels the first drawing lacked are drawn in its language: Agents' fleet

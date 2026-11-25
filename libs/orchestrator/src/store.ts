@@ -348,6 +348,7 @@ export interface OrchestratorStore {
      * history lookup and any new Run. */
     requestBinding?: RequestBinding;
     readProviderRouting?: boolean;
+    readGithubProjection?: boolean;
     sourceRevision?: WorkRevision;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal>;
@@ -396,6 +397,12 @@ export interface OrchestratorStore {
   readGithubAnchorProjection(
     anchor: GithubAnchorProjection['anchor'],
   ): Promise<GithubAnchorProjection | undefined>;
+
+  /** Point lookups for many anchors in batched reads; the result is aligned
+   * with `anchors`, undefined where an anchor has no stored projection. */
+  readGithubAnchorProjections(
+    anchors: readonly GithubAnchorProjection['anchor'][],
+  ): Promise<(GithubAnchorProjection | undefined)[]>;
 
   /** Every currently-open GitHub anchor known to the control plane, newest
    * source update first. Phase 2 will use this bounded server-owned feed for
@@ -468,10 +475,10 @@ export interface OrchestratorStore {
    * Returns false when the entry is missing, not pending, or already due, so
    * a webhook wake never touches a leased or settled entry. */
   wakeOutbox(input: { entryId: string; now: string }): Promise<boolean>;
-  /** Tasks whose waiting delivery binding is this exact pull request. */
+  /** Tasks whose waiting delivery binding matches this pull request or repository. */
   readWaitingDeliveryTasks(binding: {
     repo: string;
-    number: number;
+    number?: number;
   }): Promise<VersionedTask[]>;
 
   /** Live runs whose startup or execution deadline expired at `now`; excludes queued waits. */
@@ -628,6 +635,7 @@ export interface VersionedTask {
 
 /** The single consistent snapshot supplied to a request transaction. */
 export interface RequestTransactionState {
+  readonly githubProjection?: GithubAnchorProjection;
   /** Read only for source-ordered label handoffs, inside the claim transaction. */
   readonly latestRun?: Run;
   readonly retainedClaims?: readonly Run[];

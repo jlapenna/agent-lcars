@@ -8,6 +8,7 @@ import type {
 
 import { githubAnchorProjectionFromDelivery } from './github-anchor-projection';
 import { getGithubClient } from './github-client';
+import { normalizeGraphqlActorLogin } from './graphql-actor';
 import { issueFromGithubProjection } from './issue-trackers';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 
@@ -21,7 +22,7 @@ interface RawAnchorDetails {
       url?: string;
       createdAt?: string;
       updatedAt?: string;
-      author?: { login?: string } | null;
+      author?: { __typename?: string | null; login?: string } | null;
     } | null)[];
   } | null;
   createdAt?: string;
@@ -133,12 +134,12 @@ export async function enrichGithubAnchorProjections(
       .map(
         (projection) =>
           `${anchorAlias(projection.anchor.issue)}: issueOrPullRequest(number: ${projection.anchor.issue}) {
-        ... on Issue { body comments(last: 1) { nodes { body url createdAt updatedAt author { login } } } }
+        ... on Issue { body comments(last: 1) { nodes { body url createdAt updatedAt author { __typename login } } } }
         ... on PullRequest {
           body isDraft mergedAt mergeStateStatus reviewDecision
           autoMergeRequest { enabledAt }
           createdAt headRefName headRefOid headRepository { nameWithOwner }
-          comments(last: 1) { nodes { body url createdAt updatedAt author { login } } }
+          comments(last: 1) { nodes { body url createdAt updatedAt author { __typename login } } }
           reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
           reviewThreads(first: 100) { totalCount nodes { id isResolved } }
           commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { totalCount nodes { ... on CheckRun { name status conclusion detailsUrl } } } } } } }
@@ -201,6 +202,9 @@ export async function enrichGithubAnchorProjections(
           : [],
       );
       const latestComment = detail.comments?.nodes?.at(-1);
+      const latestCommentAuthor = normalizeGraphqlActorLogin(
+        latestComment?.author,
+      );
       const mergeableState = detail.mergeStateStatus?.toLowerCase();
       const threadNodes = detail.reviewThreads?.nodes ?? [];
       const unresolvedReviewThreadIds = threadNodes.flatMap((thread) =>
@@ -233,9 +237,9 @@ export async function enrichGithubAnchorProjections(
                 ...(latestComment.updatedAt === undefined
                   ? {}
                   : { updatedAt: latestComment.updatedAt }),
-                ...(latestComment.author?.login === undefined
+                ...(latestCommentAuthor === undefined
                   ? {}
-                  : { author: latestComment.author.login }),
+                  : { author: latestCommentAuthor }),
               },
             }),
         ...(projection.kind === 'pr'

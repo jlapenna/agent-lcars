@@ -8,7 +8,11 @@ import type {
   SessionLiveness,
   SessionRepository,
 } from '@agent-lcars/telemetry';
-import { displayLiveness, totalTokens } from '@agent-lcars/telemetry';
+import {
+  displayLiveness,
+  totalTokens,
+  watchableHerdrPaneId,
+} from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
@@ -39,6 +43,10 @@ export interface CliSession {
   host?: string;
   branch?: string;
   worktree?: string;
+  /** The session's herdr terminal on `host`; the join key, with `host`, for
+   * its live view (`sessionLiveViewUrl`). Absent once the session has
+   * recorded its end (`watchableHerdrPaneId`). */
+  herdrPaneId?: string;
   model?: string;
   turns: number;
   /** Cost-weighted token equivalent; see {@link totalTokens}. */
@@ -86,6 +94,7 @@ function toCliSession(doc: CliSessionDoc, now: string): CliSession {
     host: doc.host,
     branch: doc.branch,
     worktree: doc.worktree,
+    herdrPaneId: watchableHerdrPaneId(doc),
     model: doc.model,
     turns: doc.turns,
     totalTokens: totalTokens(doc.tokens),
@@ -111,6 +120,39 @@ function prFromDeliverables(doc: CliSessionDoc): JoinedPr | undefined {
     number,
     url: `https://github.com/${doc.repo.owner}/${doc.repo.name}/pull/${number}`,
   };
+}
+
+/**
+ * The sessions that hold their herdr pane: for each pane, the one seen in it
+ * most recently.
+ *
+ * A terminal outlives its sessions. One that died without recording its end
+ * stays `idle` for an hour and still names the pane, while the next session
+ * started there names it too; so does every session after a herdr-core
+ * restart hands the same addresses out again. Both links would open the
+ * same pane, which now shows only the newer session.
+ *
+ * "Seen" is the later of a session's last activity and its last observation,
+ * so a session resumed a moment ago holds the pane before it has taken a
+ * turn. Sessions that have recorded their end count as well: one that left
+ * the pane cleanly still took it from whoever was there before, and no
+ * older session gets the link back.
+ */
+function paneHolders(docs: readonly CliSessionDoc[]): Set<string> {
+  const latest = new Map<string, { sessionId: string; seenAt: string }>();
+  for (const doc of docs) {
+    if (!doc.herdrPaneId) continue;
+    const pane = `${doc.host ?? ''}\u0000${doc.herdrPaneId}`;
+    const seenAt =
+      doc.observedAt !== undefined && doc.observedAt > doc.lastActivityAt
+        ? doc.observedAt
+        : doc.lastActivityAt;
+    const holder = latest.get(pane);
+    if (!holder || seenAt > holder.seenAt) {
+      latest.set(pane, { sessionId: doc.sessionId, seenAt });
+    }
+  }
+  return new Set([...latest.values()].map((holder) => holder.sessionId));
 }
 
 export interface CliSessionsResult {
@@ -219,10 +261,15 @@ export async function getCliSessions({
   }
 
   const nowIso = now.toISOString();
+  const holders = paneHolders(docs);
   const sessions = docs.map((doc) => {
-    const session = toCliSession(doc, nowIso);
+    const { herdrPaneId, ...session } = toCliSession(doc, nowIso);
     const pr = prFromDeliverables(doc);
-    return { ...session, ...(pr === undefined ? {} : { pr }) };
+    return {
+      ...session,
+      ...(herdrPaneId && holders.has(doc.sessionId) ? { herdrPaneId } : {}),
+      ...(pr === undefined ? {} : { pr }),
+    };
   });
 
   sessions.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));

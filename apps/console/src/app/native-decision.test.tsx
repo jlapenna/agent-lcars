@@ -95,6 +95,86 @@ describe('native decision Reply', () => {
       }),
     ).not.toBe(before);
   });
+
+  it('shows the exact operator ask in the row and detail before the handoff context', () => {
+    const [run] = card.work.runs;
+    const parked = {
+      ...card,
+      decisionSummary: 'A generic summary.',
+      work: {
+        ...card.work,
+        runs: [
+          {
+            ...run,
+            result: {
+              ok: true,
+              summary: 'park',
+              message:
+                'Human ask: Approve the staged cutover.\n\nValidation passed.',
+            },
+          },
+        ],
+      },
+    };
+    render(
+      <MantineProvider>
+        <NativeDecisionRow
+          card={parked}
+          href="/inbox"
+          selected
+          onNavigate={vi.fn()}
+        />
+        <NativeDecisionDetail card={parked} />
+      </MantineProvider>,
+    );
+    const ask = 'Approve the staged cutover.';
+    expect(
+      screen.getByRole('link', { name: /Approve the staged cutover/ }),
+    ).toHaveTextContent(ask);
+    expect(screen.getByLabelText('Human ask')).toHaveTextContent(ask);
+    expect(screen.getByText(/Validation passed/)).toBeVisible();
+    expect(screen.queryByText('A generic summary.')).toBeNull();
+  });
+
+  it('submits approval in one click and binds it to the displayed park', async () => {
+    const [run] = card.work.runs;
+    const reply = vi.fn().mockResolvedValue([null, { resumed: true }]);
+    render(
+      <MantineProvider>
+        <NativeDecisionDetail
+          card={{
+            ...card,
+            work: {
+              ...card.work,
+              runs: [
+                {
+                  ...run,
+                  result: {
+                    ok: true,
+                    summary: 'park',
+                    message:
+                      'Human ask: Approve the staging rollout.\nHuman approval: Approve staging',
+                  },
+                },
+              ],
+            },
+          }}
+          replyToWorkItem={reply}
+        />
+      </MantineProvider>,
+    );
+    const button = screen.getByRole('button', { name: 'Approve staging' });
+    fireEvent.click(button);
+    await waitFor(() => expect(button).toBeDisabled());
+    expect(reply).toHaveBeenCalledExactlyOnceWith({
+      id: card.work.anchor.workId,
+      text: 'Approved: Approve staging\n\nFor this request: Approve the staging rollout.',
+      requestId: 'inbox-decision:r1',
+      expectedParkedRunId: 'r1',
+    });
+    fireEvent.click(button);
+    expect(reply).toHaveBeenCalledOnce();
+  });
   it.each([true, false])(
     'reports admission honestly for resumed=%s and retains it when work starts',
     async (resumed) => {

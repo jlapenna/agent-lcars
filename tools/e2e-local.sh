@@ -235,11 +235,12 @@ case "${CI:-}" in
   1 | true) SAFE_ENV+=("CI=1") ;;
 esac
 
-# Corepack and Firebase normally store downloaded tooling below HOME. Point
-# only those caches at their conventional durable locations so an isolated HOME
-# does not force network downloads on every run (or break offline runs). Do not
-# preserve ambient cache overrides: they could widen the filesystem paths
-# admitted through this boundary.
+# Corepack, Firebase and SWC normally cache tooling below HOME. Point only
+# those caches at their conventional durable locations: Corepack and Firebase
+# so an isolated HOME does not force network downloads on every run (or break
+# offline runs), and SWC for the reason given below. Do not preserve ambient
+# cache overrides: they could widen the filesystem paths admitted through this
+# boundary.
 if [ -n "$CALLER_HOME" ]; then
   case "$PLATFORM" in
     CYGWIN* | MINGW* | MSYS*)
@@ -247,9 +248,16 @@ if [ -n "$CALLER_HOME" ]; then
       ;;
     *) corepack_cache="$CALLER_HOME/.cache/node/corepack" ;;
   esac
+  # SWC materializes its native addon into a user cache and refuses a cache
+  # root with a parent another user can write. The isolated HOME lives under
+  # TMPDIR, which on a workstation can sit inside a group-writable tree, so
+  # SWC then fails to load ("Failed to load native binding") while Nx
+  # transpiles playwright.config.ts. Use the caller's conventional SWC cache;
+  # SWC still falls back to its defaults when that root is not safe.
   SAFE_ENV+=(
     "COREPACK_HOME=$corepack_cache"
     "FIREBASE_EMULATORS_PATH=$CALLER_HOME/.cache/firebase/emulators"
+    "SWC_NATIVE_BINDING_CACHE=$CALLER_HOME/.cache/swc-native-$(id -u)"
   )
 fi
 

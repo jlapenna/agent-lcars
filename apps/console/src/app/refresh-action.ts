@@ -1,11 +1,10 @@
 'use server';
 
-import { revalidatePath, updateTag } from 'next/cache';
+import { revalidatePath } from 'next/cache';
 
 import { createAdminAction } from '@/lib/auth-guards';
 
 import { auth } from '../auth';
-import { AUTHORITATIVE_QUEUE_TAG } from '../lib/cache-tags';
 
 // Deliberately its own module rather than another export of `actions.ts`:
 // `refresh-button.tsx` is a client component rendered in the footer of every
@@ -19,7 +18,7 @@ const requireAdmin = createAdminAction(auth);
  * Work/Task/Run and webhook-anchor projections; it never fans out to GitHub.
  *
  * Admin-gated like every other action here, and not merely for consistency:
- * an ungated cache-buster is still a lever for forcing repeated datastore
+ * an ungated re-render is still a lever for forcing repeated datastore
  * reads.
  */
 export async function refreshDashboard(pathname = '/'): Promise<void> {
@@ -27,6 +26,5 @@ export async function refreshDashboard(pathname = '/'): Promise<void> {
   if (!['/', '/inbox', '/agents'].includes(pathname)) {
     throw new Error('Invalid dashboard path');
   }
-  updateTag(AUTHORITATIVE_QUEUE_TAG);
   revalidatePath(pathname);
 }

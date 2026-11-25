@@ -2,7 +2,6 @@ import { isSourceManagedWork } from '@agent-lcars/work';
 import { type ItemView, latestRun, workTitle } from '@agent-lcars/work/derive';
 import { Stack, Text } from '@mantine/core';
 import { notFound, redirect } from 'next/navigation';
-import { Suspense } from 'react';
 
 import { auth } from '@/auth';
 import { getWatchedRepos } from '@/lib/github-client';
@@ -12,6 +11,7 @@ import { ConsoleCommandUtilities } from '../../console-command-utilities';
 import { DetailWorkspace } from '../../detail-workspace';
 import { formatRelativeTime } from '../../format';
 import { IssueSourcePanel } from '../../issue-source';
+import { NavSuspense } from '../../nav-suspense';
 import { NavPageLoading } from '../../page-loading';
 import { TaskDetailHistory } from '../../task/task-detail-history';
 import { withConsolePageShell } from '../../with-console-page-shell';
@@ -192,7 +192,7 @@ async function WorkDetailPageContent({ params }: PageProps) {
 
 export default function WorkDetailPage({ params }: PageProps) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="work"
@@ -203,6 +203,6 @@ export default function WorkDetailPage({ params }: PageProps) {
       }
     >
       <WorkDetailPageContent params={params} />
-    </Suspense>
+    </NavSuspense>
   );
 }

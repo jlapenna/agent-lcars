@@ -141,15 +141,15 @@ RUN ./tools/nx bundle @agent-lcars/telemetry-watcher && \
     ./tools/nx hook-cli @agent-lcars/telemetry-watcher && \
     ./tools/nx hook-flush-cli @agent-lcars/telemetry-watcher
 
-# Native Git dependency: .gitmodules declares upstream and the gitlink locks
-# its revision. Package the command, license, revision and rendered LCARS
-# instructions. Other marketplace files stay outside the runtime image. Keep the
-# output at the dependency root so the publisher's COPY-derived input inventory
-# observes a gitlink update and republishes the runner.
-RUN git submodule update --init --depth 1 -- third_party/anthropic-plugins && \
-    bash apps/runner-autoscaler/runner-image/package-anthropic-review.sh /tmp/anthropic-code-review && \
-    rm -rf third_party/anthropic-plugins && \
-    mv /tmp/anthropic-code-review third_party/anthropic-plugins
+# packages/anthropic-code-review pins Anthropic's code-review command as a pnpm
+# dependency, installed above under the lockfile's integrity hash. Package the
+# command, license, revision and rendered LCARS instructions; other marketplace
+# files stay outside the runtime image. Replace the package directory with that
+# output so the publisher's COPY-derived input inventory names
+# packages/anthropic-code-review, and a dependency bump republishes the runner.
+RUN bash packages/anthropic-code-review/package-review.sh /tmp/anthropic-code-review && \
+    rm -rf packages/anthropic-code-review && \
+    mv /tmp/anthropic-code-review packages/anthropic-code-review
 
 # Action archives are immutable repository tarballs, never extracted or executed
 # during preparation. Download them on the existing builder-platform stage;
@@ -359,7 +359,7 @@ FROM ${GO_BUILD_BASE} AS go-runtime
 #
 # The Docker client supports remote BuildKit and static Compose validation;
 # the worker has no local Docker daemon or mounted host socket.
-FROM ghcr.io/astral-sh/uv:0.13.9@sha256:d3b601f0c7b118bc1753febf7c41cc80981df678445e0254284eecf84db79a7d AS uv-runtime
+FROM ghcr.io/astral-sh/uv:0.13.10@sha256:a3ea1357342c1a4bf9a0c53a3deb1b55379aefa037338d8113d5771efa01774f AS uv-runtime
 
 # Exact multi-platform Terraform artifact; only its static CLI is copied.
 FROM hashicorp/terraform:${TERRAFORM_VERSION}@sha256:6e9c1e647c31a960dc9b59e13272f9111d90010c10b717f77ffb324767660475 AS terraform-runtime
@@ -659,7 +659,7 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/shared/skills \
     /usr/local/lib/agent-lcars/agents/shared/skills
 COPY --from=telemetry-watcher-build --chown=runner:runner \
-    /repo/third_party/anthropic-plugins \
+    /repo/packages/anthropic-code-review \
     /usr/local/lib/agent-lcars/agents/shared/skills/agent-protocol/reference/anthropic-code-review
 RUN chmod +x /usr/local/lib/agent-lcars/runtime/*.sh
 COPY direct-runner.sh /usr/local/lib/agent-lcars/direct-runner.sh
@@ -798,6 +798,9 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/opencode.json \
     /home/runner/.config/opencode/opencode.json
 COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/agents/opencode/review-overlay.json \
+    /home/runner/.config/opencode/review-overlay.json
+COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/instructions.md \
     /home/runner/.config/opencode/instructions.md
 COPY --from=telemetry-watcher-build --chown=runner:runner \
@@ -896,6 +899,30 @@ RUN codex plugin marketplace add /opt/repo-tools && \
     codex plugin add repo-tools@repo-tools
 RUN claude plugin marketplace add /opt/repo-tools && \
     claude plugin install repo-tools@repo-tools
+# Third-party web and Go guidance plugins follow their upstream default
+# branches directly, with no vendoring or review step. This layer sits after
+# the repo-tools layer, so each repo-tools-driven rebuild refreshes them.
+# Codex dispatches copy this ~/.codex; OpenCode (agents/opencode/opencode.json)
+# reads the skills from the Claude marketplace checkouts checked below, and
+# Antigravity and Goose get copies (Goose reads ~/.config/agents/skills,
+# which Codex and OpenCode ignore, so they see no duplicates).
+RUN codex plugin marketplace add GoogleChrome/modern-web-guidance && \
+    codex plugin marketplace add JetBrains/go-modern-guidelines && \
+    codex plugin add modern-web-guidance@googlechrome && \
+    codex plugin add modern-go-guidelines@goland-codex-marketplace
+RUN claude plugin marketplace add GoogleChrome/modern-web-guidance && \
+    claude plugin marketplace add JetBrains/go-modern-guidelines && \
+    claude plugin install modern-web-guidance@googlechrome && \
+    claude plugin install modern-go-guidelines@goland-claude-marketplace && \
+    test -f /home/runner/.claude/plugins/marketplaces/googlechrome/skills/modern-web-guidance/SKILL.md && \
+    test -f /home/runner/.claude/plugins/marketplaces/goland-claude-marketplace/plugin/skills/use-modern-go/SKILL.md && \
+    mkdir -p /home/runner/.gemini/antigravity-cli/skills /home/runner/.config/agents/skills && \
+    for skill in googlechrome/skills/modern-web-guidance googlechrome/skills/chrome-extensions \
+      goland-claude-marketplace/plugin/skills/use-modern-go; do \
+      src="/home/runner/.claude/plugins/marketplaces/$skill"; \
+      test -f "$src/SKILL.md" && cp -R "$src" /home/runner/.gemini/antigravity-cli/skills/ && \
+        cp -R "$src" /home/runner/.config/agents/skills/ || exit 1; \
+    done
 
 # Stage the Hindsight coding-agent runtime and register hooks/MCP/skills for
 # Claude Code, Codex and Antigravity; OpenCode loads ~/.hindsight/coding-agents

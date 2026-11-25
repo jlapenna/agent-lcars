@@ -2,7 +2,11 @@ import { expect, type Page, test } from '@playwright/test';
 
 import { E2E_ITEM_NUMBERS, resetCliSessions } from './seed';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
-import { workAdminHeaders } from './util/native-work';
+import {
+  readNativeRuns,
+  seedNativeHandoff,
+  workAdminHeaders,
+} from './util/native-work';
 
 /** The decision list is full width until a decision is selected
  * (design/fleet-console.html); open the first row's detail. */
@@ -36,6 +40,48 @@ test.afterAll(async () => {
 });
 
 test.describe('native and GitHub human decisions', () => {
+  for (const { ask, controls, clicked, reply } of [
+    {
+      ask: 'Choose where to store native decisions.',
+      controls: 'Human option: Use Firestore\nHuman option: Use GitHub',
+      clicked: 'Use Firestore',
+      reply: 'Selected: Use Firestore',
+    },
+    {
+      ask: 'Approve the staging cutover.',
+      controls: 'Human approval: Approve staging',
+      clicked: 'Approve staging',
+      reply: 'Approved: Approve staging',
+    },
+  ]) {
+    test(`answers the agent's handoff with one click: ${clicked}`, async ({
+      page,
+    }) => {
+      await seedNativeHandoff(
+        `Human ask: ${ask}\n${controls}\n\nAgent context.`,
+      );
+      await page.goto('/inbox');
+      const row = page.getByTestId(`queue-row-${KEY}`);
+      await expect(row).toContainText(ask);
+      await row.getByRole('link').click();
+      const detail = page.getByTestId('native-decision-detail');
+      await expect(detail.getByLabel('Human ask')).toHaveText(ask);
+      await detail.getByRole('button', { name: clicked, exact: true }).click();
+      await expect(
+        page.getByTestId('native-reply-confirmation').getByRole('status'),
+      ).toHaveText(/Reply admitted/);
+      await expect(row).toHaveCount(0);
+      const runs = await readNativeRuns();
+      expect(runs).toHaveLength(2);
+      expect(
+        runs.find((run) => run.params?.['mode'] === 'reply')?.params,
+      ).toMatchObject({
+        reply: `${reply}\n\nFor this request: ${ask}`,
+        replyExpectedParkedRunId: `${KEY}/r1`,
+      });
+    });
+  }
+
   test('joins native parks with one GitHub decision and leaves deploy waits out', async ({
     page,
   }) => {

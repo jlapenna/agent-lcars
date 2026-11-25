@@ -12,6 +12,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { aggregateSessionSpend } from './session-spend';
 import { loadSpendProjections } from './session-spend-projections';
 
+/** Adapts a one-anchor reader to the batched reader the loader takes. */
+const many =
+  <T>(read: (anchor: GithubAnchorProjection['anchor']) => Promise<T>) =>
+  (anchors: GithubAnchorProjection['anchor'][]) =>
+    Promise.all(anchors.map((anchor) => read(anchor)));
+
 const repo = { owner: 'jlapenna', name: 'agent-lcars' };
 const key = 'jlapenna/agent-lcars#42';
 const start = '2026-10-14T10:00:00.000Z';
@@ -265,7 +271,7 @@ describe('GitHub-record spend attribution (#2730)', () => {
       expect(doc.deliverables.prNumbers).toEqual([42]);
       expect(doc.deliverables.qualifiedPRs).toBeUndefined();
       const read = vi.fn(async () => record());
-      const loaded = await loadSpendProjections([doc], read);
+      const loaded = await loadSpendProjections([doc], many(read));
       expect(read).toHaveBeenCalledWith({
         repo: 'jlapenna/agent-lcars',
         issue: 42,
@@ -407,7 +413,9 @@ describe('GitHub-record spend attribution (#2730)', () => {
   it('does not guess an actor or read bare references for a legacy session', async () => {
     const read = vi.fn(async () => record());
     const doc = { ...session(), githubActor: undefined };
-    expect((await loadSpendProjections([doc], read)).projections.size).toBe(0);
+    expect(
+      (await loadSpendProjections([doc], many(read))).projections.size,
+    ).toBe(0);
     expect(read).not.toHaveBeenCalled();
   });
   it('keeps duplicated hints to one deliverable and charges the session once', () => {

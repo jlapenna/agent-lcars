@@ -57,6 +57,12 @@ function CostCell({ row }: { row: LedgerTotals }) {
  * shows the top rows and keeps the rest one disclosure away. */
 const MAX_LEDGER_ROWS = 15;
 
+/** Issue rows the disclosure carries before it links to the full ledger.
+ * Every disclosed row ships in the page payload twice (table and phone
+ * list), whether or not the reader opens it: a 14-day window's ~600 issues
+ * made Costs a 1.2 MB navigation. */
+export const MAX_DISCLOSED_ISSUE_ROWS = 85;
+
 /** React key for an issue-ledger row - the bare issue number collides once
  * two watched repos can each have their own #42 (same class of bug Codex
  * caught in the board's row keys, #18); 'no-issue' is already a unique
@@ -280,13 +286,28 @@ function WeekLedgerTableCompact({ rows }: { rows: WeekLedgerRow[] }) {
  * recorded costs. The visible `est.` label and accessible name mean that
  * distinction is not carried by the symbolic tilde alone.
  */
-export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
+export function LedgerTables({
+  ledger,
+  showAllIssues = false,
+  showAllIssuesHref,
+}: {
+  ledger: SessionLedger;
+  /** Disclose every issue instead of the first {@link MAX_DISCLOSED_ISSUE_ROWS}. */
+  showAllIssues?: boolean;
+  /** Where "Show all" leads; without it the disclosure carries every issue. */
+  showAllIssuesHref?: string;
+}) {
   if (ledger.byIssue.length === 0 && ledger.byWeek.length === 0) {
     return null;
   }
 
   const byIssue = ledger.byIssue.slice(0, MAX_LEDGER_ROWS);
-  const moreIssues = ledger.byIssue.slice(MAX_LEDGER_ROWS);
+  const remainingIssues = ledger.byIssue.slice(MAX_LEDGER_ROWS);
+  const moreIssues =
+    showAllIssues || showAllIssuesHref === undefined
+      ? remainingIssues
+      : remainingIssues.slice(0, MAX_DISCLOSED_ISSUE_ROWS);
+  const omittedIssues = remainingIssues.length - moreIssues.length;
   const byWeek = ledger.byWeek.slice(0, MAX_LEDGER_ROWS);
   const moreWeeks = ledger.byWeek.slice(MAX_LEDGER_ROWS);
 
@@ -306,10 +327,21 @@ export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
             shown={byIssue.length}
             total={ledger.byIssue.length}
             noun="issues"
+            open={showAllIssues}
             data-testid="ledger-issue-remainder"
           >
             <IssueLedgerTable rows={moreIssues} />
             <IssueLedgerTableCompact rows={moreIssues} />
+            {omittedIssues > 0 && showAllIssuesHref !== undefined && (
+              <Anchor
+                href={showAllIssuesHref}
+                size="sm"
+                className="costs-ledger-show-all"
+                data-testid="ledger-issue-show-all"
+              >
+                Show all {ledger.byIssue.length} issues ({omittedIssues} more)
+              </Anchor>
+            )}
           </RemainderDisclosure>
         </OpsPanel>
         <OpsPanel

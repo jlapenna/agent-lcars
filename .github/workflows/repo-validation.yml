@@ -98,7 +98,7 @@ jobs:
 
       - name: Reject self-hosted paired with a declared runner label
         env:
-          REPO_TOOLS_SHA: 7ee33ffd145c796fb3e10a0a46c77b1fed7d032c # v4.9.2
+          REPO_TOOLS_SHA: 4ed04b2392f35aa67583535d9666cccb1cc7be7e # v4.12.0
         run: |
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/check-runner-labels.mjs" \
             "https://raw.githubusercontent.com/jlapenna/repo-tools/$REPO_TOOLS_SHA/bin/check-runner-labels.mjs"
@@ -125,7 +125,7 @@ jobs:
 
       - name: Reject unjustified sub-hourly schedules
         env:
-          REPO_TOOLS_SHA: 7ee33ffd145c796fb3e10a0a46c77b1fed7d032c # v4.9.2
+          REPO_TOOLS_SHA: 4ed04b2392f35aa67583535d9666cccb1cc7be7e # v4.12.0
         run: |
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/check-schedules.mjs" \
             "https://raw.githubusercontent.com/jlapenna/repo-tools/$REPO_TOOLS_SHA/bin/check-schedules.mjs"

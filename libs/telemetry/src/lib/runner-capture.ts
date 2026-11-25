@@ -1,3 +1,4 @@
+import { isClaudeSubagentSessionId } from './reducer';
 import { SessionAgent } from './types';
 
 /**
@@ -119,7 +120,12 @@ export function transcriptObjectPath(options: {
   adapter: SessionAgent;
   sessionId: string;
 }): string {
-  return `runs/${options.runId ?? 'unknown'}/${options.adapter}/${options.sessionId}.jsonl`;
+  const prefix =
+    options.adapter === 'claude-code' &&
+    isClaudeSubagentSessionId(options.sessionId)
+      ? 'claude-code/subagents'
+      : options.adapter;
+  return `runs/${options.runId ?? 'unknown'}/${prefix}/${options.sessionId}.jsonl`;
 }
 
 /** The resumable sibling of {@link transcriptObjectPath}. A distinct

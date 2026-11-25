@@ -128,9 +128,38 @@ describe('selectResumeSession', () => {
       doc.sessionId,
     );
   });
+
+  it('skips claude subagent transcripts and picks the parent session', () => {
+    const parent = session({
+      sessionId: 'parent-uuid',
+      lastActivityAt: '2026-09-01T00:00:00.000Z',
+    });
+    const subagent = session({
+      sessionId: 'parent-uuid--subagent--a889900',
+      lastActivityAt: '2026-09-03T00:00:00.000Z',
+      transcriptGcsUri:
+        'gs://b/runs/work:01ABC%2Fr1/claude-code/subagents/parent-uuid--subagent--a889900.jsonl',
+    });
+    expect(
+      selectResumeSession([parent, subagent], runIds, 'claude')?.sessionId,
+    ).toBe('parent-uuid');
+    expect(selectResumeSession([subagent], runIds, 'claude')).toBeUndefined();
+  });
 });
 
 describe('resumeUriFor', () => {
+  it('returns undefined for claude subagent sessions', () => {
+    expect(
+      resumeUriFor(
+        session({
+          agent: 'claude-code',
+          sessionId: 'parent-uuid--subagent--a889900',
+          transcriptGcsUri:
+            'gs://b/runs/work:01ABC%2Fr1/claude-code/subagents/parent-uuid--subagent--a889900.jsonl',
+        }),
+      ),
+    ).toBeUndefined();
+  });
   it('prefers resumeGcsUri over transcriptGcsUri when both exist', () => {
     const doc = session({
       agent: 'opencode',

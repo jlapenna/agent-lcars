@@ -437,6 +437,40 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   background: var(--lcars-accent);
 }
 
+/* A client navigation that outlasts 120 ms: the clicked pill flashes between
+   full and resting signal until the destination commits. The pending marker
+   itself has no box; it only lets the pill select on its presence. */
+.lcars-nav-pending {
+  display: none;
+}
+
+.lcars-nav-pill:has(> .lcars-nav-pending) {
+  animation: lcars-nav-pending 720ms steps(1, end) 120ms infinite;
+}
+
+@keyframes lcars-nav-pending {
+  0% {
+    color: var(--lcars-ink-on-accent);
+    background: var(--lcars-accent);
+  }
+  50% {
+    color: var(--lcars-ink-on-muted);
+    background: color-mix(
+      in srgb,
+      var(--lcars-accent) 52%,
+      var(--lcars-surface)
+    );
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lcars-nav-pill:has(> .lcars-nav-pending) {
+    animation: none;
+    color: var(--lcars-ink-on-accent);
+    background: var(--lcars-accent);
+  }
+}
+
 /* NEVER express a scheme-dependent color with `light-dark()` in this file.
    This is not a style preference - it was actively broken here (found by
    #42's interaction pass). Next's CSS transform (Lightning CSS) downlevels
@@ -2492,10 +2526,6 @@ td.costs-repo-spend__num {
   --queue-row-accent: var(--mantine-color-red-5);
 }
 
-.queue-item-row[data-reason='merge-blocked'] {
-  --queue-row-accent: var(--mantine-color-yellow-5);
-}
-
 .queue-item-row[data-reason='silent-error'] {
   --queue-row-accent: var(--mantine-color-orange-5);
 }
@@ -3562,7 +3592,9 @@ td.costs-repo-spend__num {
     border-radius: 0;
   }
 
-  .session-mobile-row a {
+  .session-mobile-row a,
+  .sessions-show-all,
+  .costs-ledger-show-all {
     display: inline-flex;
     min-width: 44px;
     min-height: 44px;

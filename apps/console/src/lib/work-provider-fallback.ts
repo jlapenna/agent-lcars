@@ -14,13 +14,25 @@ import {
 } from '@agent-lcars/work';
 
 import { isControlPlaneRepository } from './deployment';
+import { repoKey, supportedAgentPipelines } from './watched-repo';
+import { getWatchedRepos } from './watched-repos-config';
 import { repositoryForbiddenReason } from './work-authorization';
-import { grantForPrincipal, type WorkGrant, workGrants } from './work-grants';
+import {
+  grantForPrincipal,
+  jobAutomationPrincipalForGrants,
+  type WorkGrant,
+  workGrants,
+} from './work-grants';
 
 /** Synthetic principal recorded on signed GitHub webhook PR review admissions
- * so quota/cooldown fallback can re-verify repository admission andreview-mode
+ * so quota/cooldown fallback can re-verify repository admission and review-mode
  * scope without requiring an operator Work grant. */
 export const GITHUB_PR_REVIEW_PRINCIPAL = 'svc:github-pr-review';
+
+/** Synthetic principal recorded on trusted GitHub PR remediation and console PR
+ * handoff admissions so quota/cooldown fallback can switch across coding
+ * providers instead of stalling on a single provider's limit. */
+export const GITHUB_PR_REMEDIATION_PRINCIPAL = 'svc:github-pr-remediation';
 
 /** A trusted ingress supplies identity; callers supply only ordered choices. */
 export function authorizeProviderFallback(
@@ -65,6 +77,22 @@ export function authorizeGithubReviewProviderFallback(
   );
 }
 
+export function authorizeGithubRemediationProviderFallback(
+  repository: string,
+  pipeline: string,
+  alternatives: readonly string[] | undefined,
+): ProviderFallbackRequest | undefined {
+  return authorizeProviderFallback(
+    {
+      principal: GITHUB_PR_REMEDIATION_PRINCIPAL,
+      pipelines: PIPELINES,
+      sourceRepository: repository,
+    },
+    pipeline,
+    alternatives,
+  );
+}
+
 /** Re-resolve authority for each decision, including scope/repository removal.
  * The original policy is an upper bound, never a grant for a future attempt. */
 export function currentFallbackPipelines(
@@ -95,8 +123,42 @@ export function currentFallbackPipelines(
       policy.allowedPipelines.includes(pipeline),
     );
   }
+  if (policy.principal === GITHUB_PR_REMEDIATION_PRINCIPAL) {
+    if (
+      (run.params?.['mode'] !== 'implement' &&
+        run.params?.['mode'] !== 'reply') ||
+      isWorkAnchor(task.task)
+    )
+      return [];
+    let allowedByRepo: readonly string[] = PIPELINES;
+    try {
+      const watchedRepo = getWatchedRepos().find(
+        (repo) => repoKey(repo) === repository,
+      );
+      if (watchedRepo !== undefined) {
+        if (watchedRepo.agents === false) return [];
+        allowedByRepo = supportedAgentPipelines(watchedRepo);
+      }
+    } catch {
+      // Isolated unit tests that omit AGENT_LCARS_WATCHED_REPOS rely on the
+      // caller-injected `repositoryAdmitted` predicate above.
+    }
+    return PIPELINES.filter(
+      (pipeline) =>
+        allowedByRepo.includes(pipeline) &&
+        policy.allowedPipelines.includes(pipeline),
+    );
+  }
   const grant = grantForPrincipal(policy.principal, grants);
-  if (grant === undefined || !grant.scopes.includes('work.operator')) return [];
+  const isJobAutomation =
+    Boolean(run.params?.['jobOccurrence']) &&
+    grant !== undefined &&
+    grant.principal === jobAutomationPrincipalForGrants(grants);
+  if (
+    grant === undefined ||
+    (!grant.scopes.includes('work.operator') && !isJobAutomation)
+  )
+    return [];
   return grant.pipelines.filter((pipeline) =>
     policy.allowedPipelines.includes(pipeline),
   );

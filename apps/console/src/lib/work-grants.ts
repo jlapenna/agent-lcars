@@ -95,3 +95,16 @@ export function grantForPrincipal(
 ): WorkGrant | undefined {
   return grants.find((g) => g.principal === principal);
 }
+
+/** Automatic repository-job activation and execution are attributed to the
+ * unique Work grant holding `work.cron` for the `goose` pipeline (#3217).
+ * Zero or multiple matching grants disable automatic job authority. */
+export function jobAutomationPrincipalForGrants(
+  grants: readonly WorkGrant[] = workGrants(),
+): string | undefined {
+  const scheduler = grants.filter(
+    (grant) =>
+      grant.scopes.includes('work.cron') && grant.pipelines.includes('goose'),
+  );
+  return scheduler.length === 1 ? scheduler[0]!.principal : undefined;
+}

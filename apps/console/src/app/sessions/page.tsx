@@ -35,8 +35,10 @@ import {
   ToolbarSelect,
   ToolbarWindow,
 } from '../console-toolbar';
+import { NavSuspense } from '../nav-suspense';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
+import { windowFlatRows, windowIssueGroups } from './archive-window';
 import { IssueGroupedSessions } from './issue-grouped-sessions';
 import { SessionTable } from './session-table';
 import {
@@ -69,7 +71,13 @@ function displayHref(
     view,
     path = '',
     filters,
-  }: { view: SessionsView; path?: string; filters?: SessionsViewFilters },
+    showAll = false,
+  }: {
+    view: SessionsView;
+    path?: string;
+    filters?: SessionsViewFilters;
+    showAll?: boolean;
+  },
 ): string {
   const params = new URLSearchParams();
   if (query.days !== DEFAULT_ARCHIVE_DAYS) {
@@ -83,6 +91,7 @@ function displayHref(
   if (query.agent) params.set('agent', query.agent);
   if (path !== '/costs' && view === 'flat') params.set('view', 'flat');
   if (filters) setViewFilterParams(params, filters);
+  if (showAll && path === '') params.set('show', 'all');
   const qs = params.toString();
   return qs ? `${path}?${qs}` : path || '?';
 }
@@ -105,6 +114,7 @@ interface PageProps {
     tab?: string;
     agent?: string;
     q?: string;
+    show?: string;
   }>;
 }
 
@@ -124,15 +134,23 @@ async function SessionsBody({
   query,
   view,
   filters,
+  showAll,
   watchedRepos,
 }: {
   query: SessionArchiveQuery;
   view: SessionsView;
   filters: SessionsViewFilters;
+  showAll: boolean;
   watchedRepos: ReturnType<typeof getWatchedRepos>;
 }) {
   const { rows: allRows, warnings } = await getArchive(query);
   const rows = allRows.filter((row) => matchesSessionView(row, filters));
+  const flat = view === 'flat' ? windowFlatRows(rows, showAll) : undefined;
+  const grouped =
+    view === 'by-issue'
+      ? windowIssueGroups(groupSessionsByIssue(rows), showAll)
+      : undefined;
+  const hiddenSessions = (flat ?? grouped)?.hiddenSessions ?? 0;
 
   return (
     <SessionsWorkspace
@@ -241,13 +259,24 @@ async function SessionsBody({
           />
         </Group>
         <div data-testid="sessions-archive-content">
-          {view === 'by-issue' ? (
+          {grouped ? (
             <IssueGroupedSessions
-              groups={groupSessionsByIssue(rows)}
+              groups={grouped.shown}
               find={filters.q}
+              rowLimit={grouped.rowLimit}
             />
           ) : (
-            <SessionTable rows={rows} find={filters.q} />
+            <SessionTable rows={flat?.shown ?? []} find={filters.q} />
+          )}
+          {hiddenSessions > 0 && (
+            <Anchor
+              href={displayHref(query, { view, filters, showAll: true })}
+              size="sm"
+              className="sessions-show-all"
+              data-testid="sessions-show-all"
+            >
+              Show all {rows.length} sessions ({hiddenSessions} more)
+            </Anchor>
           )}
         </div>
       </Card>
@@ -283,6 +312,8 @@ interface SessionsViewProps {
   query: SessionArchiveQuery;
   view: SessionsView;
   filters: SessionsViewFilters;
+  /** `?show=all`: render the whole window instead of its newest sessions. */
+  showAll: boolean;
   watchedRepos: ReturnType<typeof getWatchedRepos>;
   mobileNavigationHrefs: { sessions: string; costs: string };
 }
@@ -291,17 +322,19 @@ function SessionsViewContent({
   query,
   view,
   filters,
+  showAll,
   watchedRepos,
 }: SessionsViewProps) {
   return (
-    <Suspense fallback={<PageLoading rows={6} header={false} />}>
+    <NavSuspense fallback={<PageLoading rows={6} header={false} />}>
       <SessionsBody
         query={query}
         view={view}
         filters={filters}
+        showAll={showAll}
         watchedRepos={watchedRepos}
       />
-    </Suspense>
+    </NavSuspense>
   );
 }
 
@@ -387,6 +420,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
       query={query}
       view={view}
       filters={parseViewFilters(rawParams)}
+      showAll={rawParams.show === 'all'}
       watchedRepos={watchedRepos}
       mobileNavigationHrefs={mobileNavigationHrefs}
     />
@@ -401,7 +435,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
 // #160).
 export default function SessionsPage({ searchParams }: PageProps) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="sessions"
@@ -412,6 +446,6 @@ export default function SessionsPage({ searchParams }: PageProps) {
       }
     >
       <SessionsPageShell searchParams={searchParams} />
-    </Suspense>
+    </NavSuspense>
   );
 }

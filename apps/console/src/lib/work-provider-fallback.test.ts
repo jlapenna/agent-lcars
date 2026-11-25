@@ -402,6 +402,75 @@ describe('provider fallback at the authenticated Work boundary', () => {
       [],
     );
   });
+  it('permits work.cron fallback only for the unique work.cron+goose job automation principal', async () => {
+    const f = fixture();
+    await post(f.context, '/items', {
+      id: ID,
+      spec: { ...spec, fallbackPipelines: ['codex'] },
+    });
+    const baseRun = (await f.store.readActiveRun({ workId: ID }))!;
+    const task = (await f.store.readTask({ workId: ID }))!.task;
+    const jobRun: Run = {
+      ...baseRun,
+      params: { ...baseRun.params, jobOccurrence: 'a'.repeat(64) },
+      providerFallback: {
+        principal: 'svc:job-scheduler',
+        allowedPipelines: ['codex'],
+      },
+    };
+    expect(
+      currentFallbackPipelines(
+        task,
+        jobRun,
+        [
+          {
+            principal: 'svc:job-scheduler',
+            subjects: ['scheduler@example.iam.gserviceaccount.com'],
+            pipelines: ['goose', 'claude', 'codex'],
+            scopes: ['work.cron'],
+          },
+        ],
+        () => true,
+      ),
+    ).toEqual(['codex']);
+    // Removing goose or adding a second work.cron+goose grant disables job automation fallback.
+    expect(
+      currentFallbackPipelines(
+        task,
+        jobRun,
+        [
+          {
+            principal: 'svc:job-scheduler',
+            subjects: ['scheduler@example.iam.gserviceaccount.com'],
+            pipelines: ['claude', 'codex'],
+            scopes: ['work.cron'],
+          },
+        ],
+        () => true,
+      ),
+    ).toEqual([]);
+    expect(
+      currentFallbackPipelines(
+        task,
+        jobRun,
+        [
+          {
+            principal: 'svc:job-scheduler',
+            subjects: ['scheduler@example.iam.gserviceaccount.com'],
+            pipelines: ['goose', 'claude', 'codex'],
+            scopes: ['work.cron'],
+          },
+          {
+            principal: 'svc:second-scheduler',
+            subjects: ['scheduler2@example.iam.gserviceaccount.com'],
+            pipelines: ['goose'],
+            scopes: ['work.cron'],
+          },
+        ],
+        () => true,
+      ),
+    ).toEqual([]);
+  });
 });
 
 const emulatorHost = process.env['FIRESTORE_EMULATOR_HOST'];

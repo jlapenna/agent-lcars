@@ -6,7 +6,11 @@ import type { ActionItem } from '../lib/action-items';
 import { localAgentCommand } from '../lib/local-agent-prompt';
 import type { PrimaryAction } from '../lib/primary-action';
 import { ActionItemCard } from './action-item-card';
-import { refreshGithubSignIn, replyToItem } from './actions';
+import {
+  answerGithubDecision,
+  refreshGithubSignIn,
+  replyToItem,
+} from './actions';
 import { renderCardMarkdown } from './render-card-markdown';
 
 // actions.ts is 'use server' and pulls in auth/firestore/GitHub client -
@@ -16,6 +20,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(''),
 }));
 vi.mock('./actions', () => ({
+  answerGithubDecision: vi.fn(),
   mergePr: vi.fn(),
   approveAndRebase: vi.fn(),
   replyToItem: vi.fn(),
@@ -70,6 +75,50 @@ function renderCard(
 }
 
 describe('ActionItemCard', () => {
+  it('posts the selected option as the operator reply in one click', async () => {
+    vi.mocked(answerGithubDecision).mockResolvedValueOnce({
+      ok: true,
+      note: 'Reply admitted',
+    });
+    const item = makeItem({
+      actionTypes: ['needs-human'],
+      humanDecision: {
+        ask: 'Choose a retention policy.',
+        runId: 'supersprinklesracing/sprinkles#1/r1',
+        choices: [
+          { kind: 'option', label: 'Keep 30 days' },
+          { kind: 'option', label: 'Keep 90 days' },
+        ],
+      },
+      lastCommentBody: 'The run finished.',
+    });
+    renderCard(item);
+    const selected = screen.getByRole('button', { name: 'Keep 90 days' });
+    expect(screen.getByRole('button', { name: 'Keep 30 days' })).toBeEnabled();
+    fireEvent.click(selected);
+    await waitFor(() => expect(selected).toBeDisabled());
+    expect(answerGithubDecision).toHaveBeenCalledExactlyOnceWith(
+      item.repo,
+      item.number,
+      item.humanDecision?.runId,
+      { kind: 'option', label: 'Keep 90 days' },
+    );
+  });
+
+  it('keeps GitHub text without a verified run from adding approval controls', () => {
+    const text = 'Human ask: Approve staging.\nHuman approval: Approve staging';
+    renderCard(
+      makeItem({
+        actionTypes: ['needs-human'],
+        body: text,
+        lastCommentBody: text,
+      }),
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Approve staging' }),
+    ).toBeNull();
+  });
+
   it('keeps superseded handoff actions historical while the current description and reply remain visible', () => {
     const { rerender } = render(
       <MantineProvider>
@@ -290,14 +339,11 @@ describe('ActionItemCard', () => {
     expect(button.disabled).toBe(true);
   });
 
-  // #538: the retro (#521) found ten green-checked, auto-merge-armed PRs
-  // sitting unmergeable behind unresolved review threads with nothing on
-  // the card explaining why - this badge is the fix.
-  it('shows the unresolved review-thread count as the merge-blocked reason', () => {
+  it('shows the unresolved review-thread count badge when threads remain open', () => {
     renderCard(
       makeItem({
         kind: 'pr',
-        actionTypes: ['merge-blocked'],
+        actionTypes: ['review-requested'],
         mergeableState: 'blocked',
         unresolvedReviewThreadCount: 3,
       }),
@@ -306,11 +352,11 @@ describe('ActionItemCard', () => {
     expect(screen.getByText('3 unresolved review threads')).toBeTruthy();
   });
 
-  it('omits the thread-count badge for a merge-blocked PR whose reason is a behind base', () => {
+  it('omits the thread-count badge for a PR whose warning is a behind base', () => {
     renderCard(
       makeItem({
         kind: 'pr',
-        actionTypes: ['merge-blocked'],
+        actionTypes: ['review-requested'],
         mergeableState: 'behind',
       }),
       { kind: 'approve-rebase' },
@@ -319,13 +365,13 @@ describe('ActionItemCard', () => {
     expect(screen.queryByText(/unresolved review thread/)).toBeNull();
   });
 
-  it('shows the merge-blocked reason badge in workspace mode too', () => {
+  it('shows the unresolved review-thread badge in workspace mode too', () => {
     render(
       <MantineProvider>
         <ActionItemCard
           item={makeItem({
             kind: 'pr',
-            actionTypes: ['merge-blocked'],
+            actionTypes: ['needs-human'],
             mergeableState: 'blocked',
             unresolvedReviewThreadCount: 1,
           })}

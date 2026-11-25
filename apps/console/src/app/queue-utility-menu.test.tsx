@@ -16,6 +16,9 @@ vi.mock('./actions', () => ({
   updateIssueContent: vi.fn(),
 }));
 
+const router = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock('next/navigation', () => ({ useRouter: () => router }));
+
 vi.mock('@mantine/modals', () => ({
   modals: { openConfirmModal: vi.fn() },
 }));
@@ -131,5 +134,47 @@ describe('QueueUtilityMenu', () => {
 
     expect(screen.queryByText('#4980')).toBeNull();
     expect(screen.getByText('Settings')).toBeTruthy();
+  });
+
+  // The menu closes on tap while the current page stays up, so the router
+  // push runs in a transition the trigger can show as pending.
+  it('navigates through the router instead of a plain link follow', async () => {
+    router.push.mockClear();
+    render(
+      <MantineProvider>
+        <QueueUtilityMenu
+          repositoryUrl="https://github.com/supersprinklesracing/sprinkles"
+          signOutControl={<button>Sign out</button>}
+          includeNavigation
+          navigationHrefs={{ inbox: '/inbox?repo=jlapenna%2Fagent-lcars' }}
+        />
+      </MantineProvider>,
+    );
+
+    await openMenu();
+    const inbox = screen.getByRole('menuitem', { name: 'Inbox' });
+    expect(fireEvent.click(inbox)).toBe(false);
+    expect(router.push).toHaveBeenCalledWith(
+      '/inbox?repo=jlapenna%2Fagent-lcars',
+    );
+  });
+
+  it('leaves modified clicks to the browser', async () => {
+    router.push.mockClear();
+    render(
+      <MantineProvider>
+        <QueueUtilityMenu
+          repositoryUrl="https://github.com/supersprinklesracing/sprinkles"
+          signOutControl={<button>Sign out</button>}
+          includeNavigation
+        />
+      </MantineProvider>,
+    );
+
+    await openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Settings' }), {
+      metaKey: true,
+    });
+    expect(router.push).not.toHaveBeenCalled();
   });
 });

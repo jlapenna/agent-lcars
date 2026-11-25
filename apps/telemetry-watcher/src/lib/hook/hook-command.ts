@@ -8,13 +8,16 @@ import {
   antigravityAdapter,
   applySessionTitleOverlay,
   claudeCodeAdapter,
+  claudeSubagentSessionId,
   codexAdapter,
   isSafeIdentifier,
   opencodeAdapter,
+  parseClaudeSubagentPath,
   type SessionAgent,
   type SessionEventKind,
   type SessionEventV1,
   type SessionSummary,
+  totalTokens,
   type TranscriptAdapter,
 } from '@agent-lcars/telemetry';
 
@@ -33,6 +36,11 @@ import {
 import { SESSION_STATE_DIRECTORY } from '../session-title-paths';
 import { findCodexRollout } from './codex-rollout';
 import { acquireFileLock, releaseFileLock } from './file-lock';
+import {
+  defaultHerdrPaneDependencies,
+  type HerdrPaneLookup,
+  resolveHerdrPane,
+} from './herdr-pane';
 import { loadHookClientConfig } from './hook-config';
 import { appendHookLog } from './hook-log';
 import {
@@ -44,6 +52,7 @@ import {
 } from './hook-payload';
 import {
   hookSessionLockPath,
+  type HookSessionState,
   isHookFenced,
   readHookSessionState,
   shouldShipEvent,
@@ -107,6 +116,8 @@ export interface HookCommandDependencies {
   resolvePublicationCheckouts?: (
     cwd: string,
   ) => Promise<{ branch: string; head: string }[] | undefined>;
+  /** Finds the herdr terminal this hook runs in. Host sessions only. */
+  resolveHerdrPane?: () => Promise<HerdrPaneLookup>;
   /** Starts the flusher detached from the hook process. */
   spawnFlusher: () => void;
   /** Runs the flusher to completion (`lcars hook flush`, `--inline`). */
@@ -149,6 +160,7 @@ export function defaultHookCommandDependencies(
     resolveGitBranch: defaultResolveGitBranch,
     isInsideGitCheckout,
     resolvePublicationCheckouts,
+    resolveHerdrPane: () => resolveHerdrPane(defaultHerdrPaneDependencies(env)),
     resolveGithubActor: () =>
       new Promise((resolve) => {
         execFile(
@@ -189,6 +201,90 @@ export function defaultHookCommandDependencies(
     randomId: () => crypto.randomUUID(),
     hostname: () => os.hostname(),
     stderr: (line) => process.stderr.write(`${line}\n`),
+  };
+}
+
+type HerdrPaneState = Pick<
+  HookSessionState,
+  'herdrPaneId' | 'herdrPaneResolved' | 'herdrPaneCheckedAt'
+>;
+
+/** How long to wait before asking herdr-core again after it failed to answer. */
+const HERDR_PANE_RETRY_MS = 5 * 60 * 1000;
+
+function herdrPaneState(state: HookSessionState | undefined): HerdrPaneState {
+  return {
+    ...(state?.herdrPaneId && { herdrPaneId: state.herdrPaneId }),
+    ...(state?.herdrPaneResolved && { herdrPaneResolved: true }),
+    ...(state?.herdrPaneCheckedAt && {
+      herdrPaneCheckedAt: state.herdrPaneCheckedAt,
+    }),
+  };
+}
+
+/**
+ * Asks herdr-core which terminal this session runs in, when this event
+ * should ask at all. `undefined` means it did not ask.
+ *
+ * A session start asks again, because a resumed session can be in another
+ * terminal. Every other event reuses a definite earlier answer, and waits
+ * out {@link HERDR_PANE_RETRY_MS} after a failed one. A dispatched runner
+ * never runs in a herdr-core terminal, and a throttled event ships nothing.
+ */
+async function lookupHerdrPane(
+  deps: HookCommandDependencies,
+  runner: unknown,
+  kind: SessionEventKind,
+  state: HookSessionState | undefined,
+  now: string,
+): Promise<HerdrPaneLookup | undefined> {
+  if (runner || !deps.resolveHerdrPane) return undefined;
+  if (kind !== 'start') {
+    if (state?.herdrPaneResolved || !shouldShipEvent(kind, state, now)) {
+      return undefined;
+    }
+    const sinceFailure = state?.herdrPaneCheckedAt
+      ? Date.parse(now) - Date.parse(state.herdrPaneCheckedAt)
+      : Number.POSITIVE_INFINITY;
+    if (sinceFailure >= 0 && sinceFailure < HERDR_PANE_RETRY_MS) {
+      return undefined;
+    }
+  }
+  return deps
+    .resolveHerdrPane()
+    .catch((): HerdrPaneLookup => ({ status: 'unknown' }));
+}
+
+/**
+ * What to report and remember after {@link lookupHerdrPane}.
+ *
+ * When herdr-core could not answer, the pane known before is still
+ * reported, but it is no longer a definite answer: later events ask again
+ * once {@link HERDR_PANE_RETRY_MS} has passed. That matters most on a
+ * session start, which asks because the session may have moved.
+ *
+ * The lookup ran before the session lock, on the state read then. If
+ * another event of this session settled the answer in the meantime, a
+ * failed lookup from an ordinary event does not unsettle it.
+ */
+function applyHerdrPaneLookup(
+  state: HookSessionState | undefined,
+  lookup: HerdrPaneLookup | undefined,
+  kind: SessionEventKind,
+  now: string,
+): HerdrPaneState {
+  const known = herdrPaneState(state);
+  if (!lookup) return known;
+  if (lookup.status === 'unknown') {
+    if (kind !== 'start' && known.herdrPaneResolved) return known;
+    return {
+      ...(known.herdrPaneId && { herdrPaneId: known.herdrPaneId }),
+      herdrPaneCheckedAt: now,
+    };
+  }
+  return {
+    ...(lookup.status === 'found' && { herdrPaneId: lookup.paneId }),
+    herdrPaneResolved: true,
   };
 }
 
@@ -397,6 +493,79 @@ function reduceCodexChildTranscript(
   }
 }
 
+/**
+ * Resolves the child JSONL path for a Claude Code `SubagentStop` hook.
+ * Prefers `agent_transcript_path` when supplied; otherwise derives the
+ * canonical `<projectDir>/<parentId>/subagents/agent-<agentId>.jsonl` sibling
+ * when `transcript_path` names `<projectDir>/<parentId>.jsonl`. Never falls
+ * back to the parent's own transcript.
+ */
+function resolveClaudeChildTranscriptPath(
+  payload: HookPayload,
+): string | undefined {
+  if (payload.agentTranscriptPath) {
+    const parsed = parseClaudeSubagentPath(payload.agentTranscriptPath);
+    return parsed &&
+      parsed.parentSessionId === payload.sessionId &&
+      parsed.agentId === payload.agentId
+      ? payload.agentTranscriptPath
+      : undefined;
+  }
+  if (
+    !payload.transcriptPath ||
+    !payload.agentId ||
+    path.basename(payload.transcriptPath) !== `${payload.sessionId}.jsonl`
+  ) {
+    return undefined;
+  }
+  return path.join(
+    path.dirname(payload.transcriptPath),
+    payload.sessionId,
+    'subagents',
+    `agent-${payload.agentId}.jsonl`,
+  );
+}
+
+/**
+ * Reduces a verified standalone Claude Code `Agent` subagent transcript.
+ * Requires the path to match `<parentId>/subagents/agent-<agentId>.jsonl`,
+ * every JSONL record to carry `sessionId === parentId`, `agentId`, and
+ * `isSidechain: true`, and at least one observed turn or token count so an
+ * empty or mismatched file never produces a synthetic child session.
+ */
+function reduceClaudeChildTranscript(
+  deps: HookCommandDependencies,
+  transcriptPath: string | undefined,
+  childSessionId: string,
+  expectedParentId: string | undefined,
+  expectedAgentId: string | undefined,
+): SessionSummary | undefined {
+  if (!transcriptPath || !expectedParentId || !expectedAgentId) {
+    return undefined;
+  }
+  const parsedPath = parseClaudeSubagentPath(transcriptPath);
+  if (
+    !parsedPath ||
+    parsedPath.parentSessionId !== expectedParentId ||
+    parsedPath.agentId !== expectedAgentId ||
+    parsedPath.sessionId !== childSessionId
+  ) {
+    return undefined;
+  }
+  try {
+    const summary = claudeCodeAdapter.reduce(
+      deps.readTranscriptLines(transcriptPath),
+      transcriptPath,
+    )[0];
+    return summary?.sessionId === childSessionId &&
+      (summary.turns > 0 || totalTokens(summary.tokens) > 0)
+      ? summary
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function applyAnnotationOverlays(
   stateDirectory: string,
   summary: SessionSummary,
@@ -481,7 +650,8 @@ async function handleRuntimeHook(
     return { action: 'ignored', detail: 'unparseable payload' };
   }
   const kind: SessionEventKind | undefined =
-    runtime === 'codex' && payload.hookEventName === 'SubagentStop'
+    (runtime === 'codex' || runtime === 'claude') &&
+    payload.hookEventName === 'SubagentStop'
       ? 'stop'
       : HOOK_EVENT_KINDS[payload.hookEventName];
   if (!kind) {
@@ -493,32 +663,61 @@ async function handleRuntimeHook(
     return { action: 'ignored', detail: 'missing child identity' };
   }
   let codexParentId: string | undefined;
+  let claudeSubagent:
+    { parentId: string; agentId: string; childSessionId: string } | undefined;
   if (payload.isSubagent) {
-    if (
-      runtime !== 'codex' ||
-      !payload.agentId ||
-      !isSafeIdentifier(payload.agentId) ||
-      !isSafeIdentifier(payload.sessionId) ||
-      payload.agentId === payload.sessionId
-    ) {
+    const initialPayload = payload;
+    const skipSubagent = () => {
       // Name the identities (when safe to print) so a skipped event can be
       // matched to a session instead of only to a timestamp.
       const tag = (id: string | undefined) =>
         id && isSafeIdentifier(id) ? id.slice(0, 8) : 'unsafe';
       log(
         'skipped-subagent',
-        `parent=${tag(payload.sessionId)} child=${tag(payload.agentId)} event=${payload.hookEventName}`,
+        `parent=${tag(initialPayload.sessionId)} child=${tag(initialPayload.agentId)} event=${initialPayload.hookEventName}`,
       );
-      return { action: 'skipped-subagent' };
-    }
-    // Codex hook session_id identifies the parent. Use only the explicit child
-    // path or exact agent_id rollout lookup; the common transcript is parent-owned.
-    codexParentId = payload.sessionId;
-    payload = {
-      ...payload,
-      sessionId: payload.agentId,
-      transcriptPath: payload.agentTranscriptPath,
+      return { action: 'skipped-subagent' as const };
     };
+    if (runtime === 'codex') {
+      if (
+        !payload.agentId ||
+        !isSafeIdentifier(payload.agentId) ||
+        !isSafeIdentifier(payload.sessionId) ||
+        payload.agentId === payload.sessionId
+      ) {
+        return skipSubagent();
+      }
+      // Codex hook session_id identifies the parent. Use only the explicit child
+      // path or exact agent_id rollout lookup; the common transcript is parent-owned.
+      codexParentId = payload.sessionId;
+      payload = {
+        ...payload,
+        sessionId: payload.agentId,
+        transcriptPath: payload.agentTranscriptPath,
+      };
+    } else if (
+      runtime === 'claude' &&
+      payload.hookEventName === 'SubagentStop'
+    ) {
+      const childSessionId = payload.agentId
+        ? claudeSubagentSessionId(payload.sessionId, payload.agentId)
+        : undefined;
+      if (!childSessionId || !payload.agentId) {
+        return skipSubagent();
+      }
+      claudeSubagent = {
+        parentId: payload.sessionId,
+        agentId: payload.agentId,
+        childSessionId,
+      };
+      payload = {
+        ...payload,
+        sessionId: childSessionId,
+        transcriptPath: resolveClaudeChildTranscriptPath(payload),
+      };
+    } else {
+      return skipSubagent();
+    }
   }
   if (!isSafeIdentifier(payload.sessionId)) {
     log('ignored', 'unsafe session id');
@@ -555,6 +754,18 @@ async function handleRuntimeHook(
     }
   }
 
+  // The terminal lookup runs herdr-core, so it happens before the session
+  // lock: a slow answer must not make the events queued behind this one give
+  // up on the lock. The state it reads here only decides whether to ask; the
+  // answer is merged into the state read under the lock.
+  const herdrPaneLookup = await lookupHerdrPane(
+    deps,
+    config.runner,
+    kind,
+    readHookSessionState(stateDirectory, payload.sessionId),
+    now,
+  );
+
   // Async hooks (PostToolUse, Stop, SessionEnd) can overlap; the per-session
   // lock makes read-state → append → write-state atomic so no two events
   // share a `seq` and the spool order matches the sequence order.
@@ -586,6 +797,7 @@ async function handleRuntimeHook(
         ...(state?.lastShippedAt && { lastShippedAt: state.lastShippedAt }),
         ...(state?.lastKind && { lastKind: state.lastKind }),
         ...(state?.repoScoped && { repoScoped: true }),
+        ...herdrPaneState(state),
         updatedAt: now,
       });
       log('throttled', `session=${sessionTag}`);
@@ -594,12 +806,20 @@ async function handleRuntimeHook(
 
     const transcriptPath = resolveTranscriptPath(deps, runtime, payload);
     const reduced = payload.isSubagent
-      ? reduceCodexChildTranscript(
-          deps,
-          transcriptPath,
-          payload.sessionId,
-          codexParentId,
-        )
+      ? claudeSubagent
+        ? reduceClaudeChildTranscript(
+            deps,
+            transcriptPath,
+            claudeSubagent.childSessionId,
+            claudeSubagent.parentId,
+            claudeSubagent.agentId,
+          )
+        : reduceCodexChildTranscript(
+            deps,
+            transcriptPath,
+            payload.sessionId,
+            codexParentId,
+          )
       : reduceTranscript(
           deps,
           profile.adapter,
@@ -616,6 +836,7 @@ async function handleRuntimeHook(
         detail: 'unverified child transcript',
       };
     }
+    const herdrPane = applyHerdrPaneLookup(state, herdrPaneLookup, kind, now);
     let summary: SessionSummary | undefined;
     if (reduced || kind !== 'end') {
       const base =
@@ -633,6 +854,10 @@ async function handleRuntimeHook(
       // Branch evidence must be observed from the hook checkout. Never keep a
       // reducer-supplied branch when git resolution fails.
       delete withHost.branch;
+      // The terminal is observed from the hook's own process, never read
+      // from the transcript.
+      delete withHost.herdrPaneId;
+      if (herdrPane.herdrPaneId) withHost.herdrPaneId = herdrPane.herdrPaneId;
       const withGit = await applyGitContext(
         withHost,
         deps.resolveGitBranch,
@@ -721,6 +946,7 @@ async function handleRuntimeHook(
       lastShippedAt: now,
       lastKind: kind,
       ...((repo || state?.repoScoped) && { repoScoped: true }),
+      ...herdrPane,
       updatedAt: now,
     });
     log('spooled', `session=${sessionTag} kind=${kind} seq=${seq}`);

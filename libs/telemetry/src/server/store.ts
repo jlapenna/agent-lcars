@@ -17,7 +17,7 @@ import {
   Timestamp as AdminTimestamp,
 } from 'firebase-admin/firestore';
 
-import { parseSessionDoc } from '../lib/session-doc';
+import { parseSessionDoc, SESSION_WRITTEN_AT_FIELD } from '../lib/session-doc';
 import {
   SessionDoc,
   SessionRepository,
@@ -107,6 +107,7 @@ export async function upsertSession(write: SessionWrite): Promise<void> {
         ...Object.fromEntries(
           clearFields.map((field) => [field, AdminFieldValue.delete()]),
         ),
+        [SESSION_WRITTEN_AT_FIELD]: AdminFieldValue.serverTimestamp(),
       },
       { merge: true },
     );
@@ -139,6 +140,7 @@ export async function setSessionExpiry(
           expireAt === null
             ? AdminFieldValue.delete()
             : AdminTimestamp.fromDate(new Date(expireAt)),
+        [SESSION_WRITTEN_AT_FIELD]: AdminFieldValue.serverTimestamp(),
       });
     return true;
   } catch (error) {
@@ -225,6 +227,78 @@ export interface ListSessionDocsOptions {
   exhaustive?: boolean;
 }
 
+/** A stored session document as a {@link SessionDoc}: the native `expireAt`
+ * Timestamp becomes the ISO string the type carries, and the
+ * `writtenAt` storage stamp is dropped. */
+function sessionFromStored(stored: Record<string, unknown>): SessionDoc {
+  const { [SESSION_WRITTEN_AT_FIELD]: _writtenAt, ...data } = stored;
+  const expireAt = data['expireAt'];
+  return parseSessionDoc({
+    ...data,
+    ...(expireAt instanceof Timestamp && {
+      expireAt: expireAt.toDate().toISOString(),
+    }),
+  });
+}
+
+function readSessionSnapshot(snapshot: QueryDocumentSnapshot): SessionDoc {
+  return sessionFromStored(snapshot.data());
+}
+
+/** Session documents written at or after `since`, with the time the read
+ * observed. Every commit at or before `readTime` is reflected, so passing
+ * it back as the next `since` misses no write. Served by the automatic
+ * single-field `writtenAt` index. */
+export async function listSessionDocsWrittenSince(
+  firestore: Firestore,
+  since: Timestamp,
+): Promise<{ docs: SessionDoc[]; readTime: Timestamp }> {
+  const snapshot = await firestore
+    .collection(SESSIONS_COLLECTION)
+    .where(SESSION_WRITTEN_AT_FIELD, '>=', since)
+    .get();
+  return {
+    docs: snapshot.docs.map(readSessionSnapshot),
+    readTime: snapshot.readTime,
+  };
+}
+
+/** Firestore's maximum number of values in one `in` filter. */
+const IN_FILTER_MAX = 30;
+
+/**
+ * The session docs of the given runs (`IssueAgentSessionDoc.runId`), read by
+ * key. A page joins telemetry to the few dozen runs it renders; listing the
+ * activity window instead reads every session in it (hundreds a day). The
+ * automatic single-field `runId` index serves the `in` filter, so this needs
+ * no composite index. A run can hold several sessions (one per provider
+ * session, including subagents); every one is returned.
+ */
+export async function listSessionDocsByRunIds(
+  firestore: Firestore,
+  runIds: Iterable<string>,
+): Promise<SessionDoc[]> {
+  const unique = [...new Set(runIds)];
+  const chunks: string[][] = [];
+  for (let start = 0; start < unique.length; start += IN_FILTER_MAX) {
+    chunks.push(unique.slice(start, start + IN_FILTER_MAX));
+  }
+  const collection = firestore.collection(SESSIONS_COLLECTION);
+  const pages = await Promise.all(
+    chunks.map(async (chunk) => {
+      const docs: SessionDoc[] = [];
+      const snapshots = collection
+        .where('runId', 'in', chunk)
+        .stream() as unknown as AsyncIterable<QueryDocumentSnapshot>;
+      for await (const snapshot of snapshots) {
+        docs.push(readSessionSnapshot(snapshot));
+      }
+      return docs;
+    }),
+  );
+  return pages.flat();
+}
+
 /**
  * Lists session docs in the `agent-telemetry` database, newest activity
  * first. Read-only by design (the console's SA cannot write - see
@@ -271,14 +345,7 @@ export async function listSessionDocs(
   const snapshots =
     query.stream() as unknown as AsyncIterable<QueryDocumentSnapshot>;
   for await (const snapshot of snapshots) {
-    const data = snapshot.data();
-    const expireAt = data['expireAt'];
-    const doc = parseSessionDoc({
-      ...data,
-      ...(expireAt instanceof Timestamp && {
-        expireAt: expireAt.toDate().toISOString(),
-      }),
-    });
+    const doc = readSessionSnapshot(snapshot);
     if (options.exhaustive) {
       docs.push(doc);
       continue;
@@ -323,13 +390,7 @@ export async function getSessionDoc(
   if (!data) {
     return undefined;
   }
-  const expireAt = data['expireAt'];
-  return parseSessionDoc({
-    ...data,
-    ...(expireAt instanceof Timestamp && {
-      expireAt: expireAt.toDate().toISOString(),
-    }),
-  });
+  return sessionFromStored(data);
 }
 
 /** @internal Reset cached clients for testing only. */

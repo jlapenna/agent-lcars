@@ -1,14 +1,13 @@
-import { isE2eTesting } from '@agent-lcars/util-server';
-import { cacheLife } from 'next/cache';
 import type { Session } from 'next-auth';
 
 import { context as workContext } from '../app/work/context';
 import { auth } from '../auth';
-import { DASHBOARD_CACHE_LIFE, getCachedAgentActivity } from './dashboard-data';
+import { getCachedAgentActivity } from './dashboard-data';
 import { consoleUrl } from './deployment';
 import { loadInboxNotificationSnapshot } from './inbox-notifications-data';
 import { mergedLastDay } from './merged-pulls';
-import { getSessionArchive } from './session-archive';
+import { readTimings } from './read-timings';
+import { getArchiveTokenTotal } from './session-archive';
 
 /**
  * The figures the console frame shows on every page: the rail readouts, the
@@ -52,28 +51,10 @@ interface RecentMerges {
   merged24hPartial?: boolean;
 }
 
-const STORE_FAILED = 'Session archive unavailable';
-
-/** Throws when the archive read failed, so a failure is never cached as a
- * zero; the caller then reports the figure unavailable. */
+/** Throws when the archive read failed, so the caller reports the figure
+ * unavailable rather than zero. */
 async function readRecentTokens(): Promise<RecentTokens> {
-  const day = await getSessionArchive({ days: 1 }, { includeSpend: true });
-  if (
-    !day.spend ||
-    day.warnings.some((warning) => warning.startsWith(STORE_FAILED))
-  )
-    throw new Error('Session archive unavailable');
-  return {
-    tokens24h: day.spend.totals.tokens,
-    // The archive hit its session cap: more sessions exist than were summed.
-    tokens24hPartial: day.spend.coverageLimited,
-  };
-}
-
-async function readCachedRecentTokens(): Promise<RecentTokens> {
-  'use cache';
-  cacheLife(DASHBOARD_CACHE_LIFE);
-  return readRecentTokens();
+  return { tokens24h: await getArchiveTokenTotal(1) };
 }
 
 function initialsOf(login: string): string {
@@ -119,20 +100,30 @@ export async function loadShellReadouts(): Promise<ShellReadouts | undefined> {
   };
   if (!session.user.isAdmin) return base;
 
+  // This runs in a Route Handler, where `React.cache` does not share reads, so
+  // start the activity read once and hand it to the inbox snapshot.
+  const timings = readTimings('shell-readouts');
+  const activityRead = timings.time('activity', getCachedAgentActivity());
   const [activity, snapshot, tokens, merges] = await Promise.all([
-    getCachedAgentActivity().catch(() => undefined),
-    loadInboxNotificationSnapshot().catch(() => undefined),
-    (isE2eTesting() ? readRecentTokens() : readCachedRecentTokens()).catch(
-      () => ({}) as RecentTokens,
-    ),
+    activityRead.catch(() => undefined),
+    timings
+      .time('inbox', loadInboxNotificationSnapshot(activityRead))
+      .catch(() => undefined),
+    timings
+      .time('tokens24h', readRecentTokens())
+      .catch(() => ({}) as RecentTokens),
     // Counted from GitHub across the watched repositories, so merges no
     // recorded session referenced still count.
-    mergedLastDay().then((merged): RecentMerges =>
-      merged === undefined
-        ? {}
-        : { merged24h: merged.count, merged24hPartial: merged.partial },
+    timings.time(
+      'merges24h',
+      mergedLastDay().then((merged): RecentMerges =>
+        merged === undefined
+          ? {}
+          : { merged24h: merged.count, merged24hPartial: merged.partial },
+      ),
     ),
   ]);
+  timings.log();
   const queue = activity?.data.queue;
   const fleet = activity?.data.fleet;
   return {

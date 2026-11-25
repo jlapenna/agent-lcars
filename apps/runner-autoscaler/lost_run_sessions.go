@@ -161,7 +161,13 @@ func (s firestoreLostRunSessionStore) endSessionIf(ctx context.Context, id strin
 		// Only liveness: `runner finalize` writes the same `ended` without
 		// touching expireAt (a function of lastActivityAt) or the hook
 		// observer, and there is no transcript here to refresh anything else.
-		return tx.Update(ref, []firestore.Update{{Path: "liveness", Value: "ended"}})
+		// writtenAt is the server commit stamp every session writer sets, so
+		// the console's incremental archive read sees this change
+		// (libs/telemetry SESSION_WRITTEN_AT_FIELD).
+		return tx.Update(ref, []firestore.Update{
+			{Path: "liveness", Value: "ended"},
+			{Path: "writtenAt", Value: firestore.ServerTimestamp},
+		})
 	})
 	if err != nil {
 		return false, err

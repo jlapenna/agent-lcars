@@ -7,7 +7,11 @@
     "./lcars-telemetry.js",
     "./hindsight.js"
   ],
-  "skills": ["/opt/repo-tools/plugins/repo-tools/skills"],
+  "skills": [
+    "/opt/repo-tools/plugins/repo-tools/skills",
+    "/home/runner/.claude/plugins/marketplaces/googlechrome/skills",
+    "/home/runner/.claude/plugins/marketplaces/goland-claude-marketplace/plugin/skills"
+  ],
   "permission": {
     "external_directory": "allow",
     "doom_loop": "allow",

@@ -1,25 +1,29 @@
-"""Collect GitHub Actions workflow/job metrics without unbounded labels."""
+"""Turn GitHub Actions webhook events into metrics without unbounded labels.
+
+The Agent LCARS console verifies each `workflow_run` and `workflow_job`
+delivery from the GitHub App and publishes its raw body to a Pub/Sub topic.
+This process holds a streaming pull on that topic's subscription, stores every
+run attempt and job in SQLite, and serves aggregated Prometheus metrics.
+"""
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import os
+import re
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
-import requests
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+from google.cloud.pubsub_v1 import SubscriberClient
+from google.cloud.pubsub_v1.types import FlowControl
 from prometheus_client import CollectorRegistry, Counter, Gauge, start_http_server
 from prometheus_client.core import (
     CounterMetricFamily,
@@ -48,6 +52,23 @@ DURATION_BUCKETS = (
 )
 ACTIVE_STATUSES = ("queued", "in_progress", "waiting", "pending", "requested")
 QUEUED_STATUSES = ("queued", "waiting", "pending", "requested")
+# How far each GitHub status has progressed. Pub/Sub delivers at least once and
+# in no particular order, so an event only replaces stored state when it is at
+# least as far along: a late `in_progress` cannot undo `completed`.
+STATUS_RANK = {
+    "requested": 1,
+    "pending": 1,
+    "waiting": 1,
+    "queued": 1,
+    "in_progress": 2,
+    "completed": 3,
+}
+# Statuses the exporter assigns itself to an active row that can no longer be
+# active. Only a completion replaces them. `missing` and `refresh_pending` are
+# left by earlier, polling versions of this exporter.
+RETIRED_STATUSES = ("superseded", "orphaned", "missing", "refresh_pending")
+# A run attempt in one of these states has no running jobs.
+FINISHED_RUN_STATUSES = ("completed", "superseded")
 MAX_JOB_LABELS_PER_WORKFLOW = 100
 # Runs older than this do not count toward a workflow's consecutive-failure
 # streak, so a workflow that no longer runs stops reporting one (see collect()).
@@ -56,24 +77,36 @@ CONSECUTIVE_FAILURE_WINDOW_SECONDS = 3 * 24 * 3600
 # streak this leaves out action_required: on a pull request it means the run
 # is waiting for a maintainer to approve it, and nothing has failed.
 PULL_REQUEST_FAILURE_CONCLUSIONS = ("failure", "timed_out", "startup_failure")
-# How often, and for how many runs at a time, the poller asks GitHub whether a
-# failed pull_request run has been rerun (see Poller.refresh_repository).
-PULL_REQUEST_RECHECK_SECONDS = 300
-PULL_REQUEST_RECHECK_LIMIT = 20
 OVERFLOW_JOB_LABEL = "__other__"
-MAX_CONCURRENCY_GROUP_LABELS_PER_WORKFLOW = 100
-OVERFLOW_CONCURRENCY_GROUP_LABEL = "__other__"
 FULL_SUITE_STEP_MARKER = "[full-suite]"
-PAGE_SIZE = 100
-RUN_SEARCH_LIMIT = 1000
-ONE_SECOND = timedelta(seconds=1)
-OPTIONAL_METADATA_RETRY_SECONDS = 300
-# A GitHub App installation token lives one hour. Re-mint with enough margin
-# that a token cannot expire between the check and the request that uses it,
-# including a slow paginated sweep.
-APP_TOKEN_REFRESH_MARGIN_SECONDS = 600
-# GitHub rejects an App JWT whose `exp` is more than 10 minutes out.
-APP_JWT_LIFETIME_SECONDS = 540
+
+# The webhook events this exporter stores; the console forwards no others.
+EVENTS = ("workflow_run", "workflow_job")
+MESSAGE_OUTCOMES = ("stored", "ignored_repository", "malformed", "error")
+SUBSCRIPTION_PATTERN = re.compile(r"projects/[^/\s]+/subscriptions/[^/\s]+")
+RUN_TIMESTAMPS = ("created_at", "updated_at", "run_started_at")
+JOB_TIMESTAMPS = ("created_at", "started_at", "completed_at")
+# Messages leased to this process at once. Writes serialize on one SQLite
+# connection, so a larger window only holds more messages unacknowledged.
+MAX_OUTSTANDING_MESSAGES = 100
+# How often stored history is re-aggregated for /metrics while events arrive.
+SNAPSHOT_REFRESH_SECONDS = 30.0
+# Delay before re-opening a streaming pull that stopped. The client library
+# already retries transient stream errors itself; this covers the errors it
+# gives up on (for example a revoked credential or a deleted subscription).
+RECONNECT_MIN_SECONDS = 1.0
+RECONNECT_MAX_SECONDS = 60.0
+# How long stream_once waits for a cancelled stream to finish its callbacks.
+SHUTDOWN_WAIT_SECONDS = 30.0
+# A stream that ran this long before failing restarts the delay from the minimum.
+RECONNECT_RESET_SECONDS = 300.0
+
+
+def status_rank(status: str) -> int:
+    """How far a stored or incoming status has progressed (see STATUS_RANK)."""
+    if status in STATUS_RANK:
+        return STATUS_RANK[status]
+    return STATUS_RANK["in_progress"] if status in RETIRED_STATUSES else 0
 
 
 def environment_text(name: str, default: str = "") -> str:
@@ -193,207 +226,15 @@ def job_execution(job: dict[str, Any]) -> str:
     return "unknown"
 
 
-def owner_of(path: str) -> str:
-    """Return the account a `/repos/{owner}/{repo}/...` path belongs to.
-
-    Every endpoint this exporter calls is repository-scoped, so the owner is
-    always the third path segment. Anything else is a programming error rather
-    than a runtime condition, and saying so here beats silently authenticating
-    as the wrong account.
-    """
-    parts = path.split("/")
-    if len(parts) < 4 or parts[1] != "repos":
-        raise ValueError(f"cannot determine repository owner from path: {path}")
-    return parts[2]
-
-
-def _b64url(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
-
-
-class Credentials:
-    """Supplies the Authorization header value for a repository's owner.
-
-    Per-owner rather than global because the two credential kinds differ on
-    exactly that axis: one PAT is scoped to a single account, while one App
-    can be installed on several. Resolving by owner is what lets this exporter
-    watch `jlapenna/*` and `supersprinklesracing/*` in one process.
-    """
-
-    def authorization(self, owner: str) -> str:
-        raise NotImplementedError
-
-
-class StaticCredentials(Credentials):
-    """A single personal access token, used for every owner."""
-
-    def __init__(self, token: str) -> None:
-        self._header = f"Bearer {token}"
-
-    def authorization(self, owner: str) -> str:
-        return self._header
-
-
-class AppCredentials(Credentials):
-    """GitHub App installation tokens, minted per owner and refreshed in place.
-
-    Installation tokens expire after an hour, so they are deliberately never
-    persisted: each is held in memory only until it nears expiry. Discovery is
-    by owner (`GET /orgs|users/{owner}/installation`), so adding a repository
-    under an already-installed account needs no configuration change here.
-    """
-
-    def __init__(self, client_id: str, private_key_pem: bytes, api_url: str) -> None:
-        self._client_id = client_id
-        self._key = serialization.load_pem_private_key(private_key_pem, password=None)
-        self._api_url = api_url
-        self._lock = threading.Lock()
-        self._tokens: dict[str, tuple[str, float]] = {}
-        self._installations: dict[str, int] = {}
-
-    def _jwt(self) -> str:
-        now = int(time.time())
-        header = _b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
-        # `iat` is backdated by a minute so a small clock skew between this
-        # host and GitHub cannot reject an otherwise valid assertion.
-        payload = _b64url(
-            json.dumps(
-                {
-                    "iat": now - 60,
-                    "exp": now + APP_JWT_LIFETIME_SECONDS,
-                    "iss": self._client_id,
-                }
-            ).encode()
-        )
-        signing_input = f"{header}.{payload}".encode()
-        signature = self._key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
-        return f"{header}.{payload}.{_b64url(signature)}"
-
-    def _request(self, method: str, path: str, bearer: str) -> dict[str, Any]:
-        response = requests.request(
-            method,
-            f"{self._api_url}{path}",
-            headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {bearer}",
-                "User-Agent": "homelab-github-actions-exporter/1.0",
-            },
-            timeout=(5, 30),
-        )
-        try:
-            response.raise_for_status()
-            payload = response.json()
-        finally:
-            response.close()
-        if not isinstance(payload, dict):
-            raise GitHubPayloadError(f"GitHub {path} response was not an object")
-        return payload
-
-    def _installation_id(self, owner: str, jwt: str, *, refresh: bool = False) -> int:
-        cached = self._installations.get(owner)
-        if cached is not None and not refresh:
-            return cached
-        # An owner is a user or an organization and the caller does not know
-        # which, so try both rather than requiring that to be configured.
-        last_error: Exception | None = None
-        for scope in ("orgs", "users"):
-            try:
-                payload = self._request("GET", f"/{scope}/{owner}/installation", jwt)
-            except requests.HTTPError as exc:
-                last_error = exc
-                continue
-            installation_id = payload.get("id")
-            if not isinstance(installation_id, int):
-                raise GitHubPayloadError(
-                    f"installation lookup for {owner} returned no id"
-                )
-            self._installations[owner] = installation_id
-            return installation_id
-        raise RuntimeError(
-            f"no GitHub App installation found for {owner}"
-        ) from last_error
-
-    def authorization(self, owner: str) -> str:
-        key = owner.casefold()
-        now = time.time()
-        with self._lock:
-            cached = self._tokens.get(key)
-            if (
-                cached is not None
-                and cached[1] - now > APP_TOKEN_REFRESH_MARGIN_SECONDS
-            ):
-                return f"Bearer {cached[0]}"
-            jwt = self._jwt()
-            installation_id = self._installation_id(key, jwt)
-            try:
-                payload = self._request(
-                    "POST", f"/app/installations/{installation_id}/access_tokens", jwt
-                )
-            except requests.HTTPError:
-                # Reinstalling the App on an account issues a NEW installation
-                # id, and this process can outlive that. Without the re-lookup
-                # the cached id is wrong forever: every later refresh posts to
-                # an installation that no longer exists, and the exporter goes
-                # dark on that owner until someone restarts it. Look it up once
-                # more before giving up, and let a second failure propagate so
-                # a genuinely broken App is not retried in a tight loop.
-                installation_id = self._installation_id(key, jwt, refresh=True)
-                payload = self._request(
-                    "POST", f"/app/installations/{installation_id}/access_tokens", jwt
-                )
-            token = payload.get("token")
-            expires_at = payload.get("expires_at")
-            if not isinstance(token, str) or not isinstance(expires_at, str):
-                raise GitHubPayloadError(
-                    f"installation token for {owner} was malformed"
-                )
-            expiry = datetime.fromisoformat(expires_at).timestamp()
-            self._tokens[key] = (token, expiry)
-            LOGGER.info(
-                "minted GitHub App installation token for %s (expires %s)",
-                owner,
-                expires_at,
-            )
-            return f"Bearer {token}"
-
-
 @dataclass(frozen=True)
 class Config:
-    credentials: Credentials
     repositories: tuple[str, ...]
-    api_url: str = "https://api.github.com"
-    api_version: str = "2022-11-28"
-    poll_interval_seconds: int = 60
-    backfill_hours: int = 1
-    overlap_minutes: int = 15
+    subscription: str
     database_path: str = "/var/lib/github-actions-exporter/actions.db"
     port: int = 9102
 
-    @staticmethod
-    def _credentials_from_environment(api_url: str) -> Credentials:
-        """Prefer a GitHub App; fall back to a personal access token.
-
-        The App is preferred because a fine-grained PAT is scoped to one
-        account, so no single PAT can cover repositories under two different
-        owners -- which is the state this exporter is normally in. App
-        installation tokens also refresh themselves, so the collector does not
-        go stale the day a human's token expires.
-        """
-        private_key_file = os.environ.get("GITHUB_APP_PRIVATE_KEY_FILE", "").strip()
-        client_id = os.environ.get("GITHUB_APP_CLIENT_ID", "").strip()
-        if private_key_file or client_id:
-            if not (private_key_file and client_id):
-                raise ValueError(
-                    "GITHUB_APP_CLIENT_ID and GITHUB_APP_PRIVATE_KEY_FILE must be "
-                    "set together"
-                )
-            private_key_pem = Path(private_key_file).read_bytes()
-            return AppCredentials(client_id, private_key_pem, api_url)
-        return StaticCredentials(environment_text("GITHUB_TOKEN"))
-
     @classmethod
     def from_environment(cls) -> Config:
-
         repositories_by_key: dict[str, str] = {}
         for item in os.environ.get("GITHUB_REPOSITORIES", "").split(","):
             repository = item.strip()
@@ -413,34 +254,16 @@ class Config:
                 + ", ".join(invalid)
             )
 
-        api_url = environment_text("GITHUB_API_URL", "https://api.github.com").rstrip(
-            "/"
-        )
-        parsed_api_url = urlsplit(api_url)
-        if (
-            parsed_api_url.scheme not in {"http", "https"}
-            or not parsed_api_url.netloc
-            or parsed_api_url.query
-            or parsed_api_url.fragment
-        ):
-            raise ValueError("GITHUB_API_URL must be an absolute HTTP(S) URL")
-
-        api_version = environment_text("GITHUB_API_VERSION", "2022-11-28")
-        try:
-            date.fromisoformat(api_version)
-        except ValueError:
-            raise ValueError("GITHUB_API_VERSION must use YYYY-MM-DD") from None
+        subscription = environment_text("GITHUB_ACTIONS_EVENTS_SUBSCRIPTION")
+        if not SUBSCRIPTION_PATTERN.fullmatch(subscription):
+            raise ValueError(
+                "GITHUB_ACTIONS_EVENTS_SUBSCRIPTION must be "
+                "projects/<project>/subscriptions/<subscription>"
+            )
 
         return cls(
-            credentials=cls._credentials_from_environment(api_url),
             repositories=repositories,
-            api_url=api_url,
-            api_version=api_version,
-            poll_interval_seconds=environment_int(
-                "POLL_INTERVAL_SECONDS", 60, minimum=15
-            ),
-            backfill_hours=environment_int("BACKFILL_HOURS", 1),
-            overlap_minutes=environment_int("OVERLAP_MINUTES", 15),
+            subscription=subscription,
             database_path=environment_text(
                 "DATABASE_PATH", "/var/lib/github-actions-exporter/actions.db"
             ),
@@ -449,312 +272,41 @@ class Config:
 
 
 class ExporterState:
-    """Prometheus metrics for the collector itself."""
+    """Prometheus metrics for the event consumer itself."""
 
     def __init__(self, registry: CollectorRegistry) -> None:
-        self.last_success = Gauge(
-            "github_actions_exporter_last_success_timestamp_seconds",
-            "Unix timestamp of the last successful repository refresh.",
+        self.subscription_running = Gauge(
+            "github_actions_exporter_subscription_running",
+            "1 while the Pub/Sub streaming pull is running; 0 while it is "
+            "stopped and waiting to reconnect.",
+            registry=registry,
+        )
+        self.subscription_failures = Counter(
+            "github_actions_exporter_subscription_failures",
+            "Times the Pub/Sub streaming pull stopped and had to be reopened.",
+            registry=registry,
+        )
+        self.last_event = Gauge(
+            "github_actions_exporter_last_event_timestamp_seconds",
+            "Unix time the exporter last stored an event for the repository; "
+            "0 if it never has. An idle repository simply ages.",
             ("repository",),
             registry=registry,
         )
-        self.poll_errors = Counter(
-            "github_actions_exporter_poll_errors_total",
-            "GitHub Actions collection errors.",
-            ("repository", "stage"),
+        self.messages = Counter(
+            "github_actions_exporter_messages",
+            "Pub/Sub messages handled, by webhook event and outcome.",
+            ("event", "outcome"),
             registry=registry,
         )
-        self.api_requests = Counter(
-            "github_actions_exporter_api_requests_total",
-            "GitHub API requests made by the exporter.",
-            ("endpoint", "status"),
-            registry=registry,
-        )
-        self.api_rate_remaining = Gauge(
-            "github_actions_exporter_api_rate_limit_remaining",
-            "Requests remaining in GitHub's current core API rate window.",
-            # Labelled by owner: GitHub meters each App installation against
-            # its OWN core quota, so with one token per account these are
-            # several independent windows. Unlabelled, whichever repository
-            # happened to be polled last overwrote the rest, and the quota
-            # panels and GitHubActionsApiQuotaProjectedExhaustion then read a
-            # single arbitrary account's budget as if it were the whole.
-            ("owner",),
-            registry=registry,
-        )
-        self.api_rate_limit = Gauge(
-            "github_actions_exporter_api_rate_limit_limit",
-            "Maximum requests in GitHub's current core API rate window.",
-            ("owner",),
-            registry=registry,
-        )
-        self.api_rate_used = Gauge(
-            "github_actions_exporter_api_rate_limit_used",
-            "Requests used in GitHub's current core API rate window.",
-            ("owner",),
-            registry=registry,
-        )
-        self.api_rate_reset_timestamp = Gauge(
-            "github_actions_exporter_api_rate_limit_reset_timestamp_seconds",
-            "Unix timestamp when GitHub's current core API rate window resets.",
-            ("owner",),
-            registry=registry,
-        )
-        self.backfill_in_progress = Gauge(
-            "github_actions_exporter_backfill_in_progress",
-            "Whether a repository's initial history import is running.",
-            ("repository",),
-            registry=registry,
-        )
-
-    def record_response(
-        self, endpoint: str, response: requests.Response, owner: str = ""
-    ) -> None:
-        self.api_requests.labels(endpoint, str(response.status_code)).inc()
-        for header, metric in (
-            ("x-ratelimit-remaining", self.api_rate_remaining),
-            ("x-ratelimit-limit", self.api_rate_limit),
-            ("x-ratelimit-used", self.api_rate_used),
-            ("x-ratelimit-reset", self.api_rate_reset_timestamp),
-        ):
-            value = response.headers.get(header)
-            if value is None:
-                continue
-            try:
-                count = int(value)
-            except ValueError:
-                LOGGER.warning(
-                    "GitHub returned an invalid rate-limit header: %s", header
-                )
-            else:
-                if count < 0:
-                    LOGGER.warning(
-                        "GitHub returned an invalid rate-limit header: %s", header
-                    )
-                else:
-                    metric.labels(owner).set(count)
-
-
-class GitHubRequestError(RuntimeError):
-    """An HTTP failure from GitHub that callers may handle by status."""
-
-    def __init__(self, endpoint: str, response: requests.Response) -> None:
-        self.status_code = response.status_code
-        self.rate_limited = (
-            response.status_code == 429
-            or response.headers.get("x-ratelimit-remaining") == "0"
-            or response.headers.get("retry-after") is not None
-        )
-        request_id = response.headers.get("x-github-request-id", "unknown")
-        super().__init__(
-            f"GitHub {endpoint} request failed with HTTP {response.status_code} "
-            f"(request {request_id})"
-        )
-
-
-class GitHubPayloadError(RuntimeError):
-    """A malformed GitHub response that callers may handle by endpoint role."""
-
-
-class GitHubAPI:
-    def __init__(self, config: Config, state: ExporterState) -> None:
-        self.api_url = config.api_url
-        self.state = state
-        self.credentials = config.credentials
-        self.session = requests.Session()
-        # Authorization is deliberately NOT a session header: it is resolved
-        # per request from the repository's owner, because one App can hold a
-        # different installation token for each owner this exporter watches.
-        self.session.headers.update(
-            {
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "homelab-github-actions-exporter/1.0",
-                "X-GitHub-Api-Version": config.api_version,
-            }
-        )
-
-    def close(self) -> None:
-        self.session.close()
-
-    def get(
-        self, path: str, *, endpoint: str, params: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        owner = owner_of(path)
-        response = self.session.get(
-            f"{self.api_url}{path}",
-            params=params,
-            timeout=(5, 30),
-            headers={"Authorization": self.credentials.authorization(owner)},
-        )
-        try:
-            self.state.record_response(endpoint, response, owner)
-            try:
-                response.raise_for_status()
-            except requests.HTTPError as exc:
-                raise GitHubRequestError(endpoint, response) from exc
-            payload = response.json()
-            if not isinstance(payload, dict):
-                raise GitHubPayloadError(
-                    f"GitHub {endpoint} response was not an object"
-                )
-            return payload
-        finally:
-            response.close()
-
-    def list_runs(
-        self, repository: str, cutoff: datetime, until: datetime
-    ) -> list[dict[str, Any]]:
-        start = cutoff.astimezone(UTC).replace(microsecond=0)
-        end = until.astimezone(UTC).replace(microsecond=0)
-        if end < start:
-            return []
-        return self._list_runs_window(repository, start, end)
-
-    def _list_runs_window(
-        self,
-        repository: str,
-        start: datetime,
-        end: datetime,
-    ) -> list[dict[str, Any]]:
-        path = f"/repos/{repository}/actions/runs"
-        params = {
-            "created": (
-                f"{start.isoformat(timespec='seconds')}.."
-                f"{end.isoformat(timespec='seconds')}"
-            ),
-            "exclude_pull_requests": "true",
-        }
-        first_payload = self.get(
-            path,
-            endpoint="runs",
-            params={**params, "per_page": PAGE_SIZE, "page": 1},
-        )
-        _, total_count = self._page(first_payload, "workflow_runs")
-        if total_count >= RUN_SEARCH_LIMIT:
-            if start == end:
-                raise RuntimeError(
-                    "GitHub workflow run search exceeded the 1,000-result cap "
-                    "within a one-second window"
-                )
-            midpoint = (start + (end - start) / 2).replace(microsecond=0)
-            newer = self._list_runs_window(repository, midpoint + ONE_SECOND, end)
-            older = self._list_runs_window(repository, start, midpoint)
-            return newer + older
-        return self._list_paginated(
-            path,
-            endpoint="runs",
-            key="workflow_runs",
-            params=params,
-            first_payload=first_payload,
-        )
-
-    def get_run(self, repository: str, run_id: int) -> dict[str, Any]:
-        return self.get(f"/repos/{repository}/actions/runs/{run_id}", endpoint="run")
-
-    def get_run_attempt(
-        self, repository: str, run_id: int, attempt: int
-    ) -> dict[str, Any]:
-        return self.get(
-            f"/repos/{repository}/actions/runs/{run_id}/attempts/{attempt}",
-            endpoint="run_attempt",
-        )
-
-    def list_jobs(self, repository: str, run_id: int) -> list[dict[str, Any]]:
-        return self._list_paginated(
-            f"/repos/{repository}/actions/runs/{run_id}/jobs",
-            endpoint="jobs",
-            key="jobs",
-            params={"filter": "all"},
-        )
-
-    def list_concurrency_groups(
-        self, repository: str, run_id: int
-    ) -> list[dict[str, Any]]:
-        """Return the concurrency groups GitHub associates with a run.
-
-        GitHub returns at most 100 groups for a run. That is safely above a
-        workflow's practical group count and avoids a second, cursor-based
-        pagination implementation on the normal polling path.
-        """
-        payload = self.get(
-            f"/repos/{repository}/actions/runs/{run_id}/concurrency_groups",
-            endpoint="concurrency_groups",
-            params={"per_page": 100},
-        )
-        groups = payload.get("concurrency_groups", [])
-        if not isinstance(groups, list) or not all(
-            isinstance(group, dict) for group in groups
-        ):
-            raise GitHubPayloadError("GitHub concurrency-groups response was invalid")
-        return groups
-
-    def _list_paginated(
-        self,
-        path: str,
-        *,
-        endpoint: str,
-        key: str,
-        params: dict[str, Any],
-        first_payload: dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        items: list[dict[str, Any]] = []
-        item_ids: set[int] = set()
-        page = 1
-        while True:
-            payload = (
-                first_payload
-                if page == 1 and first_payload is not None
-                else self.get(
-                    path,
-                    endpoint=endpoint,
-                    params={**params, "per_page": PAGE_SIZE, "page": page},
-                )
-            )
-            batch, total_count = self._page(payload, key)
-            for item in batch:
-                item_id = item.get("id")
-                if (
-                    not isinstance(item_id, int)
-                    or isinstance(item_id, bool)
-                    or item_id <= 0
-                ):
-                    raise TypeError(f"GitHub {key} response contained an invalid id")
-                if item_id in item_ids:
-                    raise RuntimeError(
-                        f"GitHub {key} response contained a duplicate id"
-                    )
-                item_ids.add(item_id)
-            items.extend(batch)
-            if len(items) > total_count:
-                raise RuntimeError(f"GitHub {key} returned more items than total_count")
-            if len(items) == total_count:
-                break
-            if len(batch) < PAGE_SIZE:
-                raise RuntimeError(
-                    f"GitHub {key} returned {len(items)} of {total_count} items"
-                )
-            page += 1
-        return items
-
-    @staticmethod
-    def _page(payload: dict[str, Any], key: str) -> tuple[list[dict[str, Any]], int]:
-        total_count = payload.get("total_count")
-        if (
-            not isinstance(total_count, int)
-            or isinstance(total_count, bool)
-            or total_count < 0
-        ):
-            raise TypeError(f"GitHub {key} response lacked a valid total_count")
-        batch = payload.get(key)
-        if not isinstance(batch, list):
-            raise TypeError(f"GitHub {key} response was not a list")
-        if not all(isinstance(item, dict) for item in batch):
-            raise TypeError(f"GitHub {key} response contained a non-object item")
-        return batch, total_count
+        for event in EVENTS:
+            for outcome in MESSAGE_OUTCOMES:
+                self.messages.labels(event, outcome)
+        self.messages.labels("unknown", "malformed")
 
 
 class Database:
-    """Thread-safe durable store used both by polling and Prometheus scrapes."""
+    """Thread-safe durable store written by event handlers and read by metrics."""
 
     def __init__(self, path: str) -> None:
         database_path = Path(path)
@@ -763,7 +315,7 @@ class Database:
         self.connection.row_factory = sqlite3.Row
         self.lock = threading.RLock()
         try:
-            job_rows, concurrency_group_rows = self._initialize_schema()
+            job_rows = self._initialize_schema()
         except BaseException:
             self.connection.close()
             raise
@@ -772,13 +324,8 @@ class Database:
             self.job_labels.setdefault((row["repository"], row["workflow"]), set()).add(
                 row["name"]
             )
-        self.concurrency_group_labels: dict[tuple[str, str], set[str]] = {}
-        for row in concurrency_group_rows:
-            self.concurrency_group_labels.setdefault(
-                (row["repository"], row["workflow"]), set()
-            ).add(row["concurrency_group"])
 
-    def _initialize_schema(self) -> tuple[list[sqlite3.Row], list[sqlite3.Row]]:
+    def _initialize_schema(self) -> list[sqlite3.Row]:
         with self.lock, self.connection:
             self.connection.executescript(
                 """
@@ -797,7 +344,6 @@ class Database:
                     started_at REAL,
                     completed_at REAL,
                     updated_at REAL,
-                    jobs_updated_at REAL,
                     head_branch TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY (repository, id, run_attempt)
                 );
@@ -806,6 +352,7 @@ class Database:
                     repository TEXT NOT NULL,
                     id INTEGER NOT NULL,
                     run_id INTEGER NOT NULL,
+                    run_attempt INTEGER,
                     workflow TEXT NOT NULL,
                     name TEXT NOT NULL,
                     status TEXT NOT NULL,
@@ -815,15 +362,27 @@ class Database:
                     completed_at REAL,
                     runner_group TEXT NOT NULL,
                     execution TEXT NOT NULL DEFAULT 'unknown',
-                    concurrency_group TEXT NOT NULL DEFAULT 'none',
+                    runs_on TEXT NOT NULL DEFAULT '',
                     runner_name TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (repository, id)
+                );
+
+                -- Job events whose run has not arrived yet. A workflow_job
+                -- payload has no workflow path, so the job cannot be labelled
+                -- until its run's workflow_run event is stored.
+                CREATE TABLE IF NOT EXISTS pending_jobs (
+                    repository TEXT NOT NULL,
+                    id INTEGER NOT NULL,
+                    run_id INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    received_at REAL NOT NULL,
                     PRIMARY KEY (repository, id)
                 );
 
                 CREATE TABLE IF NOT EXISTS repository_state (
                     repository TEXT PRIMARY KEY,
-                    initial_backfill_complete INTEGER NOT NULL DEFAULT 0,
-                    last_success_at REAL
+                    last_event_at REAL
                 );
 
                 CREATE INDEX IF NOT EXISTS workflow_runs_status_idx
@@ -832,336 +391,216 @@ class Database:
                     ON jobs (repository, status);
                 CREATE INDEX IF NOT EXISTS jobs_run_idx
                     ON jobs (repository, run_id);
+                CREATE INDEX IF NOT EXISTS pending_jobs_run_idx
+                    ON pending_jobs (repository, run_id);
                 """
             )
-            run_columns = {
-                row["name"]
-                for row in self.connection.execute("PRAGMA table_info(workflow_runs)")
-            }
-            # Rows stored before this column existed keep '', which the
-            # pull-request streak reads as "branch unknown" (homelab#3509).
-            if "head_branch" not in run_columns:
-                self.connection.execute(
-                    "ALTER TABLE workflow_runs ADD COLUMN head_branch TEXT NOT NULL DEFAULT ''"
-                )
-            columns = {
-                row["name"]
-                for row in self.connection.execute("PRAGMA table_info(jobs)")
-            }
-            if "concurrency_group" not in columns:
-                self.connection.execute(
-                    "ALTER TABLE jobs ADD COLUMN concurrency_group TEXT NOT NULL DEFAULT 'none'"
-                )
-            if "execution" not in columns:
-                self.connection.execute(
-                    "ALTER TABLE jobs ADD COLUMN execution TEXT NOT NULL DEFAULT 'unknown'"
-                )
-            if "runs_on" not in columns:
-                self.connection.execute(
-                    "ALTER TABLE jobs ADD COLUMN runs_on TEXT NOT NULL DEFAULT ''"
-                )
-            if "runner_name" not in columns:
-                self.connection.execute(
-                    "ALTER TABLE jobs ADD COLUMN runner_name TEXT NOT NULL DEFAULT ''"
-                )
-            active_placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
-            # A completed workflow cannot still have a queued/running job. GitHub's
-            # run endpoint can become terminal a poll before its jobs endpoint does;
-            # older versions stamped that contradictory snapshot as final and then
-            # exported a phantom queue forever. Suppress any persisted impossible
-            # rows on startup and leave their run eligible for a later refresh.
+            self._migrate_columns()
+            # Earlier versions parked an active job whose run had completed as
+            # `refresh_pending` until a later poll re-read it. Events resolve
+            # it instead, so the row joins the event-driven equivalent.
             self.connection.execute(
-                f"""
-                UPDATE jobs SET status = 'refresh_pending'
-                WHERE status IN ({active_placeholders})
-                  AND EXISTS (
-                    SELECT 1 FROM workflow_runs
-                    WHERE workflow_runs.repository = jobs.repository
-                      AND workflow_runs.id = jobs.run_id
-                      AND workflow_runs.status = 'completed'
-                      AND workflow_runs.run_attempt = (
-                        SELECT MAX(latest.run_attempt) FROM workflow_runs AS latest
-                        WHERE latest.repository = jobs.repository
-                          AND latest.id = jobs.run_id
-                      )
-                  )
-                """,
-                ACTIVE_STATUSES,
+                "UPDATE jobs SET status = 'orphaned' WHERE status = 'refresh_pending'"
             )
-            self.connection.execute(
-                """
-                UPDATE workflow_runs SET jobs_updated_at = NULL
-                WHERE status = 'completed'
-                  AND EXISTS (
-                    SELECT 1 FROM jobs
-                    WHERE jobs.repository = workflow_runs.repository
-                      AND jobs.run_id = workflow_runs.id
-                      AND jobs.status = 'refresh_pending'
-                  )
-                """
-            )
-            job_rows = self.connection.execute(
+            # A finished run attempt cannot still have a queued or running job.
+            # Older versions could persist that contradiction and then export a
+            # phantom queue forever, so repair any such rows on startup.
+            self._orphan_active_jobs()
+            return self.connection.execute(
                 """
                 SELECT DISTINCT repository, workflow, name FROM jobs
                 WHERE name != ?
                 """,
                 (OVERFLOW_JOB_LABEL,),
             ).fetchall()
-            concurrency_group_rows = self.connection.execute(
-                """
-                SELECT DISTINCT repository, workflow, concurrency_group FROM jobs
-                WHERE concurrency_group != ?
-                """,
-                (OVERFLOW_CONCURRENCY_GROUP_LABEL,),
-            ).fetchall()
-        return job_rows, concurrency_group_rows
+
+    def _columns(self, table: str) -> set[str]:
+        return {
+            row["name"]
+            for row in self.connection.execute(f"PRAGMA table_info({table})")
+        }
+
+    def _migrate_columns(self) -> None:
+        """Bring a database written by any earlier version to this schema."""
+        run_columns = self._columns("workflow_runs")
+        # Rows stored before this column existed keep '', which the
+        # pull-request streak reads as "branch unknown" (homelab#3509).
+        if "head_branch" not in run_columns:
+            self.connection.execute(
+                "ALTER TABLE workflow_runs ADD COLUMN head_branch TEXT NOT NULL DEFAULT ''"
+            )
+        # Polling bookkeeping with no meaning for events.
+        if "jobs_updated_at" in run_columns:
+            self.connection.execute(
+                "ALTER TABLE workflow_runs DROP COLUMN jobs_updated_at"
+            )
+
+        job_columns = self._columns("jobs")
+        for column, definition in (
+            ("execution", "TEXT NOT NULL DEFAULT 'unknown'"),
+            ("runs_on", "TEXT NOT NULL DEFAULT ''"),
+            ("runner_name", "TEXT NOT NULL DEFAULT ''"),
+            # NULL on rows stored before events; read as the run's newest attempt.
+            ("run_attempt", "INTEGER"),
+        ):
+            if column not in job_columns:
+                self.connection.execute(
+                    f"ALTER TABLE jobs ADD COLUMN {column} {definition}"
+                )
+        # GitHub's webhooks do not carry concurrency-group membership.
+        if "concurrency_group" in job_columns:
+            self.connection.execute("ALTER TABLE jobs DROP COLUMN concurrency_group")
+
+        state_columns = self._columns("repository_state")
+        for column in ("initial_backfill_complete", "last_success_at"):
+            if column in state_columns:
+                self.connection.execute(
+                    f"ALTER TABLE repository_state DROP COLUMN {column}"
+                )
+        if "last_event_at" not in state_columns:
+            self.connection.execute(
+                "ALTER TABLE repository_state ADD COLUMN last_event_at REAL"
+            )
+
+    def _orphan_active_jobs(
+        self, repository: str | None = None, run_id: int | None = None
+    ) -> None:
+        """Retire active jobs whose run attempt has finished.
+
+        The job's own completion event normally arrives too and replaces the
+        `orphaned` status, so its outcome is still counted. Until then the job
+        is neither current nor queued. A job stored before jobs recorded their
+        attempt is matched against the run's newest attempt.
+        """
+        scope = ""
+        parameters: list[Any] = [*ACTIVE_STATUSES, *FINISHED_RUN_STATUSES]
+        if repository is not None:
+            scope = "AND jobs.repository = ? AND jobs.run_id = ?"
+            parameters += [repository, run_id]
+        active = ",".join("?" for _ in ACTIVE_STATUSES)
+        finished = ",".join("?" for _ in FINISHED_RUN_STATUSES)
+        self.connection.execute(
+            f"""
+            UPDATE jobs SET status = 'orphaned'
+            WHERE status IN ({active})
+              AND EXISTS (
+                SELECT 1 FROM workflow_runs
+                WHERE workflow_runs.repository = jobs.repository
+                  AND workflow_runs.id = jobs.run_id
+                  AND (
+                    (
+                      workflow_runs.status IN ({finished})
+                      AND workflow_runs.run_attempt = COALESCE(
+                        jobs.run_attempt,
+                        (
+                          SELECT MAX(latest.run_attempt)
+                          FROM workflow_runs AS latest
+                          WHERE latest.repository = jobs.repository
+                            AND latest.id = jobs.run_id
+                        )
+                      )
+                    )
+                    -- A later attempt supersedes this job's attempt even when
+                    -- the job's own run event never arrived, matching
+                    -- _attempt_finished.
+                    OR (
+                      jobs.run_attempt IS NOT NULL
+                      AND workflow_runs.run_attempt > jobs.run_attempt
+                    )
+                  )
+              )
+              {scope}
+            """,
+            parameters,
+        )
 
     def close(self) -> None:
         with self.lock:
             self.connection.close()
 
-    def backfill_complete(self, repository: str) -> bool:
+    def last_event_at(self, repository: str) -> float | None:
         with self.lock:
             row = self.connection.execute(
-                """
-                SELECT initial_backfill_complete FROM repository_state
-                WHERE repository = ?
-                """,
+                "SELECT last_event_at FROM repository_state WHERE repository = ?",
                 (repository,),
             ).fetchone()
-        return row is not None and bool(row["initial_backfill_complete"])
-
-    def last_success_at(self, repository: str) -> float | None:
-        with self.lock:
-            row = self.connection.execute(
-                """
-                SELECT last_success_at FROM repository_state
-                WHERE repository = ?
-                """,
-                (repository,),
-            ).fetchone()
-        if row is None or row["last_success_at"] is None:
+        if row is None or row["last_event_at"] is None:
             return None
-        return float(row["last_success_at"])
+        return float(row["last_event_at"])
 
-    def record_refresh_success(
-        self,
-        repository: str,
-        *,
-        initial: bool,
-        timestamp: float | None = None,
-    ) -> float:
-        success_at = time.time() if timestamp is None else timestamp
+    def record_event(self, repository: str, timestamp: float) -> None:
         with self.lock, self.connection:
             self.connection.execute(
                 """
-                INSERT INTO repository_state (
-                    repository, initial_backfill_complete, last_success_at
-                ) VALUES (?, ?, ?)
+                INSERT INTO repository_state (repository, last_event_at)
+                VALUES (?, ?)
                 ON CONFLICT(repository) DO UPDATE SET
-                    initial_backfill_complete = MAX(
-                        repository_state.initial_backfill_complete,
-                        excluded.initial_backfill_complete
-                    ),
-                    last_success_at = excluded.last_success_at
+                    last_event_at = excluded.last_event_at
                 """,
-                (repository, int(initial), success_at),
+                (repository, timestamp),
             )
-        return success_at
-
-    def active_run_ids(self, repository: str) -> set[int]:
-        placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
-        with self.lock:
-            rows = self.connection.execute(
-                f"""
-                SELECT id FROM workflow_runs
-                WHERE repository = ? AND status IN ({placeholders})
-                """,
-                (repository, *ACTIVE_STATUSES),
-            ).fetchall()
-        return {int(row["id"]) for row in rows}
-
-    def pending_job_refresh_run_ids(self, repository: str) -> set[int]:
-        """Return terminal runs whose jobs snapshot is contradictory or stale."""
-        with self.lock:
-            rows = self.connection.execute(
-                """
-                SELECT id FROM workflow_runs
-                WHERE repository = ? AND status = 'completed'
-                  AND (jobs_updated_at IS NULL OR jobs_updated_at < updated_at)
-                  AND run_attempt = (
-                    SELECT MAX(latest.run_attempt) FROM workflow_runs AS latest
-                    WHERE latest.repository = workflow_runs.repository
-                      AND latest.id = workflow_runs.id
-                  )
-                """,
-                (repository,),
-            ).fetchall()
-        return {int(row["id"]) for row in rows}
-
-    def mark_run_missing(self, repository: str, run_id: int) -> None:
-        """Retire active metrics for a workflow GitHub no longer exposes."""
-        placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
-        with self.lock, self.connection:
-            parameters = (repository, run_id, *ACTIVE_STATUSES)
-            self.connection.execute(
-                f"""
-                UPDATE workflow_runs SET status = 'missing'
-                WHERE repository = ? AND id = ?
-                  AND status IN ({placeholders})
-                """,
-                parameters,
-            )
-            self.connection.execute(
-                """
-                UPDATE workflow_runs SET status = 'missing'
-                WHERE repository = ? AND id = ?
-                  AND status = 'completed'
-                  AND (jobs_updated_at IS NULL OR jobs_updated_at < updated_at)
-                  AND run_attempt = (
-                    SELECT MAX(latest.run_attempt) FROM workflow_runs AS latest
-                    WHERE latest.repository = workflow_runs.repository
-                      AND latest.id = workflow_runs.id
-                  )
-                """,
-                (repository, run_id),
-            )
-            self.connection.execute(
-                f"""
-                UPDATE jobs SET status = 'missing'
-                WHERE repository = ? AND run_id = ?
-                  AND status IN ({placeholders})
-                """,
-                parameters,
-            )
-            self.connection.execute(
-                """
-                UPDATE jobs SET status = 'missing'
-                WHERE repository = ? AND run_id = ?
-                  AND status = 'refresh_pending'
-                """,
-                (repository, run_id),
-            )
-
-    def failing_pull_request_run_ids(self, repository: str) -> list[int]:
-        """The failed pull_request runs no later success has cleared.
-
-        These are the runs behind
-        github_actions_workflow_pull_request_failing_branches, newest first,
-        so the poller can look for a rerun of each.
-        """
-        placeholders = ",".join("?" for _ in PULL_REQUEST_FAILURE_CONCLUSIONS)
-        run_ids: list[int] = []
-        settled: set[str] = set()
-        for row in self.rows(
-            f"""
-            SELECT id, workflow, conclusion
-            FROM workflow_runs
-            WHERE repository = ?
-              AND status = 'completed'
-              AND event = 'pull_request'
-              AND conclusion IN ('success', {placeholders})
-              AND COALESCE(started_at, created_at) >= ?
-            ORDER BY COALESCE(started_at, created_at) DESC, id DESC, run_attempt DESC
-            """,
-            (
-                repository,
-                *PULL_REQUEST_FAILURE_CONCLUSIONS,
-                time.time() - CONSECUTIVE_FAILURE_WINDOW_SECONDS,
-            ),
-        ):
-            if row["workflow"] in settled:
-                continue
-            if row["conclusion"] == "success":
-                settled.add(row["workflow"])
-            elif row["id"] not in run_ids:
-                run_ids.append(row["id"])
-        return run_ids
-
-    def run_attempt_gaps(self, repository: str) -> list[tuple[int, tuple[int, ...]]]:
-        """Return known reruns whose earlier attempts have not been stored."""
-        with self.lock:
-            rows = self.connection.execute(
-                """
-                SELECT id, MAX(run_attempt) AS latest_attempt,
-                       GROUP_CONCAT(DISTINCT run_attempt) AS stored_attempts
-                FROM workflow_runs
-                WHERE repository = ?
-                GROUP BY id
-                HAVING MAX(run_attempt) > COUNT(DISTINCT run_attempt)
-                """,
-                (repository,),
-            ).fetchall()
-        gaps = []
-        for row in rows:
-            stored = {int(value) for value in row["stored_attempts"].split(",")}
-            missing = tuple(
-                attempt
-                for attempt in range(1, int(row["latest_attempt"]))
-                if attempt not in stored
-            )
-            gaps.append((int(row["id"]), missing))
-        return gaps
-
-    def jobs_need_refresh(self, repository: str, run: dict[str, Any]) -> bool:
-        run_id = int(run["id"])
-        updated_at = parse_timestamp(run.get("updated_at")) or 0
-        with self.lock:
-            row = self.connection.execute(
-                """
-                SELECT status, jobs_updated_at FROM workflow_runs
-                WHERE repository = ? AND id = ? AND run_attempt = ?
-                """,
-                (repository, run_id, int(run.get("run_attempt") or 1)),
-            ).fetchone()
-        if row is None or run.get("status") != "completed":
-            return True
-        return (
-            row["jobs_updated_at"] is None or float(row["jobs_updated_at"]) < updated_at
-        )
 
     def upsert_run(self, repository: str, run: dict[str, Any]) -> None:
+        """Store one run attempt from a `workflow_run` event, idempotently.
+
+        An event replaces the stored attempt only when its status has
+        progressed at least as far, and at an equal status only when it is
+        not older (`updated_at`). Job events that arrived before this run are
+        labelled and stored now.
+        """
         status = metric_label(run.get("status"))
         updated_at = parse_timestamp(run.get("updated_at"))
         completed_at = updated_at if status == "completed" else None
         run_id = int(run["id"])
         run_attempt = int(run.get("run_attempt") or 1)
         with self.lock, self.connection:
-            self.connection.execute(
+            stored = self.connection.execute(
                 """
-                INSERT INTO workflow_runs (
-                    repository, id, workflow, event, status, conclusion,
-                    created_at, started_at, completed_at, updated_at, run_attempt,
-                    head_branch
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(repository, id, run_attempt) DO UPDATE SET
-                    workflow = excluded.workflow,
-                    event = excluded.event,
-                    status = excluded.status,
-                    conclusion = excluded.conclusion,
-                    created_at = excluded.created_at,
-                    started_at = excluded.started_at,
-                    completed_at = excluded.completed_at,
-                    updated_at = excluded.updated_at,
-                    head_branch = excluded.head_branch
+                SELECT status, updated_at FROM workflow_runs
+                WHERE repository = ? AND id = ? AND run_attempt = ?
                 """,
-                (
-                    repository,
-                    run_id,
-                    workflow_label(run),
-                    metric_label(run.get("event")),
-                    status,
-                    run.get("conclusion"),
-                    parse_timestamp(run.get("created_at")),
-                    parse_timestamp(run.get("run_started_at")),
-                    completed_at,
-                    updated_at,
-                    run_attempt,
-                    # Stored to tell pull requests apart, never exported: a
-                    # branch name is unbounded label cardinality.
-                    str(run.get("head_branch") or ""),
-                ),
-            )
+                (repository, run_id, run_attempt),
+            ).fetchone()
+            if stored is None or _progresses(
+                stored["status"], stored["updated_at"], status, updated_at
+            ):
+                self.connection.execute(
+                    """
+                    INSERT INTO workflow_runs (
+                        repository, id, workflow, event, status, conclusion,
+                        created_at, started_at, completed_at, updated_at,
+                        run_attempt, head_branch
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(repository, id, run_attempt) DO UPDATE SET
+                        workflow = excluded.workflow,
+                        event = excluded.event,
+                        status = excluded.status,
+                        conclusion = excluded.conclusion,
+                        created_at = excluded.created_at,
+                        started_at = excluded.started_at,
+                        completed_at = excluded.completed_at,
+                        updated_at = excluded.updated_at,
+                        head_branch = excluded.head_branch
+                    """,
+                    (
+                        repository,
+                        run_id,
+                        workflow_label(run),
+                        metric_label(run.get("event")),
+                        status,
+                        run.get("conclusion"),
+                        parse_timestamp(run.get("created_at")),
+                        parse_timestamp(run.get("run_started_at")),
+                        completed_at,
+                        updated_at,
+                        run_attempt,
+                        # Stored to tell pull requests apart, never exported: a
+                        # branch name is unbounded label cardinality.
+                        str(run.get("head_branch") or ""),
+                    ),
+                )
+            # A rerun starts a new attempt; an older attempt still marked
+            # active (its completion event lost or not yet delivered) is not.
             placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
             self.connection.execute(
                 f"""
@@ -1175,151 +614,155 @@ class Database:
                 """,
                 (repository, run_id, *ACTIVE_STATUSES, repository, run_id),
             )
-
-    def upsert_jobs(
-        self,
-        repository: str,
-        run: dict[str, Any],
-        jobs: Sequence[dict[str, Any]],
-        concurrency_groups: Sequence[dict[str, Any]] | None = None,
-    ) -> None:
-        run_id = int(run["id"])
-        workflow = workflow_label(run)
-        groups_by_job: dict[int, str] = {}
-        run_groups: list[str] = []
-        for group in concurrency_groups or ():
-            name = metric_label(group.get("group_name"), "none")
-            members = group.get("group_members", [])
-            if not isinstance(members, list):
-                continue
-            has_job_member = False
-            for member in members:
-                if not isinstance(member, dict) or member.get("job_id") is None:
-                    continue
-                groups_by_job[int(member["job_id"])] = name
-                has_job_member = True
-            if not has_job_member:
-                run_groups.append(name)
-        run_group = ",".join(sorted(set(run_groups)))
-        if not run_group:
-            # GitHub's own `.../actions/runs/{id}/concurrency_groups` listing
-            # is documented to intermittently -- and for some trigger types
-            # unconditionally -- report zero group membership for a run even
-            # when a job genuinely holds a concurrency group; the since-deleted
-            # dispatch broker sampled failure rates from 17% to 100% depending
-            # on trigger, never fully explained by ordinary listing lag. `concurrency_groups is
-            # None` means the caller never attempted the listing at all (a
-            # non-active run, whose jobs never surface in the "current"
-            # gauge anyway); an attempted-but-empty listing is
-            # indistinguishable from a failed one, so label it "unknown"
-            # rather than asserting an unconfirmed "none".
-            run_group = "none" if concurrency_groups is None else "unknown"
-        with self.lock, self.connection:
-            for job in jobs:
-                name = self.bounded_job_name(
-                    repository, workflow, metric_label(job.get("name"))
-                )
-                concurrency_group = self.bounded_concurrency_group(
-                    repository,
-                    workflow,
-                    groups_by_job.get(int(job["id"]), run_group),
-                )
-                self.connection.execute(
-                    """
-                    INSERT INTO jobs (
-                        repository, id, run_id, workflow, name, status,
-                        conclusion, created_at, started_at, completed_at,
-                        runner_group, execution, concurrency_group, runs_on,
-                        runner_name
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(repository, id) DO UPDATE SET
-                        run_id = excluded.run_id,
-                        workflow = excluded.workflow,
-                        name = excluded.name,
-                        status = excluded.status,
-                        conclusion = excluded.conclusion,
-                        created_at = excluded.created_at,
-                        started_at = excluded.started_at,
-                        completed_at = excluded.completed_at,
-                        runner_group = excluded.runner_group,
-                        execution = excluded.execution,
-                        concurrency_group = excluded.concurrency_group,
-                        runs_on = excluded.runs_on,
-                        runner_name = CASE
-                            WHEN excluded.runner_name != '' THEN excluded.runner_name
-                            ELSE jobs.runner_name
-                        END
-                    """,
-                    (
-                        repository,
-                        int(job["id"]),
-                        run_id,
-                        workflow,
-                        name,
-                        metric_label(job.get("status")),
-                        job.get("conclusion"),
-                        parse_timestamp(job.get("created_at")),
-                        parse_timestamp(job.get("started_at")),
-                        parse_timestamp(job.get("completed_at")),
-                        metric_label(job.get("runner_group_name"), "unassigned"),
-                        job_execution(job),
-                        concurrency_group,
-                        job_runs_on(job),
-                        metric_label(job.get("runner_name"), ""),
-                    ),
-                )
-            jobs_snapshot_consistent = True
-            run_attempt = int(run.get("run_attempt") or 1)
-            latest_attempt = self.connection.execute(
+            self._orphan_active_jobs(repository, run_id)
+            workflow = self._run_workflow(repository, run_id)
+            for row in self.connection.execute(
                 """
-                SELECT MAX(run_attempt) AS latest_attempt FROM workflow_runs
-                WHERE repository = ? AND id = ?
+                SELECT payload FROM pending_jobs
+                WHERE repository = ? AND run_id = ?
+                ORDER BY id
                 """,
                 (repository, run_id),
+            ).fetchall():
+                self._write_job(repository, workflow, json.loads(row["payload"]))
+            self.connection.execute(
+                "DELETE FROM pending_jobs WHERE repository = ? AND run_id = ?",
+                (repository, run_id),
+            )
+
+    def upsert_job(
+        self, repository: str, job: dict[str, Any], *, received_at: float | None = None
+    ) -> None:
+        """Store one job from a `workflow_job` event, idempotently.
+
+        The job's workflow label comes from its run's workflow file, which
+        only a `workflow_run` event carries. Until any attempt of that run is
+        stored, the job is held in pending_jobs and exported nowhere.
+        """
+        run_id = int(job["run_id"])
+        status = metric_label(job.get("status"))
+        with self.lock, self.connection:
+            workflow = self._run_workflow(repository, run_id)
+            if workflow is not None:
+                self._write_job(repository, workflow, job)
+                return
+            stored = self.connection.execute(
+                "SELECT status FROM pending_jobs WHERE repository = ? AND id = ?",
+                (repository, int(job["id"])),
             ).fetchone()
-            if (
-                metric_label(run.get("status")) == "completed"
-                and latest_attempt is not None
-                and run_attempt == int(latest_attempt["latest_attempt"])
+            if stored is not None and status_rank(status) < status_rank(
+                stored["status"]
             ):
-                active_placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
-                active_jobs = self.connection.execute(
-                    f"""
-                    SELECT 1 FROM jobs
-                    WHERE repository = ? AND run_id = ?
-                      AND (
-                        status IN ({active_placeholders})
-                        OR status = 'refresh_pending'
-                      )
-                    LIMIT 1
-                    """,
-                    (repository, run_id, *ACTIVE_STATUSES),
-                ).fetchone()
-                if active_jobs is not None:
-                    jobs_snapshot_consistent = False
-                    self.connection.execute(
-                        f"""
-                        UPDATE jobs SET status = 'refresh_pending'
-                        WHERE repository = ? AND run_id = ?
-                          AND status IN ({active_placeholders})
-                        """,
-                        (repository, run_id, *ACTIVE_STATUSES),
-                    )
-            jobs_updated_at = None
-            if jobs_snapshot_consistent:
-                jobs_updated_at = parse_timestamp(run.get("updated_at")) or time.time()
+                return
             self.connection.execute(
                 """
-                UPDATE workflow_runs SET jobs_updated_at = ?
-                WHERE repository = ? AND id = ? AND run_attempt = ?
+                INSERT INTO pending_jobs (
+                    repository, id, run_id, status, payload, received_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(repository, id) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    status = excluded.status,
+                    payload = excluded.payload,
+                    received_at = excluded.received_at
                 """,
                 (
-                    jobs_updated_at,
                     repository,
+                    int(job["id"]),
                     run_id,
-                    run_attempt,
+                    status,
+                    json.dumps(job),
+                    time.time() if received_at is None else received_at,
                 ),
             )
+
+    def _run_workflow(self, repository: str, run_id: int) -> str | None:
+        row = self.connection.execute(
+            """
+            SELECT workflow FROM workflow_runs
+            WHERE repository = ? AND id = ?
+            ORDER BY run_attempt DESC LIMIT 1
+            """,
+            (repository, run_id),
+        ).fetchone()
+        return None if row is None else row["workflow"]
+
+    def _attempt_finished(self, repository: str, run_id: int, run_attempt: int) -> bool:
+        finished = ",".join("?" for _ in FINISHED_RUN_STATUSES)
+        row = self.connection.execute(
+            f"""
+            SELECT 1 FROM workflow_runs
+            WHERE repository = ? AND id = ?
+              AND (
+                (run_attempt = ? AND status IN ({finished}))
+                OR run_attempt > ?
+              )
+            LIMIT 1
+            """,
+            (repository, run_id, run_attempt, *FINISHED_RUN_STATUSES, run_attempt),
+        ).fetchone()
+        return row is not None
+
+    def _write_job(self, repository: str, workflow: str, job: dict[str, Any]) -> None:
+        """Store a job whose run is known; the caller holds the transaction."""
+        job_id = int(job["id"])
+        run_id = int(job["run_id"])
+        run_attempt = int(job.get("run_attempt") or 1)
+        status = metric_label(job.get("status"))
+        stored = self.connection.execute(
+            "SELECT status FROM jobs WHERE repository = ? AND id = ?",
+            (repository, job_id),
+        ).fetchone()
+        if stored is not None and status_rank(status) < status_rank(stored["status"]):
+            return
+        if status in ACTIVE_STATUSES and self._attempt_finished(
+            repository, run_id, run_attempt
+        ):
+            status = "orphaned"
+        self.connection.execute(
+            """
+            INSERT INTO jobs (
+                repository, id, run_id, run_attempt, workflow, name, status,
+                conclusion, created_at, started_at, completed_at,
+                runner_group, execution, runs_on, runner_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(repository, id) DO UPDATE SET
+                run_id = excluded.run_id,
+                run_attempt = excluded.run_attempt,
+                workflow = excluded.workflow,
+                name = excluded.name,
+                status = excluded.status,
+                conclusion = excluded.conclusion,
+                created_at = excluded.created_at,
+                started_at = excluded.started_at,
+                completed_at = excluded.completed_at,
+                runner_group = excluded.runner_group,
+                execution = excluded.execution,
+                runs_on = excluded.runs_on,
+                runner_name = CASE
+                    WHEN excluded.runner_name != '' THEN excluded.runner_name
+                    ELSE jobs.runner_name
+                END
+            """,
+            (
+                repository,
+                job_id,
+                run_id,
+                run_attempt,
+                workflow,
+                self.bounded_job_name(
+                    repository, workflow, metric_label(job.get("name"))
+                ),
+                status,
+                job.get("conclusion"),
+                parse_timestamp(job.get("created_at")),
+                parse_timestamp(job.get("started_at")),
+                parse_timestamp(job.get("completed_at")),
+                metric_label(job.get("runner_group_name"), "unassigned"),
+                job_execution(job),
+                job_runs_on(job),
+                metric_label(job.get("runner_name"), ""),
+            ),
+        )
 
     def bounded_job_name(self, repository: str, workflow: str, name: str) -> str:
         """Cap dynamic job label values while preserving familiar names."""
@@ -1329,29 +772,6 @@ class Database:
                 return name
             if len(labels) >= MAX_JOB_LABELS_PER_WORKFLOW:
                 return OVERFLOW_JOB_LABEL
-            labels.add(name)
-            return name
-
-    def bounded_concurrency_group(
-        self, repository: str, workflow: str, name: str
-    ) -> str:
-        """Cap dynamic concurrency-group label values while preserving familiar names.
-
-        Concurrency group names embed per-run data -- branch ref, PR number,
-        commit SHA (see .github/workflows/ci.yml:14-16 and
-        .github/workflows/agent-automerge.yml:82-83,139-140) -- so exporting
-        the raw name would create one retained time series per branch/PR/SHA.
-        Apply the same per-(repository, workflow) cardinality cap already
-        used above for dynamic job names.
-        """
-        with self.lock:
-            labels = self.concurrency_group_labels.setdefault(
-                (repository, workflow), set()
-            )
-            if name in labels:
-                return name
-            if len(labels) >= MAX_CONCURRENCY_GROUP_LABELS_PER_WORKFLOW:
-                return OVERFLOW_CONCURRENCY_GROUP_LABEL
             labels.add(name)
             return name
 
@@ -1398,16 +818,32 @@ class Database:
         return result
 
 
+def _progresses(
+    stored_status: str,
+    stored_updated_at: float | None,
+    status: str,
+    updated_at: float | None,
+) -> bool:
+    """Whether an incoming run event may replace the stored attempt."""
+    stored_rank, rank = status_rank(stored_status), status_rank(status)
+    if rank != stored_rank:
+        return rank > stored_rank
+    if stored_updated_at is None or updated_at is None:
+        return True
+    return updated_at >= stored_updated_at
+
+
 class DatabaseMetrics:
-    """Serve stored history from a snapshot the poll loop rebuilds (homelab#2653).
+    """Serve stored history from a snapshot rebuilt off the scrape path (homelab#2653).
 
     The aggregations below scan the whole retained history: 130k runs and 340k
     jobs took about 5s of SQL per scrape on 2026-10-17, serialized on the
-    database lock with the poller's writes and with any concurrent scrape, so
-    scrapes straddled Prometheus's 10s timeout and kept growing with history.
-    The stored history only changes when the poller writes, so the poll loop
-    calls refresh() once per cycle and a scrape only renders the last snapshot.
-    Queue ages are still computed at scrape time so they keep advancing.
+    database lock with writes and with any concurrent scrape, so scrapes
+    straddled Prometheus's 10s timeout and kept growing with history. Stored
+    history only changes when an event is stored, so the event consumer calls
+    refresh() at most every SNAPSHOT_REFRESH_SECONDS after a change and a scrape
+    only renders the last snapshot. Queue ages are still computed at scrape
+    time so they keep advancing.
     """
 
     def __init__(self, database: Database) -> None:
@@ -1521,10 +957,10 @@ class DatabaseMetrics:
             "Consecutive most-recent completed non-pull_request runs of a workflow that did not succeed; 0 once the latest decisive run succeeded. A lower bound until the stored history reaches a success (see _complete).",
             labels=("repository", "workflow"),
         )
-        # The stored history starts at BACKFILL_HOURS on a freshly created
-        # database, so a streak that reaches the oldest stored run without
-        # meeting a success may be longer than reported. The database lives on
-        # a persistent volume, so this only applies to a brand-new deployment;
+        # The stored history starts with the first event a freshly created
+        # database received, so a streak that reaches the oldest stored run
+        # without meeting a success may be longer than reported. The database
+        # lives on a persistent volume, so this only applies to a brand-new deployment;
         # the alert still fires at two observed failures rather than waiting,
         # and this gauge lets a dashboard say when the count is exact.
         consecutive_failures_complete = GaugeMetricFamily(
@@ -1717,18 +1153,16 @@ class DatabaseMetrics:
                 "job",
                 "status",
                 "runner_group",
-                "concurrency_group",
                 "runs_on",
             ),
         )
         for row in self.database.rows(
             f"""
-            SELECT repository, workflow, name, status, runner_group, concurrency_group,
-                   runs_on, COUNT(*) AS total
+            SELECT repository, workflow, name, status, runner_group, runs_on,
+                   COUNT(*) AS total
             FROM jobs
             WHERE status IN ({placeholders})
-            GROUP BY repository, workflow, name, status, runner_group, concurrency_group,
-                     runs_on
+            GROUP BY repository, workflow, name, status, runner_group, runs_on
             """,
             ACTIVE_STATUSES,
         ):
@@ -1739,7 +1173,6 @@ class DatabaseMetrics:
                     row["name"],
                     row["status"],
                     row["runner_group"],
-                    row["concurrency_group"],
                     row["runs_on"],
                 ],
                 float(row["total"]),
@@ -1827,223 +1260,223 @@ class DatabaseMetrics:
         yield family
 
 
-class Poller:
+class MalformedEvent(ValueError):
+    """A message that can never be stored, however often it is redelivered."""
+
+
+def _require_timestamps(payload: dict[str, Any], keys: Sequence[str]) -> None:
+    for key in keys:
+        value = payload.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise MalformedEvent(f"{key} is not a timestamp")
+        try:
+            parse_timestamp(value)
+        except ValueError:
+            raise MalformedEvent(f"{key} is not a timestamp") from None
+
+
+def _require_id(payload: dict[str, Any], key: str) -> None:
+    value = payload.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise MalformedEvent(f"{key} is not an id")
+
+
+def parse_event(
+    event: str, data: bytes, repositories: Mapping[str, str]
+) -> tuple[str | None, dict[str, Any]]:
+    """Validate a forwarded webhook body.
+
+    Returns the configured repository name (None for a repository this
+    exporter does not watch) and the run or job object. Raises MalformedEvent
+    for anything that can never be stored.
+    """
+    if event not in EVENTS:
+        raise MalformedEvent(f"unsupported event {event!r}")
+    try:
+        payload = json.loads(data)
+    except ValueError:
+        raise MalformedEvent("body is not JSON") from None
+    if not isinstance(payload, dict):
+        raise MalformedEvent("body is not an object")
+    repository = payload.get("repository")
+    full_name = repository.get("full_name") if isinstance(repository, dict) else None
+    if not isinstance(full_name, str) or full_name.count("/") != 1:
+        raise MalformedEvent("repository.full_name is missing")
+    obj = payload.get(event)
+    configured = repositories.get(full_name.casefold())
+    if configured is None:
+        return None, {}
+    if not isinstance(obj, dict):
+        raise MalformedEvent(f"{event} is not an object")
+    _require_id(obj, "id")
+    if not isinstance(obj.get("status"), str):
+        raise MalformedEvent(f"{event}.status is missing")
+    attempt = obj.get("run_attempt")
+    if attempt is not None and (
+        not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1
+    ):
+        raise MalformedEvent(f"{event}.run_attempt is invalid")
+    if event == "workflow_job":
+        _require_id(obj, "run_id")
+        _require_timestamps(obj, JOB_TIMESTAMPS)
+    else:
+        _require_timestamps(obj, RUN_TIMESTAMPS)
+    return configured, obj
+
+
+class EventConsumer:
+    """Store webhook events from a Pub/Sub streaming pull.
+
+    Pub/Sub delivers at least once and in no particular order. Each message is
+    acknowledged only after its SQLite write commits, so a crash redelivers it,
+    and the Database upserts make a redelivery harmless. A message that can
+    never be stored is acknowledged and counted rather than redelivered
+    forever; an unexpected failure is negatively acknowledged for a retry.
+    """
+
     def __init__(
         self,
         config: Config,
         database: Database,
-        api: GitHubAPI,
         state: ExporterState,
+        metrics: DatabaseMetrics,
+        *,
+        clock: Callable[[], float] = time.time,
+        monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.config = config
         self.database = database
-        self.api = api
         self.state = state
-        self.concurrency_groups_retry_after: dict[str, float] = {}
-        self.pull_request_recheck_after: dict[str, float] = {}
-        self.pull_request_rechecked_at: dict[str, dict[int, float]] = {}
+        self.metrics = metrics
+        self._clock = clock
+        self._monotonic = monotonic
+        self._sleep = sleep
+        self._repositories = {
+            repository.casefold(): repository for repository in config.repositories
+        }
+        self._changed = threading.Event()
         for repository in config.repositories:
-            last_success = self.database.last_success_at(repository)
-            self.state.last_success.labels(repository).set(
-                0 if last_success is None else last_success
+            self.state.last_event.labels(repository).set(
+                database.last_event_at(repository) or 0
             )
-            self.state.backfill_in_progress.labels(repository).set(0)
+        self.state.subscription_running.set(0)
 
-    def refresh_repository(self, repository: str) -> None:
-        initial = not self.database.backfill_complete(repository)
-        if initial:
-            self.state.backfill_in_progress.labels(repository).set(1)
+    def handle_message(self, message: Any) -> None:
+        """Pub/Sub callback; runs on the subscriber's worker threads."""
+        attributes = message.attributes or {}
+        event = str(attributes.get("event", ""))
+        event_label = event if event in EVENTS else "unknown"
         try:
-            now = datetime.now(UTC)
-            overlap = timedelta(minutes=self.config.overlap_minutes)
-            if initial:
-                cutoff = now - timedelta(hours=self.config.backfill_hours)
-            else:
-                last_success = self.database.last_success_at(repository)
-                recovery_cutoff = (
-                    datetime.fromtimestamp(last_success, UTC) - overlap
-                    if last_success is not None
-                    else now - timedelta(hours=self.config.backfill_hours)
-                )
-                cutoff = min(now - overlap, recovery_cutoff)
-            runs = self.api.list_runs(repository, cutoff, now)
-            discovered_ids: set[int] = set()
-            for run in runs:
-                discovered_ids.add(int(run["id"]))
-                self._store_run(repository, run)
-
-            # A long-running workflow can be older than the overlap and pushed
-            # off the newest-runs pages. Persisted active IDs keep it observed.
-            persisted_ids = self.database.active_run_ids(repository)
-            persisted_ids |= self.database.pending_job_refresh_run_ids(repository)
-            for run_id in persisted_ids - discovered_ids:
-                try:
-                    run = self.api.get_run(repository, run_id)
-                except GitHubRequestError as exc:
-                    if exc.status_code != 404:
-                        raise
-                    LOGGER.warning(
-                        "retiring missing workflow run %s from %s",
-                        run_id,
-                        repository,
-                    )
-                    self.database.mark_run_missing(repository, run_id)
-                    continue
-                self._store_run(repository, run)
-
-            # A rerun keeps its run's created_at, so one started after the
-            # overlap is never listed again and its run is no longer active.
-            # Without this, a pull request rerun once the runner was repaired
-            # would leave the failing-branch count, and its alert, standing
-            # until a new push passed or the window expired (homelab#3509).
-            # get_run returns the newest attempt; a new one is stored as
-            # active and then followed like any other run. A run GitHub no
-            # longer has keeps its stored result. Each check is capped, and
-            # takes the runs checked longest ago first: always taking the
-            # newest would never reach the rerun of an older failure once
-            # more runs than the cap were failing, and would let one noisy
-            # workflow starve another's.
-            recheck_at = time.monotonic()
-            if recheck_at >= self.pull_request_recheck_after.get(repository, 0):
-                self.pull_request_recheck_after[repository] = (
-                    recheck_at + PULL_REQUEST_RECHECK_SECONDS
-                )
-                candidates = [
-                    run_id
-                    for run_id in self.database.failing_pull_request_run_ids(repository)
-                    if run_id not in discovered_ids and run_id not in persisted_ids
-                ]
-                previous = self.pull_request_rechecked_at.get(repository, {})
-                # sorted() is stable, so never-checked runs stay newest first.
-                due = sorted(
-                    candidates,
-                    key=lambda run_id: previous.get(run_id, float("-inf")),
-                )[:PULL_REQUEST_RECHECK_LIMIT]
-                self.pull_request_rechecked_at[repository] = {
-                    run_id: recheck_at if run_id in due else previous[run_id]
-                    for run_id in candidates
-                    if run_id in due or run_id in previous
-                }
-                for run_id in due:
-                    try:
-                        run = self.api.get_run(repository, run_id)
-                    except GitHubRequestError as exc:
-                        if exc.status_code != 404:
-                            raise
-                        continue
-                    self._store_run(repository, run)
-
-            for run_id, attempts in self.database.run_attempt_gaps(repository):
-                for attempt in attempts:
-                    self.database.upsert_run(
-                        repository,
-                        self.api.get_run_attempt(repository, run_id, attempt),
-                    )
-
-            success_at = self.database.record_refresh_success(
-                repository, initial=initial
+            repository, obj = parse_event(event, message.data, self._repositories)
+        except MalformedEvent as exc:
+            LOGGER.warning(
+                "dropping malformed %s message %s: %s",
+                event_label,
+                attributes.get("delivery_id", "?"),
+                exc,
             )
+            self.state.messages.labels(event_label, "malformed").inc()
+            message.ack()
+            return
+        if repository is None:
+            self.state.messages.labels(event, "ignored_repository").inc()
+            message.ack()
+            return
+        try:
+            if event == "workflow_run":
+                self.database.upsert_run(repository, obj)
+            else:
+                self.database.upsert_job(repository, obj)
+            now = self._clock()
+            self.database.record_event(repository, now)
+        except Exception:
+            LOGGER.exception(
+                "failed to store %s message %s for %s; it will be redelivered",
+                event,
+                attributes.get("delivery_id", "?"),
+                repository,
+            )
+            self.state.messages.labels(event, "error").inc()
+            message.nack()
+            return
+        self.state.last_event.labels(repository).set(now)
+        self.state.messages.labels(event, "stored").inc()
+        self._changed.set()
+        message.ack()
+
+    def refresh_snapshot_if_changed(self) -> None:
+        """Re-aggregate stored history for /metrics after new events.
+
+        A failure propagates and exits the process (Docker restarts it)
+        rather than serving stale history silently.
+        """
+        if not self._changed.is_set():
+            return
+        self._changed.clear()
+        self.metrics.refresh()
+
+    def stream_once(self, subscriber: Any) -> None:
+        """Hold one streaming pull open until it stops, logging why it stopped.
+
+        A snapshot refresh failure is not a stream failure; it propagates.
+        """
+        subscription = self.config.subscription
+        try:
+            future = subscriber.subscribe(
+                subscription,
+                callback=self.handle_message,
+                flow_control=FlowControl(max_messages=MAX_OUTSTANDING_MESSAGES),
+                # Let in-flight callbacks finish their SQLite write before
+                # stream_once returns, so main() never closes the database
+                # under a running callback.
+                await_callbacks_on_shutdown=True,
+            )
+        except Exception:
+            LOGGER.exception("could not open the streaming pull on %s", subscription)
+            return
+        self.state.subscription_running.set(1)
+        LOGGER.info("streaming pull open on %s", subscription)
+        try:
+            while True:
+                try:
+                    future.result(timeout=SNAPSHOT_REFRESH_SECONDS)
+                except TimeoutError:
+                    if future.done():
+                        LOGGER.exception("streaming pull on %s failed", subscription)
+                        return
+                except Exception:
+                    LOGGER.exception("streaming pull on %s failed", subscription)
+                    return
+                else:
+                    LOGGER.warning("streaming pull on %s closed", subscription)
+                    return
+                self.refresh_snapshot_if_changed()
         finally:
-            if initial:
-                self.state.backfill_in_progress.labels(repository).set(0)
-        self.state.last_success.labels(repository).set(success_at)
-        LOGGER.info(
-            "refreshed %s: %d recent run(s)%s",
-            repository,
-            len(runs),
-            " (initial backfill)" if initial else "",
-        )
-
-    def _store_run(self, repository: str, run: dict[str, Any]) -> None:
-        needs_jobs = self.database.jobs_need_refresh(repository, run)
-        self.database.upsert_run(repository, run)
-        if needs_jobs:
+            self.state.subscription_running.set(0)
+            future.cancel()
             try:
-                jobs = self.api.list_jobs(repository, int(run["id"]))
-            except GitHubRequestError as exc:
-                # One run's jobs endpoint failing transiently does not make the
-                # repository stale. The run's jobs stay due (active, or
-                # completed with an older snapshot) and are retried next cycle.
-                if exc.rate_limited or exc.status_code < 500:
-                    raise
-                self._record_jobs_failure(repository, int(run["id"]), exc)
-                return
-            except requests.RequestException as exc:
-                self._record_jobs_failure(repository, int(run["id"]), exc)
-                return
-            # None (vs. an attempted-but-possibly-empty list) tells
-            # upsert_jobs whether the concurrency-group listing was ever
-            # queried for this run -- see the "unknown" vs. "none" fallback
-            # comment there.
-            groups = None
-            if run.get("status") in ACTIVE_STATUSES:
-                groups = []
-                now = time.monotonic()
-                if now >= self.concurrency_groups_retry_after.get(repository, 0):
-                    try:
-                        groups = self.api.list_concurrency_groups(
-                            repository, int(run["id"])
-                        )
-                    except GitHubRequestError as exc:
-                        # A shared primary or secondary rate limit applies to
-                        # the core endpoints too. Abort the repository refresh
-                        # instead of spending requests that GitHub has already
-                        # told us it will reject.
-                        if exc.rate_limited:
-                            raise
-                        self._record_optional_metadata_failure(
-                            repository, int(run["id"]), now, exc
-                        )
-                    except (GitHubPayloadError, requests.RequestException) as exc:
-                        # Concurrency groups enrich labels but do not determine job
-                        # status. Do not discard a successfully fetched core jobs
-                        # snapshot when this optional endpoint is unavailable.
-                        self._record_optional_metadata_failure(
-                            repository, int(run["id"]), now, exc
-                        )
-            self.database.upsert_jobs(repository, run, jobs, groups)
+                future.result(timeout=SHUTDOWN_WAIT_SECONDS)
+            except Exception as exc:  # noqa: BLE001 -- any outcome of a cancelled stream
+                # Cancellation itself ends the future with an error; the
+                # reason the stream stopped was already logged above.
+                LOGGER.debug("streaming pull on %s shut down: %r", subscription, exc)
 
-    def _record_jobs_failure(
-        self, repository: str, run_id: int, error: Exception
-    ) -> None:
-        self.state.poll_errors.labels(repository, "jobs").inc()
-        LOGGER.warning(
-            "jobs refresh failed for %s run %s (%s); retrying next cycle",
-            repository,
-            run_id,
-            error,
-        )
-
-    def _record_optional_metadata_failure(
-        self, repository: str, run_id: int, now: float, error: Exception
-    ) -> None:
-        self.concurrency_groups_retry_after[repository] = (
-            now + OPTIONAL_METADATA_RETRY_SECONDS
-        )
-        self.state.poll_errors.labels(repository, "concurrency_groups").inc()
-        LOGGER.warning(
-            "optional concurrency-group refresh failed for %s run %s (%s); "
-            "core job state retained with unknown concurrency metadata",
-            repository,
-            run_id,
-            error,
-        )
-
-    def refresh_all(self) -> None:
-        for repository in self.config.repositories:
-            try:
-                self.refresh_repository(repository)
-            except Exception:
-                self.state.poll_errors.labels(repository, "refresh").inc()
-                LOGGER.exception("failed to refresh %s", repository)
-
-    def run_forever(self, after_refresh: Callable[[], None]) -> None:
+    def run_forever(self, subscriber: Any) -> None:
+        """Hold the streaming pull open, reopening it with a bounded delay."""
+        delay = RECONNECT_MIN_SECONDS
         while True:
-            started = time.monotonic()
-            self.refresh_all()
-            after_refresh()
-            elapsed = time.monotonic() - started
-            time.sleep(max(1, self.config.poll_interval_seconds - elapsed))
+            started = self._monotonic()
+            self.stream_once(subscriber)
+            self.state.subscription_failures.inc()
+            if self._monotonic() - started >= RECONNECT_RESET_SECONDS:
+                delay = RECONNECT_MIN_SECONDS
+            LOGGER.info("reopening the streaming pull in %.0fs", delay)
+            self.refresh_snapshot_if_changed()
+            self._sleep(delay)
+            delay = min(delay * 2, RECONNECT_MAX_SECONDS)
 
 
 def with_health_endpoint(metrics_app: Callable) -> Callable:
@@ -2061,9 +1494,10 @@ def with_health_endpoint(metrics_app: Callable) -> Callable:
     Serving HEALTH_PATH ahead of the metrics app keeps the probe O(1) as the
     registry grows, so the fix does not quietly expire the way raising the
     timeout would. It deliberately proves only that the HTTP server thread is
-    accepting and answering requests -- the poller's own health is already
-    exported as metrics and alerted on there, and folding that in would make
-    a probe failure ambiguous between "process wedged" and "GitHub is down".
+    accepting and answering requests -- the event stream's own health is
+    exported as metrics (subscription_running, last_event_timestamp_seconds)
+    and alerted on there, and folding that in would make a probe failure
+    ambiguous between "process wedged" and "Pub/Sub is unreachable".
     """
 
     def app(environ: dict[str, Any], start_response: Callable) -> list[bytes]:
@@ -2099,9 +1533,10 @@ def main() -> None:
         metrics = DatabaseMetrics(database)
         metrics.refresh()
         registry.register(metrics)
-        api = GitHubAPI(config, state)
-        resources.callback(api.close)
-        poller = Poller(config, database, api, state)
+        consumer = EventConsumer(config, database, state, metrics)
+        # Credentials come from GOOGLE_APPLICATION_CREDENTIALS.
+        subscriber = SubscriberClient()
+        resources.callback(subscriber.close)
 
         http_server, http_thread = start_http_server(config.port, registry=registry)
         # set_app/get_app are wsgiref.simple_server.WSGIServer's own API, so
@@ -2117,7 +1552,7 @@ def main() -> None:
             config.port,
             ", ".join(config.repositories),
         )
-        poller.run_forever(metrics.refresh)
+        consumer.run_forever(subscriber)
 
 
 if __name__ == "__main__":

@@ -70,7 +70,18 @@ test('subprocess names an unreachable provider without its message', async () =>
       },
     ),
     (error) =>
-      error.message === 'Goose exited 1: Network error; Could not connect',
+      error.message === 'Goose exited 1: Network error; Could not connect' &&
+      error.recipeFailure === undefined,
+  );
+  await assert.rejects(
+    subprocess(process.execPath, ['-e', 'process.exit(128)'], {
+      cwd: '/tmp',
+      signal: new AbortController().signal,
+      environment: {},
+      label: 'git',
+    }),
+    (error) =>
+      error.message === 'git exited 128' && error.recipeFailure === undefined,
   );
 });
 test('output overflow fails and cancellation terminates the child', async () => {
@@ -317,6 +328,66 @@ if (process.argv[2] === 'recipe') {
       classifyGooseProviderFailure(new Error('ordinary error')),
       undefined,
     );
+    // Heartbeat / onProviderStarted failures and missing binaries leave recipeFailure unset.
+    await writeFile(
+      executable,
+      `#!${process.execPath}
+if (process.argv[2] !== 'recipe') {
+  console.log(JSON.stringify({metadata:{status:'completed'},messages:[]}));
+}`,
+      { mode: 0o700 },
+    );
+    const heartbeatFail = gooseExecutor({
+      executable,
+      workingDirectory: directory,
+      environment: {
+        PATH: '/usr/bin:/bin',
+        HOME: directory,
+        GOOSE_PATH_ROOT: directory,
+      },
+      assertAllocation: async () => {
+        /* Process classification fixture. */
+      },
+      onProviderStarted: async () => {
+        throw new Error('Work API HTTP 503');
+      },
+    });
+    await assert.rejects(
+      heartbeatFail({
+        run,
+        baseline: null,
+        signal: new AbortController().signal,
+      }),
+      (error) => {
+        assert.equal(error.recipeFailure, undefined);
+        return true;
+      },
+    );
+    const missingBin = gooseExecutor({
+      executable: join(directory, 'missing-goose-binary'),
+      workingDirectory: directory,
+      environment: {
+        PATH: '/usr/bin:/bin',
+        HOME: directory,
+        GOOSE_PATH_ROOT: directory,
+      },
+      assertAllocation: async () => {
+        /* Process classification fixture. */
+      },
+    });
+    await assert.rejects(
+      missingBin({
+        run,
+        baseline: null,
+        signal: new AbortController().signal,
+      }),
+      (error) => {
+        assert.equal(error.code, 'ENOENT');
+        assert.equal(error.recipeFailure, undefined);
+        assert.equal(error.resultFileMissing, undefined);
+        return true;
+      },
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -397,6 +468,88 @@ test('settleGooseFailure logs cause, persists Codex auth before completing, and 
   assert.deepEqual(failedLogs, [
     'Goose exited 1: Rate limit exceeded',
     'Work API HTTP 500',
+  ]);
+
+  // Recipe deadline timeout settles as agent-timeout even though controller aborted.
+  const timeoutPayloads = [];
+  assert.deepEqual(
+    await settleGooseFailure(new Error('Goose cancelled'), {
+      aborted: true,
+      timedOut: true,
+      timeoutMinutes: '30m',
+      complete: async (payload) => timeoutPayloads.push(payload),
+      logError: () => {
+        /* captured elsewhere */
+      },
+    }),
+    { settled: true, outcome: 'agent-timeout' },
+  );
+  assert.deepEqual(timeoutPayloads, [
+    {
+      outcome: 'agent-timeout',
+      outcomeReference: null,
+      message: 'Goose recipe timed out after 30m',
+    },
+  ]);
+
+  // Ordinary recipe/result failures settle as agent-failed with sanitized messages.
+  const agentFailures = [];
+  for (const err of [
+    Object.assign(new Error('Goose exited 1: Server error'), {
+      recipeFailure: true,
+    }),
+    Object.assign(new SyntaxError('Unexpected token "secret-output" in JSON'), {
+      recipeFailure: true,
+    }),
+    Object.assign(new Error('ENOENT: /tmp/secret'), {
+      code: 'ENOENT',
+      recipeFailure: true,
+      resultFileMissing: true,
+    }),
+  ]) {
+    const res = await settleGooseFailure(err, {
+      aborted: false,
+      complete: async (payload) => agentFailures.push(payload),
+      logError: () => {
+        /* captured elsewhere */
+      },
+    });
+    assert.deepEqual(res, { settled: true, outcome: 'agent-failed' });
+  }
+  assert.deepEqual(
+    agentFailures.map((p) => p.message),
+    [
+      'Goose exited 1: Server error',
+      'Goose returned invalid JSON result',
+      'Declared Goose result file was not written',
+    ],
+  );
+
+  // Infrastructure, heartbeat 5xx, spawn ENOENT, and bootstrap errors stay runner-failed via direct-runner exit trap.
+  const infraLogs = [];
+  for (const err of [
+    new Error('Invalid recipe source revision'),
+    new Error('Work API heartbeat HTTP 503'),
+    Object.assign(new Error('spawn goose ENOENT'), {
+      code: 'ENOENT',
+      syscall: 'spawn goose',
+    }),
+  ]) {
+    assert.deepEqual(
+      await settleGooseFailure(err, {
+        aborted: false,
+        complete: async () => {
+          throw new Error('must not complete as agent-failed');
+        },
+        logError: (message) => infraLogs.push(message),
+      }),
+      { settled: false },
+    );
+  }
+  assert.deepEqual(infraLogs, [
+    'Invalid recipe source revision',
+    'Work API heartbeat HTTP 503',
+    'spawn goose ENOENT',
   ]);
 });
 
