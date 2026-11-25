@@ -1,3 +1,4 @@
+export * from './agent-events';
 export * from './contract';
 export * from './cron';
 export * from './derive';
