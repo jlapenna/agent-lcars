@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import {
+  agentEventsContract,
   dispatchesContract,
   GITHUB_DISPATCH_DESCRIPTION_MAX,
   itemsContract,
@@ -269,6 +270,28 @@ describe('itemsContract.redispatch', () => {
         id: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
       }),
     ).toEqual({ id: '01J5Z3K9QX8F0N2B4V6C8D1E3G' });
+  });
+});
+
+describe('agentEventsContract', () => {
+  it('takes no host from the request: the caller identity names it', () => {
+    const [rawShape] =
+      agentEventsContract.subscribe['~orpc'].inputSchemas ?? [];
+    const shape = rawShape as z.ZodTypeAny | undefined;
+    const input = {
+      sessionId: 'session-a',
+      key: 'lcars:session:other',
+      kinds: ['ended'],
+      until: 'ended',
+    };
+    expect(shape?.parse(input)).toEqual(input);
+    expect(shape?.safeParse({ ...input, host: 'pike' }).success).toBe(false);
+    expect(
+      shape?.safeParse({
+        ...input,
+        target: { type: 'session', sessionId: 'session-a', host: 'pike' },
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -672,6 +695,8 @@ describe('generateWorkOpenApi', () => {
         '/claw/agents/{owner}/{repo}/{name}/runs',
         '/dispatches/github',
         '/dispatches/github/redispatch',
+        '/events/subscriptions',
+        '/events/subscriptions/{id}',
         '/issues',
         '/issues/source',
         '/issues/owner',
@@ -855,6 +880,10 @@ describe('generateWorkOpenApi', () => {
       'GET /runs/{runId}/checkout-token': ['200', '401', '403', '409'],
       'GET /runs/{runId}/codex-auth': ['200', '401', '404', '409', '500'],
       'PUT /runs/{runId}/codex-auth': ['200', '400', '401', '409', '500'],
+      // 201 always, replay included.
+      'POST /events/subscriptions': ['201', '400', '403', '409'],
+      'GET /events/subscriptions': ['200'],
+      'DELETE /events/subscriptions/{id}': ['200', '404'],
     });
   });
 });

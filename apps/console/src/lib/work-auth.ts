@@ -12,7 +12,8 @@ export type WorkScope =
   | 'work.executor'
   | 'work.cron'
   | 'work.claw.admit'
-  | 'work.reaper';
+  | 'work.reaper'
+  | 'events.deliver';
 
 export interface WorkPrincipal {
   principal: string;

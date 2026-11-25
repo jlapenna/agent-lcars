@@ -18,6 +18,14 @@ import { oc } from '@orpc/contract';
 import { openapi, type OpenAPIV3_2 } from '@orpc/openapi';
 import { z } from 'zod';
 
+import {
+  AGENT_EVENT_SOURCES,
+  agentEventSessionIdSchema,
+  agentEventSubscriptionIdSchema,
+  agentEventSubscriptionRequestSchema,
+  agentEventTargetSchema,
+  agentEventWorkIdSchema,
+} from './agent-events';
 import { parseCron } from './cron';
 import {
   jobCredentialObservationSchema,
@@ -1917,6 +1925,100 @@ export const runsContract = {
     .output(
       z.strictObject({
         status: z.enum(['updated', 'unchanged', 'skipped-burned']),
+      }),
+    ),
+};
+
+const agentEventSubscriptionViewSchema = z.strictObject({
+  id: agentEventSubscriptionIdSchema,
+  key: z.string(),
+  source: z.enum(
+    Object.keys(AGENT_EVENT_SOURCES) as [
+      keyof typeof AGENT_EVENT_SOURCES,
+      ...(keyof typeof AGENT_EVENT_SOURCES)[],
+    ],
+  ),
+  kinds: z.array(z.string()).optional(),
+  until: z.string().optional(),
+  target: agentEventTargetSchema,
+  createdAt: z.iso.datetime(),
+});
+export type AgentEventSubscriptionView = z.output<
+  typeof agentEventSubscriptionViewSchema
+>;
+
+const eventsBase = oc.meta(openapi({ tags: ['events'], spec: withBearer }));
+
+/**
+ * Subscriptions that route events to agents (#3538). Only a host's delivery
+ * agent calls these, as its `svc:agent-events-<host>` principal with
+ * `events.deliver`. The host is the one named by that verified identity,
+ * never a request field, so a host can subscribe only for sessions its own
+ * telemetry reports and can see or remove only its own subscriptions.
+ */
+export const agentEventsContract = {
+  subscribe: eventsBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/events/subscriptions',
+        operationId: 'createAgentEventSubscription',
+        summary: 'Subscribe a live session on the calling host to an event key',
+        description:
+          'Requires events.deliver. Accepted only when the session telemetry ' +
+          'reports the calling host and the session has not ended. Idempotent: ' +
+          'the same session, key, kinds and until return the existing ' +
+          'subscription. Work targets (workId) are not accepted yet.',
+        successStatus: 201,
+      }),
+    )
+    .errors({
+      BAD_REQUEST: { message: 'Malformed key, kinds or until' },
+      FORBIDDEN: { message: 'No live session on the calling host' },
+      CONFLICT: { message: 'Subscription limit reached for the session' },
+    })
+    .input(
+      agentEventSubscriptionRequestSchema.extend({
+        sessionId: agentEventSessionIdSchema.optional(),
+        /** Reserved for dispatched Work (#3570); refused until then. */
+        workId: agentEventWorkIdSchema.optional(),
+      }),
+    )
+    .output(agentEventSubscriptionViewSchema),
+  list: eventsBase
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/events/subscriptions',
+        operationId: 'listAgentEventSubscriptions',
+        summary: "List the calling host's event subscriptions",
+      }),
+    )
+    .input(
+      z.strictObject({
+        sessionId: agentEventSessionIdSchema.optional(),
+      }),
+    )
+    .output(
+      z.strictObject({
+        subscriptions: z.array(agentEventSubscriptionViewSchema),
+      }),
+    ),
+  unsubscribe: eventsBase
+    .meta(
+      openapi({
+        method: 'DELETE',
+        path: '/events/subscriptions/{id}',
+        operationId: 'deleteAgentEventSubscription',
+        summary: "Remove one of the calling host's event subscriptions",
+      }),
+    )
+    .errors({ NOT_FOUND: { message: 'No such subscription on this host' } })
+    .input(z.strictObject({ id: agentEventSubscriptionIdSchema }))
+    .output(
+      z.strictObject({
+        id: agentEventSubscriptionIdSchema,
+        deleted: z.literal(true),
       }),
     ),
 };
