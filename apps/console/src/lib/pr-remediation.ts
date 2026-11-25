@@ -70,6 +70,13 @@ import { workPayloadFromGithub } from './work-from-github';
 export const MAX_AUTO_PR_REMEDIATION_ROUNDS = 4;
 
 const PR_REMEDIATION_REQUEST_PREFIX = 'pr-remediation:';
+
+/** `params.remediationReason` on a round dispatched only because the base
+ * branch moved under the PR (merge conflict, no unresolved threads or blocking
+ * reviews). Those rounds react to other merges, not to review ping-pong, so
+ * they do not count toward `MAX_AUTO_PR_REMEDIATION_ROUNDS`. A round that
+ * fails to change the head is still caught by the no-op and dedupe rules. */
+const CONFLICT_ONLY_REMEDIATION_REASON = 'conflict-only';
 const PR_REREVIEW_REQUEST_PREFIX = 'pr-rereview:';
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
@@ -765,7 +772,8 @@ function newestRemediationRoundWasNoOp(
 }
 
 /** Counts consecutive distinct automatic PR remediation rounds since the last
- * human/operator request, ignoring fallback/retry attempts within one round. */
+ * human/operator request, ignoring fallback/retry attempts within one round
+ * and conflict-only rounds caused by the base branch moving. */
 function countConsecutiveAutoRemediations(runs: readonly Run[]): number {
   const sorted = [...runs].sort(
     (left, right) =>
@@ -782,15 +790,19 @@ function countConsecutiveAutoRemediations(runs: readonly Run[]): number {
     ) {
       break;
     }
-    if (run.requestId.startsWith(PR_REMEDIATION_REQUEST_PREFIX)) {
-      distinctRounds.add(run.requestId);
-    } else if (run.providerFallback?.originalRunId !== undefined) {
-      const origin = runs.find(
-        (candidate) => candidate.runId === run.providerFallback?.originalRunId,
-      );
-      if (origin?.requestId.startsWith(PR_REMEDIATION_REQUEST_PREFIX)) {
-        distinctRounds.add(origin.requestId);
-      }
+    const round = run.requestId.startsWith(PR_REMEDIATION_REQUEST_PREFIX)
+      ? run
+      : run.providerFallback?.originalRunId !== undefined
+        ? runs.find(
+            (candidate) =>
+              candidate.runId === run.providerFallback?.originalRunId,
+          )
+        : undefined;
+    if (
+      round?.requestId.startsWith(PR_REMEDIATION_REQUEST_PREFIX) === true &&
+      round.params?.['remediationReason'] !== CONFLICT_ONLY_REMEDIATION_REASON
+    ) {
+      distinctRounds.add(round.requestId);
     }
   }
   return distinctRounds.size;
@@ -824,7 +836,9 @@ function buildRemediationContext(input: {
     `Fetch origin/${input.baseRefName}, resolve any merge conflicts cleanly on ${input.headRefName}, ` +
     `address every actionable review comment and thread, push to ${input.headRefName}, ` +
     `resolve addressed review threads via GraphQL resolveReviewThread, and post or update a ` +
-    `deliverable carrying your exact <!-- attempt-claim:$ATTEMPT_ID --> marker.`
+    `deliverable carrying your exact <!-- attempt-claim:$ATTEMPT_ID --> marker. ` +
+    `If origin/${input.baseRefName} already contains this PR's change or a merged change made it ` +
+    `obsolete, close the PR as superseded as the agent protocol describes instead of resolving it.`
   );
 }
 
@@ -1195,6 +1209,11 @@ async function reconcilePullRequestRemediationOnce(
       params: {
         mode: 'implement',
         context,
+        ...(hasMergeConflict &&
+        unresolvedThreadIds.length === 0 &&
+        blockingReviewKeys.length === 0
+          ? { remediationReason: CONFLICT_ONLY_REMEDIATION_REASON }
+          : {}),
         ...crossRepo,
       },
       work: buildAnchorWork(selection.pipeline),
