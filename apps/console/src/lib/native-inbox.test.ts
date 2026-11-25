@@ -3,7 +3,7 @@ import {
   Orchestrator,
   type TaskId,
 } from '@agent-lcars/orchestrator';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getNativeInboxCards } from './native-inbox';
 import type { WorkPrincipal } from './work-auth';
@@ -88,6 +88,26 @@ describe('native human decisions', () => {
       },
       canReply: true,
     });
+  });
+
+  it('reads a page of tasks with one batched run read, not a query per task', async () => {
+    const store = new MemoryStore();
+    await seed(store, { workId: ID }, 'park', '2026-10-01T00:00:00Z');
+    for (let issue = 1; issue <= 20; issue++)
+      await seed(
+        store,
+        { workId: `02${String(issue).padStart(24, '0')}` },
+        'done',
+        '2026-10-03T00:00:00Z',
+      );
+    const perTask = vi.spyOn(store, 'listRuns');
+    const batched = vi.spyOn(store, 'listRunsForTasks');
+
+    const cards = await getNativeInboxCards(store, operator);
+
+    expect(cards.map((card) => card.work.id)).toEqual([`work:${ID}`]);
+    expect(batched).toHaveBeenCalledOnce();
+    expect(perTask).not.toHaveBeenCalled();
   });
 
   it.each([
