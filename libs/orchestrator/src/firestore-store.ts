@@ -1343,6 +1343,21 @@ export class FirestoreStore implements OrchestratorStore {
           !providerIsCoolingDown(cooldowns[index]?.data(), input.now),
       );
       if (granted.length === 0) return undefined;
+      // Queued candidates first: most claims are idle polls, and with nothing
+      // queued there is nothing to order or place, so the occupancy, priority
+      // and credential reads below are skipped. Only live runs are candidates;
+      // a run canceled while queued can keep `queue.state: queued`.
+      const queuedSnapshots = await Promise.all(
+        granted.map((pipeline) =>
+          tx.get(
+            this.#runs
+              .where('queue.state', '==', 'queued')
+              .where('pipeline', '==', pipeline)
+              .where('state', 'in', LIVE_STATES),
+          ),
+        ),
+      );
+      if (queuedSnapshots.every((snapshot) => snapshot.empty)) return undefined;
       const [prioritySnapshots, windowSnapshots] = await Promise.all([
         Promise.all(
           granted.map((pipeline) =>
@@ -1364,17 +1379,8 @@ export class FirestoreStore implements OrchestratorStore {
             : 0,
         ]),
       );
-      const [queuedSnapshots, ...liveSnapshots] = await Promise.all([
-        Promise.all(
-          granted.map((pipeline) =>
-            tx.get(
-              this.#runs
-                .where('queue.state', '==', 'queued')
-                .where('pipeline', '==', pipeline),
-            ),
-          ),
-        ),
-        ...LIVE_STATES.map((state) =>
+      const liveSnapshots = await Promise.all(
+        LIVE_STATES.map((state) =>
           Promise.all(
             granted.map((pipeline) =>
               tx.get(
@@ -1385,7 +1391,7 @@ export class FirestoreStore implements OrchestratorStore {
             ),
           ),
         ),
-      ]);
+      );
       const queued = queuedSnapshots
         .flatMap((snapshot) => snapshot.docs)
         .map((doc) => ({ doc, run: runSchema.parse(doc.data()) }));
@@ -1433,8 +1439,11 @@ export class FirestoreStore implements OrchestratorStore {
     // fast pickup, not as a backlog), so reading it in full before slicing
     // is the same trade `claimPendingOutbox` already makes for its pending
     // population.
+    // Live states only: a run canceled while queued can keep
+    // `queue.state: queued`, and hundreds of those accumulated.
     const snapshot = await this.#runs
       .where('queue.state', '==', 'queued')
+      .where('state', 'in', LIVE_STATES)
       .get();
     return snapshot.docs
       .map((doc) => runSchema.parse(doc.data()))
