@@ -182,6 +182,32 @@ function automation(store: JobStore, principals = ['svc:scheduler']) {
 }
 const tokens = () => ({ tokenFor: async () => 'fixture' });
 
+it('reads the job catalog once per refresh of every repository', async () => {
+  const store = new MemoryJobStore();
+  vi.stubGlobal(
+    'fetch',
+    github({
+      'owner/jobs': { audit: catalogFiles() },
+      'owner/other': { audit: catalogFiles() },
+      'owner/empty': undefined,
+    }),
+  );
+  const list = vi.spyOn(store, 'list');
+
+  await refreshJobCatalogs(
+    store,
+    ['owner/jobs', 'owner/other', 'owner/empty'],
+    tokens,
+    Date.now() + 45_000,
+    automation(store),
+  );
+
+  expect(list).toHaveBeenCalledOnce();
+  expect([...store.rows.keys()].sort()).toEqual(
+    [jobKey('owner/jobs', 'audit'), jobKey('owner/other', 'audit')].sort(),
+  );
+});
+
 it('discovers jobs in a repository nobody installed and activates them on first sight', async () => {
   const store = new MemoryJobStore();
   const requested: string[] = [];

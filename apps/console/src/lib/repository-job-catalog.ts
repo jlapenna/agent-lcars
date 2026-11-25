@@ -30,8 +30,12 @@ export async function refreshJobCatalog(
   now: Date,
   activate: JobActivation,
   authorizes?: JobAuthorization,
+  /** The catalog already read by the caller. Every write below is a
+   * transaction on the job's current document, so a list read earlier in
+   * the same tick is a safe starting point for the diff. */
+  catalog?: readonly CatalogJob[],
 ): Promise<void> {
-  const existing = (await store.list()).filter(
+  const existing = (catalog ?? (await store.list())).filter(
     (job) => job.repository === repository,
   );
   const signal = AbortSignal.timeout(20000);
@@ -219,7 +223,10 @@ export async function refreshJobCatalogs(
   // source changes still reach those records.
   const enabled = new Set<string>();
   const known = new Set(repositories);
-  for (const job of await store.list()) {
+  // One read of the catalog per tick, shared with every repository's
+  // refresh: each used to read the whole collection again.
+  const catalog = await store.list();
+  for (const job of catalog) {
     known.add(job.repository);
     if (job.enabled) enabled.add(job.repository);
   }
@@ -248,6 +255,7 @@ export async function refreshJobCatalogs(
             new Date(),
             activate,
             authorizes,
+            catalog,
           );
         } catch (error) {
           logger.error(
