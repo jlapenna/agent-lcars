@@ -170,6 +170,39 @@ export type GithubAnchorProjection = z.infer<
   typeof githubAnchorProjectionSchema
 >;
 
+/** The projection fields that decide whether a session's pull request merged
+ * and was the session's own (session spend, which matches the session link in
+ * the PR body): read with a field mask, so a PR's comments, labels, title and
+ * other fields are not transferred to count it. */
+export const GITHUB_ANCHOR_MERGE_EVIDENCE_FIELDS = [
+  'anchor',
+  'kind',
+  'state',
+  'mergedAt',
+  'createdAt',
+  'author',
+  'headRepository',
+  'headSha',
+  'headRefName',
+  'body',
+] as const;
+export const githubAnchorMergeEvidenceSchema =
+  githubAnchorProjectionSchema.pick({
+    anchor: true,
+    kind: true,
+    state: true,
+    mergedAt: true,
+    createdAt: true,
+    author: true,
+    headRepository: true,
+    headSha: true,
+    headRefName: true,
+    body: true,
+  });
+export type GithubAnchorMergeEvidence = z.infer<
+  typeof githubAnchorMergeEvidenceSchema
+>;
+
 /** Crockford base32, 26 characters: a ULID. Excludes I, L, O, U. */
 export const WORK_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 

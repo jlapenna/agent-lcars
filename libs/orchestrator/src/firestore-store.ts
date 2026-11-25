@@ -34,6 +34,9 @@ import {
 } from './lifecycle-metrics';
 import {
   byOutboxClaimFairness,
+  GITHUB_ANCHOR_MERGE_EVIDENCE_FIELDS,
+  type GithubAnchorMergeEvidence,
+  githubAnchorMergeEvidenceSchema,
   type GithubAnchorProjection,
   githubAnchorProjectionSchema,
   githubAnchorSchema,
@@ -926,6 +929,37 @@ export class FirestoreStore implements OrchestratorStore {
     return projection === undefined
       ? undefined
       : githubAnchorProjectionSchema.parse(projection);
+  }
+
+  async readGithubAnchorMergeEvidence(
+    anchors: readonly GithubAnchorProjection['anchor'][],
+  ): Promise<(GithubAnchorMergeEvidence | undefined)[]> {
+    const fieldMask = GITHUB_ANCHOR_MERGE_EVIDENCE_FIELDS.map(
+      (field) => `projection.${field}`,
+    );
+    const chunks: GithubAnchorProjection['anchor'][][] = [];
+    for (
+      let offset = 0;
+      offset < anchors.length;
+      offset += FirestoreStore.#getAllSize
+    )
+      chunks.push(anchors.slice(offset, offset + FirestoreStore.#getAllSize));
+    const got = await Promise.all(
+      chunks.map((chunk) =>
+        chunk.length === 0
+          ? []
+          : this.#firestore.getAll(
+              ...chunk.map((anchor) => this.#githubAnchorRef(anchor)),
+              { fieldMask },
+            ),
+      ),
+    );
+    return got.flat().map((snapshot) => {
+      const evidence = snapshot.data()?.['projection'];
+      return evidence === undefined
+        ? undefined
+        : githubAnchorMergeEvidenceSchema.parse(evidence);
+    });
   }
 
   async readGithubAnchorProjections(

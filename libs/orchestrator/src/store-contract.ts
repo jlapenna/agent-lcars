@@ -3554,6 +3554,53 @@ export function runOrchestratorStoreContract(
       });
     });
 
+    describe('GitHub anchor merge evidence', () => {
+      it('reads only the merge-evidence fields, aligned with the anchors', async () => {
+        // Title, url, labels, assignees and the source clocks are left out.
+        const { store } = await fixture();
+        const anchor = { repo: 'octo/example', issue: 7 };
+        const generation =
+          await store.beginGithubAnchorProjectionRefresh(anchor);
+        await store.applyGithubAnchorProjectionRefresh({
+          anchor,
+          generation,
+          projection: {
+            anchor,
+            kind: 'pr',
+            state: 'closed',
+            title: 'A long-bodied pull request',
+            body: 'x'.repeat(2000),
+            url: 'https://github.com/octo/example/pull/7',
+            author: 'octocat',
+            labels: ['agent:done'],
+            assigneeLogins: ['octocat'],
+            mergedAt: '2026-11-25T11:00:00.000Z',
+            headRefName: 'feat/seven',
+            sourceUpdatedAt: '2026-11-25T11:00:00.000Z',
+            observedAt: '2026-11-25T11:00:01.000Z',
+          },
+        });
+
+        expect(
+          await store.readGithubAnchorMergeEvidence([
+            anchor,
+            { repo: 'octo/example', issue: 8 },
+          ]),
+        ).toEqual([
+          {
+            anchor,
+            kind: 'pr',
+            state: 'closed',
+            author: 'octocat',
+            mergedAt: '2026-11-25T11:00:00.000Z',
+            headRefName: 'feat/seven',
+            body: 'x'.repeat(2000),
+          },
+          undefined,
+        ]);
+      });
+    });
+
     describe('stored item state refresh', () => {
       it('recomputes a task’s stored item state and reports a missing task', async () => {
         const { store, orchestrator } = await fixture();
