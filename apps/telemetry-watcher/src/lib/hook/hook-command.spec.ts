@@ -1361,6 +1361,48 @@ describe('lcars hook herdr pane', () => {
     ).toMatchObject({ herdrPaneId: 't36', herdrPaneResolved: true });
   });
 
+  it('remembers the terminal foreground process for the delivery agent', async () => {
+    const home = tempHome();
+    const foreground = { pid: 800, start: 'boot/1234' };
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('SessionStart'), {
+        resolveHerdrPane: async () => ({
+          status: 'found',
+          paneId: 't36',
+          foreground,
+        }),
+      }),
+    );
+    // A throttled or later event keeps it.
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('Stop'), {
+        resolveHerdrPane: async () => ({ status: 'unknown' }),
+      }),
+    );
+    expect(
+      readHookSessionState(stateDirectory(home), SESSION_ID),
+    ).toMatchObject({ herdrPaneId: 't36', herdrForeground: foreground });
+    // The process is local state for this host; it is never reported.
+    expect(
+      spooledEvents(home).every(
+        (event) => !JSON.stringify(event).includes('boot/1234'),
+      ),
+    ).toBe(true);
+
+    // A new start in a terminal whose process is not the session's drops it.
+    await executeHookCommand(
+      ['claude'],
+      deps(home, payload('SessionStart'), {
+        resolveHerdrPane: async () => ({ status: 'found', paneId: 't40' }),
+      }),
+    );
+    const state = readHookSessionState(stateDirectory(home), SESSION_ID);
+    expect(state?.herdrPaneId).toBe('t40');
+    expect(state?.herdrForeground).toBeUndefined();
+  });
+
   it('asks again when the session starts again, and drops a pane it has left', async () => {
     const home = tempHome();
     await executeHookCommand(

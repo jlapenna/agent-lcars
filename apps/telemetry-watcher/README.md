@@ -10,6 +10,8 @@ This app ships:
 - the `lcars` CLI bundle (`session-title-cli` target): session titles and the
   hook client, installed on workstations and baked into the runner image;
 - the hook spool flusher (`hook-flush-cli` target);
+- the event delivery agent (`events-agent-cli` target, `lcars events agent`),
+  workstations only; see [Event delivery agent](#event-delivery-agent-lcars-events-agent);
 - the runner bundle (`bundle` target, `sidecar.cjs`): QueueExecutor's
   `runner finalize` and `runner resume` passes.
 
@@ -304,7 +306,7 @@ telemetry-tool runtime path.
 The `lcars session title "..."` and `lcars hook` commands depend on a
 `lcars` launcher existing on the workstation. Homegit installs it on the
 hosts it enrolls for telemetry: `.github/workflows/publish-workstation-cli.yml`
-packs the three bundles and the launcher from each `main` revision that
+packs the four bundles and the launcher from each `main` revision that
 passes CI (`bin/package-workstation-cli.sh`, checked by
 `bin/verify-workstation-cli.sh`) and publishes them as
 `lcars-workstation-cli.tar.gz` on the `workstation-cli` release. Homegit
@@ -343,3 +345,37 @@ There is no host deployment. The former per-host daemon image
 retires its deploy play, image publish, scrape and alerts separately
 (jlapenna/homelab#2405). The runner image builds this app's bundles from
 source in its own `telemetry-watcher-build` stage.
+
+## Event delivery agent (`lcars events agent`)
+
+A long-running user service on each workstation (#3538, #3568) that types
+event notices into the sessions that subscribed to them. The workstation
+launcher sends `lcars events ...` to its own bundle
+(`src/events-agent-cli.ts`), so no other command loads the Pub/Sub client.
+
+- **Input:** a streaming pull of the host's `agent-events-<host>` subscription
+  (`infra/terraform/agent_events.tf`), authenticated with the host's
+  `agent-events-<host>` key at `LCARS_EVENTS_CREDENTIALS_FILE` (default
+  `~/.config/agent-lcars/events-key.json`). Without a key the agent idles and
+  reports `lcars_events_agent_configured 0`.
+- **Validation:** each delivery's event is re-validated and its notice
+  rendered locally with `renderAgentEventNotice`; the router's text is never
+  typed. A finished delivery id is recorded under
+  `~/.local/state/agent-lcars/events-agent/delivered.json`, so a repeat is
+  dropped.
+- **Target check:** the hook records the herdr-core terminal a session runs
+  in and that terminal's foreground process (the session's own process, by
+  PID, boot id and start time). A notice is typed only while that terminal's
+  foreground is still exactly that process, the session has not recorded its
+  end, and herdr-core reports it at its prompt (`idle`, `done` or `error`),
+  never `working` or `blocked` on a dialog. A busy session holds the delivery
+  with backoff for up to ten minutes before it is released back to Pub/Sub.
+- **Delivery:** `hc send`, then a turn must start within 15 seconds; the
+  notice is typed once more if it did not. Otherwise, or when the session or
+  terminal is gone, the delivery is acked as `undeliverable` and handed to
+  the source fallback hook (`events-agent-command.ts`).
+- **Observability:** Prometheus metrics on `127.0.0.1:9478/metrics`
+  (`LCARS_EVENTS_METRICS_PORT`), `/healthz`, and JSON log lines on stdout that
+  never carry notice text.
+- **Not yet:** forwarding `lcars session subscribe` requests to the console
+  (`subscribe-forwarder.ts` is a stub until the subscription API lands).

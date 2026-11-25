@@ -206,7 +206,7 @@ export function defaultHookCommandDependencies(
 
 type HerdrPaneState = Pick<
   HookSessionState,
-  'herdrPaneId' | 'herdrPaneResolved' | 'herdrPaneCheckedAt'
+  'herdrPaneId' | 'herdrForeground' | 'herdrPaneResolved' | 'herdrPaneCheckedAt'
 >;
 
 /** How long to wait before asking herdr-core again after it failed to answer. */
@@ -215,6 +215,8 @@ const HERDR_PANE_RETRY_MS = 5 * 60 * 1000;
 function herdrPaneState(state: HookSessionState | undefined): HerdrPaneState {
   return {
     ...(state?.herdrPaneId && { herdrPaneId: state.herdrPaneId }),
+    ...(state?.herdrPaneId &&
+      state.herdrForeground && { herdrForeground: state.herdrForeground }),
     ...(state?.herdrPaneResolved && { herdrPaneResolved: true }),
     ...(state?.herdrPaneCheckedAt && {
       herdrPaneCheckedAt: state.herdrPaneCheckedAt,
@@ -279,11 +281,14 @@ function applyHerdrPaneLookup(
     if (kind !== 'start' && known.herdrPaneResolved) return known;
     return {
       ...(known.herdrPaneId && { herdrPaneId: known.herdrPaneId }),
+      ...(known.herdrForeground && { herdrForeground: known.herdrForeground }),
       herdrPaneCheckedAt: now,
     };
   }
   return {
     ...(lookup.status === 'found' && { herdrPaneId: lookup.paneId }),
+    ...(lookup.status === 'found' &&
+      lookup.foreground && { herdrForeground: lookup.foreground }),
     herdrPaneResolved: true,
   };
 }

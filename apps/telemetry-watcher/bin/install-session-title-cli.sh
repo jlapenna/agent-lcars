@@ -42,6 +42,9 @@ BUILT_HOOK="$REPO_ROOT/dist/apps/telemetry-watcher-hook/$HOOK_NAME"
 FLUSHER_NAME=lcars-hook-flush.cjs
 BUILT_FLUSHER="$REPO_ROOT/dist/apps/telemetry-watcher-hook-flush/$FLUSHER_NAME"
 BUILT_BUNDLE="$REPO_ROOT/dist/apps/telemetry-watcher-session-title-cli/$BUNDLE_NAME"
+# `lcars events agent` is its own bundle so other commands never load Pub/Sub.
+EVENTS_NAME=lcars-events-agent.cjs
+BUILT_EVENTS="$REPO_ROOT/dist/apps/telemetry-watcher-events-agent/$EVENTS_NAME"
 
 # Homegit links $BIN_DIR/lcars to the published archive's launcher, and a
 # write to that link lands in the archive. The archive also carries
@@ -54,7 +57,7 @@ if [ -e "$LIB_DIR/REVISION" ] || [ -L "$BIN_DIR/lcars" ]; then
 fi
 
 cd "$REPO_ROOT"
-./tools/nx run-many -t session-title-cli hook-cli hook-flush-cli -p @agent-lcars/telemetry-watcher
+./tools/nx run-many -t session-title-cli hook-cli hook-flush-cli events-agent-cli -p @agent-lcars/telemetry-watcher
 
 if [ ! -f "$BUILT_HOOK" ]; then
   echo "$BUILT_HOOK was not produced by the hook-cli build." >&2
@@ -62,6 +65,10 @@ if [ ! -f "$BUILT_HOOK" ]; then
 fi
 if [ ! -f "$BUILT_FLUSHER" ]; then
   echo "$BUILT_FLUSHER was not produced by the hook-flush-cli build." >&2
+  exit 1
+fi
+if [ ! -f "$BUILT_EVENTS" ]; then
+  echo "$BUILT_EVENTS was not produced by the events-agent-cli build." >&2
   exit 1
 fi
 if [ ! -f "$BUILT_BUNDLE" ]; then
@@ -73,6 +80,7 @@ mkdir -p "$LIB_DIR" "$BIN_DIR"
 install -m 0644 "$BUILT_BUNDLE" "$LIB_DIR/$BUNDLE_NAME"
 install -m 0644 "$BUILT_HOOK" "$LIB_DIR/$HOOK_NAME"
 install -m 0644 "$BUILT_FLUSHER" "$LIB_DIR/$FLUSHER_NAME"
+install -m 0644 "$BUILT_EVENTS" "$LIB_DIR/$EVENTS_NAME"
 
 # The launcher's shape, and why it resolves Node the way it does, live with
 # its one definition in lcars-launcher.sh.

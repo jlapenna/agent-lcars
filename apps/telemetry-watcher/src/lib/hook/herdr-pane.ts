@@ -15,7 +15,14 @@ import { isHerdrPaneId } from '@agent-lcars/telemetry';
  *   known before and ask again later.
  */
 export type HerdrPaneLookup =
-  | { readonly status: 'found'; readonly paneId: string }
+  | {
+      readonly status: 'found';
+      readonly paneId: string;
+      /** The terminal's foreground process when it is the session's own
+       * process (an ancestor of the hook), so a later reader can tell that
+       * the terminal still runs this session. */
+      readonly foreground?: HerdrForegroundProcess;
+    }
   | { readonly status: 'none' }
   | { readonly status: 'unknown' };
 
@@ -26,6 +33,13 @@ export type HerdrPaneLookup =
  * is not there. Any other failure (a refused or slow connection, an answer
  * that is not one) is not.
  */
+/** One process, identified so that a reused PID never matches it. */
+export interface HerdrForegroundProcess {
+  readonly pid: number;
+  /** {@link processStartIdentity}: the boot and the start time of `pid`. */
+  readonly start: string;
+}
+
 export type HerdrTerminalList =
   | { readonly ok: true; readonly terminals: unknown }
   | { readonly ok: false; readonly absent: boolean };
@@ -37,6 +51,9 @@ export interface HerdrPaneDependencies {
   readonly parentPid: (pid: number) => number | undefined;
   /** Asks the core for its terminals, without ever starting one. */
   readonly listTerminals: () => Promise<HerdrTerminalList>;
+  /** {@link processStartIdentity} of `pid`; without it no foreground
+   * process is recorded. */
+  readonly processStart?: (pid: number) => string | undefined;
 }
 
 /** A terminal's shell can sit several wrappers above the hook process. */
@@ -94,7 +111,9 @@ export async function resolveHerdrPane(
 
   // The nearest ancestor wins, so a terminal started from inside another
   // one is never mistaken for its parent.
-  let nearest: { address: string; depth: number } | undefined;
+  let nearest:
+    | { address: string; depth: number; foregroundPid: number | undefined }
+    | undefined;
   for (const entry of listed.terminals) {
     const terminal = asRecord(entry);
     const address = terminal?.['address'];
@@ -106,18 +125,37 @@ export async function resolveHerdrPane(
     ) {
       continue;
     }
-    const pids = [
-      positivePid(terminal['pid']),
-      positivePid(asRecord(terminal['foreground'])?.['pid']),
-    ];
+    const foregroundPid = positivePid(
+      asRecord(terminal['foreground'])?.['pid'],
+    );
+    const pids = [positivePid(terminal['pid']), foregroundPid];
     const depth = ancestors.findIndex((ancestor) => pids.includes(ancestor));
     if (depth >= 0 && (!nearest || depth < nearest.depth)) {
-      nearest = { address, depth };
+      nearest = {
+        address,
+        depth,
+        // Only a foreground process this hook descends from is the
+        // session's own; a shell above it is not.
+        foregroundPid:
+          foregroundPid !== undefined && ancestors.includes(foregroundPid)
+            ? foregroundPid
+            : undefined,
+      };
     }
   }
-  return nearest
-    ? { status: 'found', paneId: nearest.address }
-    : { status: 'none' };
+  if (!nearest) return { status: 'none' };
+  const start =
+    nearest.foregroundPid === undefined
+      ? undefined
+      : deps.processStart?.(nearest.foregroundPid);
+  return {
+    status: 'found',
+    paneId: nearest.address,
+    ...(nearest.foregroundPid !== undefined &&
+      start !== undefined && {
+        foreground: { pid: nearest.foregroundPid, start },
+      }),
+  };
 }
 
 /** The parent PID in one `/proc/<pid>/stat` line, or `undefined`. */
@@ -128,6 +166,37 @@ export function parentPidFromStat(stat: string): number | undefined {
   if (close < 0) return undefined;
   const parent = Number(stat.slice(close + 2).split(' ')[1]);
   return Number.isSafeInteger(parent) && parent > 0 ? parent : undefined;
+}
+
+/** The start time field (22nd, clock ticks since boot) of a
+ * `/proc/<pid>/stat` line, or `undefined`. */
+export function startTicksFromStat(stat: string): string | undefined {
+  const close = stat.lastIndexOf(')');
+  if (close < 0) return undefined;
+  // Fields after the command name start at field 3 (`state`).
+  const ticks = stat.slice(close + 2).split(' ')[19];
+  return ticks !== undefined && /^[0-9]{1,20}$/.test(ticks) ? ticks : undefined;
+}
+
+/**
+ * Identifies a process across PID reuse: the kernel's boot id and the
+ * process's start time. Two processes with the same identity are the same
+ * process. Linux only; anywhere else it is unknown.
+ */
+export function processStartIdentity(
+  pid: number,
+  readFile: (filePath: string) => string = (filePath) =>
+    fs.readFileSync(filePath, 'utf8'),
+): string | undefined {
+  try {
+    const boot = readFile('/proc/sys/kernel/random/boot_id').trim();
+    const ticks = startTicksFromStat(readFile(`/proc/${pid}/stat`));
+    return /^[0-9a-f-]{1,64}$/.test(boot) && ticks !== undefined
+      ? `${boot}/${ticks}`
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Reads a parent PID from `/proc`. Linux only; anywhere else it is unknown. */
@@ -210,25 +279,37 @@ export function herdrCoreSocketPath(
 }
 
 /**
- * One `terminal.list` call on the core's own socket.
+ * One JSON-RPC call's answer from herdr-core.
  *
- * The hook connects to the socket itself and never runs the `herdr-core`
+ * `absent` means no core is listening here (its socket is not there), which
+ * is definite. `error` is the core's own refusal, by its `kind`
+ * (`not_found`, `finished`...). Anything else failed this time only.
+ */
+export type HerdrCoreAnswer =
+  | { readonly ok: true; readonly result: unknown }
+  | { readonly ok: false; readonly absent: boolean; readonly error?: string };
+
+/**
+ * One call on the core's own socket.
+ *
+ * The caller connects to the socket itself and never runs the `herdr-core`
  * program: every one of its commands but `--version` starts a core when none
  * is running, which would leave a core and its systemd unit on a host that
  * does not use one, and finding the program would depend on a `PATH` a hook
  * does not reliably inherit. A connection opens in line-delimited JSON-RPC,
- * the mode herdr-core's own `hello` is sent in, and `terminal.list` answers
- * there with every terminal's shell and foreground PID.
+ * the mode herdr-core's own `hello` is sent in.
  */
-export function listHerdrCoreTerminals(
+export function callHerdrCore(
   socketPath: string,
+  method: string,
+  params: Record<string, unknown>,
   timeoutMs: number = CORE_TIMEOUT_MS,
-): Promise<HerdrTerminalList> {
+): Promise<HerdrCoreAnswer> {
   return new Promise((resolve) => {
     let settled = false;
     let answer = '';
     const socket = net.connect(socketPath);
-    const settle = (result: HerdrTerminalList) => {
+    const settle = (result: HerdrCoreAnswer) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -242,7 +323,7 @@ export function listHerdrCoreTerminals(
     socket.setEncoding('utf8');
     socket.on('connect', () => {
       socket.write(
-        `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'terminal.list', params: {} })}\n`,
+        `${JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })}\n`,
       );
     });
     socket.on('data', (chunk: string) => {
@@ -254,18 +335,26 @@ export function listHerdrCoreTerminals(
         }
         return;
       }
-      let terminals: unknown;
+      let response: Record<string, unknown> | undefined;
       try {
-        terminals = asRecord(
-          asRecord(JSON.parse(answer.slice(0, end)))?.['result'],
-        )?.['terminals'];
+        response = asRecord(JSON.parse(answer.slice(0, end)));
       } catch {
-        terminals = undefined;
+        response = undefined;
+      }
+      const error = asRecord(response?.['error']);
+      if (error) {
+        const kind = asRecord(error['data'])?.['kind'] ?? error['message'];
+        settle({
+          ok: false,
+          absent: false,
+          ...(typeof kind === 'string' && { error: kind }),
+        });
+        return;
       }
       settle(
-        terminals === undefined
-          ? { ok: false, absent: false }
-          : { ok: true, terminals },
+        response && 'result' in response
+          ? { ok: true, result: response['result'] }
+          : { ok: false, absent: false },
       );
     });
     // No socket file: no core has run here. A file nothing listens on
@@ -277,6 +366,25 @@ export function listHerdrCoreTerminals(
   });
 }
 
+/** One `terminal.list` call, which answers with every terminal's shell and
+ * foreground PID. */
+export async function listHerdrCoreTerminals(
+  socketPath: string,
+  timeoutMs: number = CORE_TIMEOUT_MS,
+): Promise<HerdrTerminalList> {
+  const answer = await callHerdrCore(
+    socketPath,
+    'terminal.list',
+    {},
+    timeoutMs,
+  );
+  if (!answer.ok) return { ok: false, absent: answer.absent };
+  const terminals = asRecord(answer.result)?.['terminals'];
+  return terminals === undefined
+    ? { ok: false, absent: false }
+    : { ok: true, terminals };
+}
+
 export function defaultHerdrPaneDependencies(
   env: NodeJS.ProcessEnv = process.env,
 ): HerdrPaneDependencies {
@@ -284,5 +392,6 @@ export function defaultHerdrPaneDependencies(
     startPid: process.ppid,
     parentPid: procParentPid,
     listTerminals: () => listHerdrCoreTerminals(herdrCoreSocketPath(env)),
+    processStart: (pid) => processStartIdentity(pid),
   };
 }

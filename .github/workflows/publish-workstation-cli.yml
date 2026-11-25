@@ -95,7 +95,7 @@ jobs:
       - name: Build the CLI bundles
         run: |
           ./tools/nx run-many -t session-title-cli hook-cli hook-flush-cli \
-            -p @agent-lcars/telemetry-watcher
+            events-agent-cli -p @agent-lcars/telemetry-watcher
       - name: Pack and verify the archive
         env:
           SOURCE_SHA: ${{ steps.source.outputs.sha }}

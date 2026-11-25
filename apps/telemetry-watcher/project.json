@@ -121,6 +121,40 @@
           }
         }
       }
+    },
+    "events-agent-cli": {
+      "executor": "@nx/esbuild:esbuild",
+      "outputs": ["{options.outputPath}"],
+      "defaultConfiguration": "production",
+      "options": {
+        "platform": "node",
+        "outputPath": "dist/apps/telemetry-watcher-events-agent",
+        "outputFileName": "lcars-events-agent.cjs",
+        "format": ["cjs"],
+        "bundle": true,
+        "thirdParty": true,
+        "target": "node24",
+        "main": "apps/telemetry-watcher/src/events-agent-cli.ts",
+        "tsConfig": "apps/telemetry-watcher/tsconfig.build.json",
+        "skipTypeCheck": true,
+        "esbuildOptions": {
+          "alias": {
+            "abort-controller": "apps/telemetry-watcher/src/lib/native-abort-controller-shim.cjs"
+          },
+          "sourcemap": false
+        }
+      },
+      "configurations": {
+        "development": {},
+        "production": {
+          "esbuildOptions": {
+            "alias": {
+              "abort-controller": "apps/telemetry-watcher/src/lib/native-abort-controller-shim.cjs"
+            },
+            "sourcemap": false
+          }
+        }
+      }
     }
   }
 }
