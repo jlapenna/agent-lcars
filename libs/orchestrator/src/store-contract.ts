@@ -1858,6 +1858,86 @@ export function runOrchestratorStoreContract(
         expect(await claimOutbox(store, clock.now())).toHaveLength(1);
       });
 
+      it('writes one agent-event entry per native Work state change, in the transition', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        const workId = '01J5Z3K9QX8F0N2B4V6C8D1E3K';
+        const taskId = { workId };
+        const events = async () =>
+          (await claimOutbox(store, clock.now(), 100))
+            .filter((entry) => entry.kind === 'agent-event')
+            .map(({ entryId, runId, itemState, createdAt }) => ({
+              entryId,
+              runId,
+              itemState,
+              createdAt,
+            }));
+        const revision = async () =>
+          (await store.readTask(taskId))?.revision ?? 0;
+        const request = async (requestId: string) => {
+          const outcome = await orchestrator.request({
+            taskId,
+            requestId,
+            pipeline: 'claude',
+            work: TASK_WORK,
+          });
+          if (isRefusal(outcome)) throw new Error(outcome.reason);
+          return decidedRun(outcome).runId;
+        };
+
+        // Creating the item and confirming its dispatch leave it running.
+        const first = await request('create');
+        expect(await orchestrator.confirmDispatch(first)).not.toHaveProperty(
+          'refused',
+        );
+        expect(await events()).toEqual([]);
+
+        clock.advanceMinutes(1);
+        await orchestrator.report(first, { ok: true, summary: 'park' });
+        expect(await events()).toEqual([
+          {
+            entryId: `agent-event/work.${workId}.r${await revision()}`,
+            runId: first,
+            itemState: 'parked',
+            createdAt: clock.now(),
+          },
+        ]);
+
+        clock.advanceMinutes(1);
+        const reply = await request('reply');
+        expect(await events()).toEqual([
+          {
+            entryId: `agent-event/work.${workId}.r${await revision()}`,
+            runId: reply,
+            itemState: 'running',
+            createdAt: clock.now(),
+          },
+        ]);
+
+        clock.advanceMinutes(1);
+        await orchestrator.report(reply, { ok: true });
+        clock.advanceMinutes(1);
+        await orchestrator.close(taskId);
+        expect(await events()).toEqual([
+          {
+            entryId: `agent-event/work.${workId}.r${(await revision()) - 1}`,
+            runId: reply,
+            itemState: 'done',
+            createdAt: '2026-08-15T12:03:00.000Z',
+          },
+          {
+            entryId: `agent-event/work.${workId}.r${await revision()}`,
+            runId: reply,
+            itemState: 'canceled',
+            createdAt: clock.now(),
+          },
+        ]);
+
+        // A GitHub-anchored task has its own event sources.
+        const github = await started(orchestrator, 'req-github');
+        await orchestrator.report(github.run.runId, { ok: false });
+        expect(await events()).toEqual([]);
+      });
+
       it('finds the tasks whose waiting delivery is bound to an exact pull request', async () => {
         const { clock, store, orchestrator } = await fixture();
         const { run } = await started(orchestrator);

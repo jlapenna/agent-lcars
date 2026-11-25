@@ -531,6 +531,7 @@ export function lifecycleMetricSnapshot(
       'dispatch-run',
       'report-outcome',
       'monitor-delivery',
+      'agent-event',
     ] as const) {
       const entries = outbox.filter((entry) => entry.kind === kind);
       for (const state of ['pending', 'leased', 'failed'] as const)

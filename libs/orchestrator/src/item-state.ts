@@ -1,13 +1,18 @@
+import type { z } from 'zod';
+
 import { isEffectfulRun, MAX_AUTO_RETRIES, maxAutoRetries } from './decide';
 import {
   deliveryWaiting,
   isLive,
+  isWorkAnchor,
+  type itemStateSchema,
+  type OutboxEntry,
   type Run,
   type Task,
   type TaskDerived,
 } from './model';
 
-export type ItemState = 'running' | 'done' | 'parked' | 'failed' | 'canceled';
+export type ItemState = z.infer<typeof itemStateSchema>;
 
 type RunOrder = Pick<Run, 'runId' | 'createdAt'>;
 
@@ -93,4 +98,75 @@ export function taskDerivedFrom(
     ...(latest === undefined ? {} : { latestRunId: latest.runId }),
     event: runs.some((run) => run.sourceRevision !== undefined),
   };
+}
+
+/** Prefix of the outbox entries {@link itemStateEventOutbox} writes. */
+export const AGENT_EVENT_OUTBOX_PREFIX = 'agent-event/';
+
+/** The id of the agent event for a native Work item's transition: the Work
+ * id and the task revision that made it. A revision is written once, so the
+ * id is stable across every retry and redelivery of that transition. */
+export function workAgentEventId(workId: string, revision: number): string {
+  return `work.${workId}.r${revision}`;
+}
+
+/** The event id an `agent-event` outbox entry carries in its entry id. */
+export function agentEventIdOf(entry: Pick<OutboxEntry, 'entryId'>): string {
+  if (!entry.entryId.startsWith(AGENT_EVENT_OUTBOX_PREFIX))
+    throw new Error(`not an agent-event outbox entry: ${entry.entryId}`);
+  return entry.entryId.slice(AGENT_EVENT_OUTBOX_PREFIX.length);
+}
+
+/**
+ * The `agent-event` outbox entry for a task write that changes a native Work
+ * item's state (#3568), written by the store in the same transaction as the
+ * task, so the change and the notice that it happened commit together and a
+ * failed delivery is retried by the outbox drain rather than lost. Writes
+ * that leave the state unchanged (claims, heartbeats, an automatic retry of a
+ * lost run) write nothing.
+ *
+ * Nothing is written for a GitHub-anchored task (GitHub's own sources cover
+ * those), for the write that creates a task (nobody can have subscribed to
+ * an id that did not exist), when the state before the write is unknown
+ * because a stored run failed to parse, or for an item with no runs, which
+ * has no run for the entry to name.
+ */
+export function itemStateEventOutbox(input: {
+  /** The task and its runs before the write; the task is undefined when
+   * this write creates it, the runs when they could not all be read. */
+  previous: { task: Task | undefined; runs: readonly Run[] | undefined };
+  /** The task and its runs as the write leaves them. */
+  next: { task: Task; runs: readonly Run[] };
+  /** The task document revision this write stores. */
+  revision: number;
+}): OutboxEntry[] {
+  const { previous, next, revision } = input;
+  const anchor = next.task.task;
+  if (
+    !isWorkAnchor(anchor) ||
+    previous.task === undefined ||
+    previous.runs === undefined
+  )
+    return [];
+  const before = deriveItemState(previous.task, previous.runs);
+  const after = deriveItemState(next.task, next.runs);
+  const latest = latestRun(next.runs);
+  if (before === after || latest === undefined) return [];
+  const at =
+    latest.updatedAt > next.task.updatedAt
+      ? latest.updatedAt
+      : next.task.updatedAt;
+  return [
+    {
+      entryId: `${AGENT_EVENT_OUTBOX_PREFIX}${workAgentEventId(anchor.workId, revision)}`,
+      kind: 'agent-event',
+      task: anchor,
+      runId: latest.runId,
+      itemState: after,
+      state: 'pending',
+      attempts: 0,
+      createdAt: at,
+      updatedAt: at,
+    },
+  ];
 }

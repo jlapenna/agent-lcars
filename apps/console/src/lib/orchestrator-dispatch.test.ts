@@ -23,6 +23,11 @@ import type {
   OutcomeWebhookTarget,
 } from './outcome-webhook';
 
+// Work state changes queue agent events; these tests do not cover routing.
+vi.mock('./agent-event-routing', () => ({
+  routeAgentEvent: vi.fn(async () => ({ eventId: 'unused', deliveries: [] })),
+}));
+
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
 const NOW = '2026-08-29T12:00:00.000Z';
 const tokens: DispatchTokenProvider = { tokenFor: async () => 'test-token' };
@@ -671,6 +676,170 @@ describe.each([
       );
     },
   );
+});
+
+describe('drainOutbox Work agent events', () => {
+  const WORK_ID = '01J5Z3K9QX8F0N2B4V6C8D1E5A';
+  const origin = { principal: 'test:events', channel: 'api' } as const;
+  const silentFetch = vi.fn(
+    async () => new Response(null, { status: 204 }),
+  ) as typeof fetch;
+
+  async function parkedWork() {
+    const { store, orchestrator } = fixture();
+    const run = await requestedWithOrigin(orchestrator, origin, WORK_ID);
+    await orchestrator.report(run.runId, { ok: true, summary: 'park' });
+    const revision = (await store.readTask({ workId: WORK_ID }))!.revision;
+    return { store, orchestrator, run, revision };
+  }
+
+  it('routes needs-reply once when the Work parks, linking its console page', async () => {
+    const { store, orchestrator, revision } = await parkedWork();
+    const routeAgentEvent = vi.fn(async () => ({}));
+    const deps = {
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: silentFetch,
+      routeAgentEvent,
+      now: () => NOW,
+    };
+
+    expect((await drainOutbox(deps)).failed).toEqual([]);
+    expect(routeAgentEvent.mock.calls).toEqual([
+      [
+        {
+          id: `work.${WORK_ID}.r${revision}`,
+          key: `lcars:work:${WORK_ID}`,
+          kind: 'needs-reply',
+          occurredAt: NOW,
+          detail: 'parked',
+          link: `https://lcars.jlapenna.net/work/${WORK_ID}`,
+        },
+      ],
+    ]);
+
+    // Settled: a later drain does not route it again.
+    await drainOutbox(deps);
+    expect(routeAgentEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a failed routing with the same event id after backoff', async () => {
+    const { store, orchestrator, revision } = await parkedWork();
+    const routeAgentEvent = vi
+      .fn<(event: unknown) => Promise<unknown>>()
+      .mockRejectedValueOnce(new Error('pubsub unavailable'))
+      .mockResolvedValue({});
+    const deps = {
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: silentFetch,
+      routeAgentEvent,
+    };
+
+    const first = await drainOutbox({ ...deps, now: () => NOW });
+    expect(first.failed).toEqual([
+      {
+        entryId: `agent-event/work.${WORK_ID}.r${revision}`,
+        error: 'pubsub unavailable',
+      },
+    ]);
+    // Backing off: not retried until the backoff has passed.
+    await drainOutbox({ ...deps, now: () => NOW });
+    expect(routeAgentEvent).toHaveBeenCalledTimes(1);
+
+    const later = new Date(Date.parse(NOW) + 5 * 60_000).toISOString();
+    expect((await drainOutbox({ ...deps, now: () => later })).failed).toEqual(
+      [],
+    );
+    expect(routeAgentEvent.mock.calls.map(([event]) => event)).toEqual([
+      expect.objectContaining({ id: `work.${WORK_ID}.r${revision}` }),
+      expect.objectContaining({ id: `work.${WORK_ID}.r${revision}` }),
+    ]);
+    await drainOutbox({ ...deps, now: () => later });
+    expect(routeAgentEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it('routes the reopening state and the terminal done of a replied Work', async () => {
+    const { store, orchestrator } = await parkedWork();
+    const routeAgentEvent = vi.fn(async () => ({}));
+    const deps = {
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: silentFetch,
+      routeAgentEvent,
+      now: () => NOW,
+    };
+    await drainOutbox(deps);
+    const reply = await orchestrator.request({
+      taskId: { workId: WORK_ID },
+      requestId: 'reply-1',
+      pipeline: 'codex',
+    });
+    if (isRefusal(reply)) throw new Error(reply.reason);
+    await drainOutbox(deps);
+    await orchestrator.report(decidedRun(reply).runId, { ok: false });
+    await drainOutbox(deps);
+
+    expect(
+      routeAgentEvent.mock.calls.map(([event]) => [
+        (event as { kind: string }).kind,
+        (event as { detail: string }).detail,
+      ]),
+    ).toEqual([
+      ['needs-reply', 'parked'],
+      ['state', 'running'],
+      ['done', 'failed'],
+    ]);
+  });
+
+  it('retires an entry without a Work state instead of retrying it', async () => {
+    const { store, orchestrator, run } = await parkedWork();
+    const versioned = (await store.readTask({ workId: WORK_ID }))!;
+    await store.apply({
+      decision: {
+        task: versioned.task,
+        outbox: [
+          {
+            entryId: `agent-event/work.${WORK_ID}.r99`,
+            kind: 'agent-event',
+            task: { workId: WORK_ID },
+            runId: run.runId,
+            state: 'pending',
+            attempts: 0,
+            createdAt: NOW,
+            updatedAt: NOW,
+          },
+        ],
+      },
+      expectedRevision: versioned.revision,
+    });
+    const routeAgentEvent = vi.fn(async () => ({}));
+
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: silentFetch,
+      routeAgentEvent,
+      now: () => NOW,
+    });
+
+    expect(routeAgentEvent.mock.calls.map(([event]) => event)).toEqual([
+      expect.objectContaining({ kind: 'needs-reply' }),
+    ]);
+    const records = await store.readLifecycleMetricRecords({
+      since: NOW,
+      until: NOW,
+    });
+    expect(
+      records.outstandingOutbox.filter(
+        (entry) => entry.entryId === `agent-event/work.${WORK_ID}.r99`,
+      ),
+    ).toEqual([expect.objectContaining({ state: 'failed' })]);
+  });
 });
 
 describe('outcomeCommentBody', () => {

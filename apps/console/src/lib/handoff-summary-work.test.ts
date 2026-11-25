@@ -15,6 +15,11 @@ import {
 import { executeSummaries } from './inbox-summary-work';
 import { drainOutbox } from './orchestrator-dispatch';
 
+// Work state changes queue agent events; these tests do not cover routing.
+vi.mock('./agent-event-routing', () => ({
+  routeAgentEvent: vi.fn(async () => ({ eventId: 'unused', deliveries: [] })),
+}));
+
 const actions = [
   { text: 'Inspect production', command: 'check --prod' },
   { text: 'Reply with the result.' },
