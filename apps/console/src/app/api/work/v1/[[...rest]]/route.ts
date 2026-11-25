@@ -1,6 +1,8 @@
 import 'server-only';
 
 import { auth } from '@/auth';
+import { agentEventSubscriptionStore } from '@/lib/agent-event-store';
+import { createAgentEventsHandler } from '@/lib/agent-event-subscriptions-router';
 import { getCliSessions } from '@/lib/cli-sessions';
 import { codexAuthStore } from '@/lib/codex-auth-store';
 import { costBudgetResponse } from '@/lib/cost-budget-readout';
@@ -48,6 +50,7 @@ const PREFIX = '/api/work/v1';
 
 const handler = createWorkHandler();
 const runsHandler = createRunsHandler();
+const agentEventsHandler = createAgentEventsHandler();
 const verifyGoogleIdToken = googleIdTokenVerifier(
   process.env['AGENT_LCARS_WORK_AUDIENCE'] ?? 'agent-lcars-work',
 );
@@ -109,6 +112,19 @@ async function handle(request: Request): Promise<Response> {
     return withNoStore(await jobSecretsHttp(request, principal));
   if (pathname === `${PREFIX}/jobs` || pathname.startsWith(`${PREFIX}/jobs/`))
     return withNoStore(await repositoryJobsHttp(request, principal));
+  if (pathname.startsWith(`${PREFIX}/events/`)) {
+    const eventsResult = await agentEventsHandler.handle(request, {
+      prefix: PREFIX,
+      context: {
+        ...(principal === undefined ? {} : { principal }),
+        store: agentEventSubscriptionStore,
+        getSessionDoc: sessionForResume,
+        now: () => new Date(),
+      },
+    });
+    if (eventsResult.matched && eventsResult.response !== undefined)
+      return withNoStore(eventsResult.response);
+  }
   const runtime = createOrchestratorRuntime();
   const runsResult = await runsHandler.handle(request, {
     prefix: PREFIX,

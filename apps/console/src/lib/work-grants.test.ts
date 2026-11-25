@@ -214,6 +214,31 @@ describe('grant scopes', () => {
     ).toMatchObject({ principal: 'svc:job-scheduler', scopes: ['work.cron'] });
   });
 
+  it('commits events.deliver only to one delivery identity per host, with no other scope (#3538)', () => {
+    const config = parseYaml(
+      readFileSync(
+        path.join(import.meta.dirname, '../../apphosting.yaml'),
+        'utf8',
+      ),
+    ) as { env: { variable: string; value?: string }[] };
+    const grants = parseWorkGrants(
+      config.env.find((entry) => entry.variable === 'AGENT_LCARS_WORK_GRANTS')
+        ?.value,
+    );
+    const delivery = grants.filter((grant) =>
+      grant.scopes.includes('events.deliver'),
+    );
+    // The hosts of infra/terraform/agent_events.tf.
+    expect(delivery).toEqual(
+      ['homelab', 'laforge', 'laptop', 'pike'].map((host) => ({
+        principal: `svc:agent-events-${host}`,
+        subjects: [`agent-events-${host}@agent-lcars.iam.gserviceaccount.com`],
+        pipelines: ['goose'],
+        scopes: ['events.deliver'],
+      })),
+    );
+  });
+
   it('rejects an explicit empty scopes list as a config error', () => {
     expect(() =>
       parseWorkGrants(

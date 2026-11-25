@@ -20,4 +20,5 @@ pnpm exec vitest run --config libs/orchestrator/vitest.config.mts \
   --maxWorkers=1 --no-passWithNoTests --testTimeout="$timeout_ms"
 pnpm exec vitest run --config apps/console/vitest.config.mts \
   runs-router.test.ts work-provider-fallback.test.ts repository-job-store.test.ts \
+  agent-event-store.test.ts \
   --maxWorkers=1 --no-passWithNoTests --testTimeout="$timeout_ms"

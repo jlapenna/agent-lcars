@@ -56,6 +56,23 @@ every other operation, including `work list` and `work status`. Only the
 maintainer's Google account may impersonate it; see
 [fleet credentials](../../docs/fleet-credentials.md#work-reader-interactive-work-owner-query).
 
+## Agent event subscriptions
+
+`POST`, `GET` and `DELETE /api/work/v1/events/subscriptions[/{id}]` manage
+the subscriptions that route events to agents (#3538). Only a host's
+delivery agent calls them, as `svc:agent-events-<host>` with the
+`events.deliver` scope and no other. The host is read from that verified
+service-account email, never from the request. A subscribe is accepted only
+when the session's CLI telemetry reports the same host and the session has
+not ended; list and delete see only that host's subscriptions. Work targets
+are refused until #3570.
+
+The console's `routeAgentEvent` publishes one message per matching
+subscription to `AGENT_LCARS_AGENT_EVENTS_TOPIC`, with `host` and
+`delivery_id` attributes and an `agentEventDeliverySchema` body, and removes
+a subscription the event ends. It skips an event id it has already published
+for a subscription.
+
 ## Replying from the CLI
 
 ```bash

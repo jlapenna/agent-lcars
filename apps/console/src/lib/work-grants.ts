@@ -23,6 +23,10 @@ const workScopeSchema = z.enum([
    *  cancellation of that work. It confers no other Work API read or
    *  mutation. */
   'work.claw.admit',
+  /** A host's delivery agent (`svc:agent-events-<host>`): create, list and
+   *  remove event subscriptions for sessions on the host its verified
+   *  service-account email names (#3538). No Work API read or mutation. */
+  'events.deliver',
 ]);
 
 /** A pipeline name checked against the same closed set `workSpecSchema`

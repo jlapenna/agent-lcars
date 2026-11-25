@@ -2,6 +2,7 @@ import { OpenAPIGenerator } from '@orpc/openapi';
 import { ZodToJsonSchemaConverter } from '@orpc/zod';
 
 import {
+  agentEventsContract,
   dispatchesContract,
   itemsContract,
   runsContract,
@@ -19,6 +20,7 @@ export async function generateWorkOpenApi(): Promise<object> {
       schedules: schedulesContract,
       dispatches: dispatchesContract,
       runs: runsContract,
+      events: agentEventsContract,
     },
     {
       base: {
