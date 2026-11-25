@@ -5,6 +5,7 @@ import { logger } from '@agent-lcars/logging';
 import {
   type OrchestratorStore,
   readFullRunMessage,
+  taskKey,
   withFullRunMessages,
 } from '@agent-lcars/orchestrator';
 import { isSourceManagedWork } from '@agent-lcars/work';
@@ -18,6 +19,11 @@ import {
 import { readHandoffActions } from './handoff-summary-work';
 import type { WorkPrincipal } from './work-auth';
 import { forbiddenReason } from './work-mint';
+
+/** Native tasks read per page. Each page costs two sequential round trips
+ * (the tasks, then one batched read of their runs), so a page holds the
+ * whole current set (about 440 tasks on 2026-11-25) rather than 200. */
+const NATIVE_TASK_PAGE = 1000;
 
 /** Scan bounded datastore pages so older human decisions never disappear
  * behind newer completed work. GitHub parks use their existing projection,
@@ -33,14 +39,17 @@ export async function getNativeInboxCards(
   const cards: NativeDecisionCard[] = [];
   let cursor: string | undefined;
   do {
-    const tasks = await store.listNativeTasks(200, cursor);
-    const summaries = await Promise.all(
-      tasks.map(async ({ task }) =>
-        toWorkSummary({
-          task,
-          runs: await store.listRuns(task.task),
-        }),
-      ),
+    const tasks = await store.listNativeTasks(NATIVE_TASK_PAGE, cursor);
+    // One batched read of the page's run history, not a query per task: a
+    // page used to start one concurrent read per task on a one-CPU instance.
+    const runsByTask = await store.listRunsForTasks(
+      tasks.map(({ task }) => task.task),
+    );
+    const summaries = tasks.map(({ task }) =>
+      toWorkSummary({
+        task,
+        runs: runsByTask.get(taskKey(task.task)) ?? [],
+      }),
     );
     for (const work of summaries) {
       const closedSource =
@@ -123,7 +132,7 @@ export async function getNativeInboxCards(
     }
     const last = tasks.at(-1)?.task.task;
     cursor =
-      tasks.length === 200 && last && 'workId' in last
+      tasks.length === NATIVE_TASK_PAGE && last && 'workId' in last
         ? last.workId
         : undefined;
   } while (cursor !== undefined);
