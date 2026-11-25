@@ -162,7 +162,11 @@ export const itemRunViewSchema = z.strictObject({
       fromRunId: z.string().optional(),
       trigger: z
         .strictObject({
-          reason: z.enum(['provider-limit', 'provider-cooldown']),
+          reason: z.enum([
+            'provider-limit',
+            'provider-cooldown',
+            'agent-timeout',
+          ]),
           failureRunId: z.string(),
           limitedPipeline: z.string(),
         })
