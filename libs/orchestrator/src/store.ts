@@ -284,6 +284,13 @@ export interface OrchestratorStore {
    * {@link listRuns}.
    */
   listRunsForTasks(ids: readonly TaskId[]): Promise<Map<string, Run[]>>;
+  /**
+   * Every run whose reported `result.summary` is exactly `summary` (for
+   * example `park` or `report`), across all tasks and states, in no
+   * particular order. Lets a reader find the few tasks a result can matter
+   * to without scanning every task and run.
+   */
+  listRunsWithSummary(summary: string): Promise<Run[]>;
   /** Store a run's whole final message out of line, as the chunks
    * `splitRunMessage` produced. Content-addressed by `overflow.sha256` and
    * idempotent; never changes the run document. */

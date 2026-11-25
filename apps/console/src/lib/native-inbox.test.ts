@@ -90,7 +90,7 @@ describe('native human decisions', () => {
     });
   });
 
-  it('reads a page of tasks with one batched run read, not a query per task', async () => {
+  it('reads only candidate tasks, with one batched run read and no scan of every task', async () => {
     const store = new MemoryStore();
     await seed(store, { workId: ID }, 'park', '2026-10-01T00:00:00Z');
     for (let issue = 1; issue <= 20; issue++)
@@ -102,11 +102,18 @@ describe('native human decisions', () => {
       );
     const perTask = vi.spyOn(store, 'listRuns');
     const batched = vi.spyOn(store, 'listRunsForTasks');
+    const scan = vi.spyOn(store, 'listNativeTasks');
 
     const cards = await getNativeInboxCards(store, operator);
 
     expect(cards.map((card) => card.work.id)).toEqual([`work:${ID}`]);
     expect(batched).toHaveBeenCalledOnce();
+    // Only the parked task's runs: candidates come from the park and report
+    // runs, not from a scan of every native task.
+    expect([...(await batched.mock.results[0]!.value).keys()]).toEqual([
+      `work:${ID}`,
+    ]);
+    expect(scan).not.toHaveBeenCalled();
     expect(perTask).not.toHaveBeenCalled();
   });
 

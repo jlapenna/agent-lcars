@@ -16,8 +16,10 @@ describe('Bridge native Inbox evidence', () => {
     'preserves GitHub navigation when %s rejects',
     async (failure) => {
       const store = new MemoryStore();
+      // The Inbox finds candidate tasks from the runs that parked or
+      // reported, then reads those tasks and their runs.
       if (failure === 'tasks')
-        vi.spyOn(store, 'listNativeTasks').mockRejectedValue(
+        vi.spyOn(store, 'listRunsWithSummary').mockRejectedValue(
           new Error('tasks unavailable'),
         );
       if (failure === 'runs') {
@@ -37,6 +39,16 @@ describe('Bridge native Inbox evidence', () => {
             },
           },
         });
+        vi.spyOn(store, 'listRunsWithSummary').mockImplementation(
+          async (summary) =>
+            summary === 'park'
+              ? (
+                  await store.listRuns({
+                    workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
+                  })
+                ).concat()
+              : [],
+        );
         vi.spyOn(store, 'listRunsForTasks').mockRejectedValue(
           new Error('runs unavailable'),
         );
