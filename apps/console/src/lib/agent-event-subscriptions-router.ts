@@ -24,6 +24,8 @@ import { runTokenMatches } from './run-token';
 import type { WorkPrincipal } from './work-auth';
 
 export interface AgentEventsContext {
+  /** Repositories whose App webhooks this console consumes. */
+  githubRepositories: readonly string[];
   principal?: WorkPrincipal;
   /** The raw `Authorization: Bearer` value, checked as a run token only
    * when it did not verify as a principal. */
@@ -244,6 +246,48 @@ function ownWorkId(run: Run): string | undefined {
   return isWorkAnchor(run.task) ? run.task.workId : undefined;
 }
 
+/** A registration is a wakeup contract, not just a syntactically valid key.
+ * Reject sources without a deployed producer so callers can use their fallback.
+ * Keep this at the source owner; clients must not copy the fleet inventory. */
+function requireAvailableSource(
+  value: Extract<
+    ReturnType<typeof validateSubscriptionRequest>,
+    { ok: true }
+  >['value'],
+  context: AgentEventsContext,
+): void {
+  if (value.source === 'outline:doc')
+    throw new ORPCError('FORBIDDEN', {
+      message: 'Outline event delivery is not available yet',
+    });
+  if (value.source.startsWith('github:')) {
+    const repository = value.key
+      .slice(value.source.length + 1)
+      .split(/[/#]/u)
+      .slice(0, 2)
+      .join('/');
+    if (
+      !context.githubRepositories.some(
+        (repo) => repo.toLowerCase() === repository,
+      )
+    )
+      throw new ORPCError('FORBIDDEN', {
+        message: `GitHub event delivery is not available for ${repository}: the App source does not watch this repository`,
+      });
+  }
+  if (value.source === 'github:pr') {
+    const unavailable = new Set(['conflict', 'behind']);
+    if (
+      [...(value.kinds ?? []), ...(value.until ? [value.until] : [])].some(
+        (kind) => unavailable.has(kind),
+      )
+    )
+      throw new ORPCError('FORBIDDEN', {
+        message: 'GitHub conflict and behind events are not available yet',
+      });
+  }
+}
+
 export const agentEventsRouter = os.router({
   subscribe: authenticated.subscribe.handler(
     async ({ input, context, errors }) => {
@@ -276,6 +320,7 @@ export const agentEventsRouter = os.router({
           throw errors.BAD_REQUEST({
             message: 'A Work cannot subscribe to its own state',
           });
+        requireAvailableSource(validated.value, context);
         const target = { type: 'work' as const, workId };
         const subscription: AgentEventSubscription = {
           ...validated.value,
@@ -315,6 +360,7 @@ export const agentEventsRouter = os.router({
         throw errors.FORBIDDEN({
           message: `Session ${input.sessionId} is not a live session reported by ${host}`,
         });
+      requireAvailableSource(validated.value, context);
       const target = {
         type: 'session' as const,
         sessionId: input.sessionId,
