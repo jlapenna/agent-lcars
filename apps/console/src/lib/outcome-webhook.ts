@@ -46,7 +46,7 @@ export interface OutcomeWebhookPayload {
   providerFallback?: {
     originalRunId: string;
     fromRunId: string;
-    reason: 'provider-limit' | 'provider-cooldown';
+    reason: 'provider-limit' | 'provider-cooldown' | 'agent-timeout';
     failureRunId: string;
     limitedPipeline: string;
   };

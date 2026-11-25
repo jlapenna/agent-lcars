@@ -191,6 +191,59 @@ function runFallbackContract(
       },
     );
 
+    it('hands a timed-out GitHub review to the next unattempted provider, once each', async () => {
+      const f = fixture();
+      const original = await f.request({
+        params: { mode: 'review' },
+        alternatives: ['codex', 'opencode'],
+      });
+      await f.orchestrator.report(original.runId, {
+        ok: false,
+        summary: 'agent-timeout',
+      });
+      const second = await f.store.readActiveRun(TASK);
+      expect(second).toMatchObject({
+        pipeline: 'codex',
+        params: { mode: 'review' },
+        providerFallback: {
+          trigger: {
+            reason: 'agent-timeout',
+            failureRunId: original.runId,
+            limitedPipeline: 'claude',
+          },
+        },
+      });
+      await f.orchestrator.report(second!.runId, {
+        ok: false,
+        summary: 'agent-timeout',
+      });
+      const third = await f.store.readActiveRun(TASK);
+      expect(third?.pipeline).toBe('opencode');
+      await f.orchestrator.report(third!.runId, {
+        ok: false,
+        summary: 'agent-timeout',
+      });
+      // Every allowed provider timed out: the review settles failed, no wait.
+      expect(await f.store.readActiveRun(TASK)).toBeUndefined();
+      expect((await f.store.readRun(third!.runId))?.state).toBe('finished');
+    });
+
+    it.each([
+      ['an implement run', { mode: 'implement' }],
+      ['a run without a mode', undefined],
+    ])('does not fall back when %s times out', async (_case, params) => {
+      const f = fixture();
+      const original = await f.request({
+        ...(params === undefined ? {} : { params }),
+        alternatives: ['codex'],
+      });
+      await f.orchestrator.report(original.runId, {
+        ok: false,
+        summary: 'agent-timeout',
+      });
+      expect(await f.store.readActiveRun(TASK)).toBeUndefined();
+    });
+
     it('serializes concurrent duplicate limit reports into one successor', async () => {
       const f = fixture();
       const original = await f.request({ alternatives: ['codex'] });
