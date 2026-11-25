@@ -69,6 +69,12 @@ import { workPayloadFromGithub } from './work-from-github';
  * manual operator intervention, preventing pathological ping-pong loops. */
 export const MAX_AUTO_PR_REMEDIATION_ROUNDS = 4;
 
+/** Hard bound on every consecutive automatic round, conflict-only rounds
+ * included, so a worker that keeps pushing without clearing the conflict
+ * still ends with `status:needs-human`. */
+export const MAX_AUTO_PR_REMEDIATION_ROUNDS_TOTAL =
+  2 * MAX_AUTO_PR_REMEDIATION_ROUNDS;
+
 const PR_REMEDIATION_REQUEST_PREFIX = 'pr-remediation:';
 
 /** `params.remediationReason` on a round dispatched only because the base
@@ -774,13 +780,17 @@ function newestRemediationRoundWasNoOp(
 /** Counts consecutive distinct automatic PR remediation rounds since the last
  * human/operator request, ignoring fallback/retry attempts within one round
  * and conflict-only rounds caused by the base branch moving. */
-function countConsecutiveAutoRemediations(runs: readonly Run[]): number {
+function countConsecutiveAutoRemediations(runs: readonly Run[]): {
+  counted: number;
+  total: number;
+} {
   const sorted = [...runs].sort(
     (left, right) =>
       (parseRunGeneration(right.runId) ?? 0) -
       (parseRunGeneration(left.runId) ?? 0),
   );
   const distinctRounds = new Set<string>();
+  const allRounds = new Set<string>();
   for (const run of sorted) {
     if (run.params?.['mode'] === 'review') continue;
     if (
@@ -798,14 +808,17 @@ function countConsecutiveAutoRemediations(runs: readonly Run[]): number {
               candidate.runId === run.providerFallback?.originalRunId,
           )
         : undefined;
+    if (round?.requestId.startsWith(PR_REMEDIATION_REQUEST_PREFIX) !== true) {
+      continue;
+    }
+    allRounds.add(round.requestId);
     if (
-      round?.requestId.startsWith(PR_REMEDIATION_REQUEST_PREFIX) === true &&
       round.params?.['remediationReason'] !== CONFLICT_ONLY_REMEDIATION_REASON
     ) {
       distinctRounds.add(round.requestId);
     }
   }
-  return distinctRounds.size;
+  return { counted: distinctRounds.size, total: allRounds.size };
 }
 
 function buildRemediationContext(input: {
@@ -1167,8 +1180,10 @@ async function reconcilePullRequestRemediationOnce(
       await applyNeedsHumanLabel(deps, anchor);
       return { action: 'ignored', reason: 'remediation-no-op' };
     }
+    const rounds = countConsecutiveAutoRemediations(runs);
     if (
-      countConsecutiveAutoRemediations(runs) >= MAX_AUTO_PR_REMEDIATION_ROUNDS
+      rounds.counted >= MAX_AUTO_PR_REMEDIATION_ROUNDS ||
+      rounds.total >= MAX_AUTO_PR_REMEDIATION_ROUNDS_TOTAL
     ) {
       logger.warn(
         'agent-lcars: reached %s consecutive automatic PR remediation rounds on %s#%s; stopping automatic dispatch',
