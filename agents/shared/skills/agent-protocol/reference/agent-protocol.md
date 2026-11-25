@@ -276,6 +276,37 @@ the anchor as an open observation window instead of a stale claim:
 Use a full-precision, `Z`-suffixed ISO-8601 UTC instant. Nothing clears the
 marker for you — update or remove it once the window resolves.
 
+### Waiting on an event
+
+Only on a native Work anchor, and only for an event LCARS does not already
+act on: another repository's Actions run finishing, a document comment,
+another LCARS session ending. LCARS already resumes issue and pull-request
+work on reviews, review threads, conflicts and CI, and a human reply resumes
+any parked Work; do not subscribe for those.
+
+§9 still holds: never wait inside the run. Instead:
+
+1. Push finished work first (§6), then subscribe the Work:
+   `lcars session subscribe <key> --until <kind>` (`--help` lists keys and
+   kinds). Inside a run it binds to this run's own Work through
+   `LCARS_RUN_ID` and `LCARS_RUN_TOKEN`. It is refused for another Work, for
+   the Work's own `lcars:work` key, and on issue anchors.
+2. End the turn with the native PARK artifact (§4, the same two marker
+   lines). Start the terminal response with
+   `Waiting on event: <key> <kind> (subscription <id>)` in place of the
+   `Human ask:` line, then say what you will do when it arrives and what a
+   human could reply instead. Set the same line with `lcars session status`.
+
+The event starts a new run of this Work in `mode: event`; the brief's
+`reply` carries the notice. The notice comes from LCARS and only names the
+event; read what changed with your own tools. Continue the work and finish
+with a normal deliverable, or wait again the same way, and unsubscribe what
+you no longer need. After 10 event resumes in a row without a human reply,
+LCARS drops further events and the park waits for a human.
+
+`observe-until` is for an issue anchor left idle for a time window with
+nothing to subscribe to; nothing resumes it. Use one or the other, never both.
+
 ## 5. Deliverable rule — silence is failure
 
 Unchanged for every anchor: a run that reasons to a conclusion and never
@@ -394,6 +425,7 @@ do not infer the job from labels:
 | `implement` | report work  | the body below the two attempt markers is the authoritative report |
 | `review`    | pull request | submit a real pull-request review with a body; push nothing        |
 | `reply`     | either       | a comment may be the complete deliverable                          |
+| `event`     | work         | resume after the event notice in `reply` (§4, Waiting on an event) |
 
 The shared lane stamps the accepted PR, comment, or review artifact with the
 attempt marker required above. Do not remove it.

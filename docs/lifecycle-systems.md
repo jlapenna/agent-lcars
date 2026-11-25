@@ -286,6 +286,44 @@ GitHub read. See
 for the path and `apps/console/src/lib/github-agent-events.ts` for the
 payload-to-kind mapping and the actor rule per kind.
 
+## Event-resume for dispatched Work
+
+A dispatched run of native Work that must continue after an outside event
+subscribes the Work (`lcars session subscribe` with `LCARS_RUN_ID` and
+`LCARS_RUN_TOKEN`, which calls the subscription API with its run token) and
+parks with a `Waiting on event:` line (agent-protocol §4). The subscription's
+target is `{ type: 'work', workId }`, only ever the run's own Work.
+
+The router does not publish a Work target. It hands the rendered notice to
+`Orchestrator.queueEventResume` (`queueEventResume` in
+`libs/orchestrator/src/decide.ts`), which records it on the task's
+`eventResumes` under the task revision:
+
+- A delivery id the Work already accepted is a duplicate and changes
+  nothing; the Work remembers the last 32.
+- With no live run, the write adds an `event-resume/<taskKey>/e<seq>` outbox
+  entry. While a run holds the Work the event only waits, and that run's
+  settlement adds `event-resume/<runId>`. Both are task writes, so an event
+  that arrives while the subscribing run is still finishing is neither lost
+  nor resumed twice.
+- The drain (`admitWorkEventResume`) admits one run for every waiting event
+  with `requestSource: 'event'`, request id `event:e<seq>` of the oldest,
+  `mode: 'event'` and the notices as `eventNotice`, resuming the newest
+  session of the Work's runs when its pipeline can restore one. A run that
+  took the Work first makes admission refuse `task-busy`; its own settlement
+  hands the events on. The request history makes a repeated admission return
+  the first run.
+- `MAX_EVENT_RESUMES` (10) resume runs in a row without a human reply, or
+  `MAX_PENDING_EVENT_RESUMES` (8) waiting events, refuse further events as
+  `event-resume-limit`. A human reply restarts the count. The router removes a
+  subscription whose Work refuses an event (closed, unknown or over the
+  limit).
+
+An event-resume is not a reply: it carries no principal, does not reset or
+count toward PR remediation rounds, and ignores a waiting delivery the same
+way a reply does. The brief gives the notice in its `reply` field with
+`mode: event`, and the direct runner frames it as an event, not a human turn.
+
 ## Code map
 
 | Need                                                | Source                                                                           |
@@ -313,6 +351,7 @@ payload-to-kind mapping and the actor rule per kind.
 | Completion reports success but no outcome comment appears | Outbox drain           | Pending/failed outbox entries from completion or reconcile response  |
 | Subscribed session never hears of a Work state change     | Outbox drain           | `agent-event` outbox gauges and drain failure logs for the entry     |
 | Subscribed session never hears of a GitHub event          | GitHub agent events    | `GitHub agent events processed` logs for the delivery id             |
+| Waiting Work never resumes after its event                | Event-resume           | Router `removed event subscription` warnings, `event-resume` gauges  |
 | Task is silent or appears stuck                           | Reconciliation         | QueueExecutor `maintenance tick` logs and the tick response          |
 | Console Retry fails                                       | GitHub Work admission  | `github-work-admission.ts` and `backend-actions.ts` mutation         |
 
