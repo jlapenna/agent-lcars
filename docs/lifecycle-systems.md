@@ -273,6 +273,19 @@ change. A transition never waits on routing; a routing failure follows the
 ordinary outbox backoff and retirement, visible in the `agent-event` series of
 the outbox gauges.
 
+## GitHub agent events
+
+GitHub App deliveries for fleet repositories become `github:pr`,
+`github:issue` and `github:run` events for subscribed sessions, after
+admission and without affecting it. The webhook routes queue a delivery that
+stands for an event as its own Cloud Task, and
+`/api/control-plane/webhook/events` routes it with one subscription query per
+key and, only for a wanted `checks-finished` or `threads-resolved`, one
+GitHub read. See
+[`github-app-webhook-events.md`](github-app-webhook-events.md#agent-events-from-webhook-deliveries)
+for the path and `apps/console/src/lib/github-agent-events.ts` for the
+payload-to-kind mapping and the actor rule per kind.
+
 ## Code map
 
 | Need                                                | Source                                                                           |
@@ -299,6 +312,7 @@ the outbox gauges.
 | Failed worker has no outcome comment                      | Completion path        | Direct-runner completion logs, then Work API logs                    |
 | Completion reports success but no outcome comment appears | Outbox drain           | Pending/failed outbox entries from completion or reconcile response  |
 | Subscribed session never hears of a Work state change     | Outbox drain           | `agent-event` outbox gauges and drain failure logs for the entry     |
+| Subscribed session never hears of a GitHub event          | GitHub agent events    | `GitHub agent events processed` logs for the delivery id             |
 | Task is silent or appears stuck                           | Reconciliation         | QueueExecutor `maintenance tick` logs and the tick response          |
 | Console Retry fails                                       | GitHub Work admission  | `github-work-admission.ts` and `backend-actions.ts` mutation         |
 

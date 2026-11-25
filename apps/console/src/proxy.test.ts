@@ -20,6 +20,7 @@ const EXPECTED_PUBLIC_ROUTES = [
   '/api/control-plane/linear/webhook',
   '/api/control-plane/linear/process',
   '/api/control-plane/webhook/process',
+  '/api/control-plane/webhook/events',
 ];
 
 // Same reasoning as EXPECTED_PUBLIC_ROUTES above, for the prefix list: a

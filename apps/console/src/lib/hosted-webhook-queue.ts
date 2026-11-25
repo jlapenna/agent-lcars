@@ -187,3 +187,40 @@ export async function enqueueGitHubWebhook(
     throw error;
   }
 }
+
+/**
+ * Queues a GitHub delivery for agent event routing (#3569): the same signed
+ * envelope as admission, on the same queue, to its own route and under its
+ * own task name, so routing retries independently of admission and a
+ * repeated enqueue for one delivery is a duplicate.
+ */
+export async function enqueueGitHubAgentEvents(
+  envelope: Pick<
+    GitHubWebhookEnvelope,
+    'rawBody' | 'deliveryId' | 'eventName' | 'signature'
+  >,
+  queue: WebhookTaskQueue = defaultWebhookTaskQueue,
+): Promise<{ outcome: 'enqueued' | 'duplicate' }> {
+  assertGitHubDeliveryId(envelope.deliveryId);
+  if (!envelope.eventName.trim()) {
+    throw new Error('GitHub webhook event name is missing');
+  }
+  const target = `${required('AUTH_URL').replace(/\/$/u, '')}/api/control-plane/webhook/events`;
+  try {
+    await queue.enqueue({
+      taskId: `github-events-${envelope.deliveryId.toLowerCase()}`,
+      url: target,
+      headers: {
+        'content-type': 'application/json',
+        'x-github-delivery': envelope.deliveryId,
+        'x-github-event': envelope.eventName,
+        'x-hub-signature-256': envelope.signature,
+      },
+      body: envelope.rawBody,
+    });
+    return { outcome: 'enqueued' };
+  } catch (error) {
+    if (isAlreadyExists(error)) return { outcome: 'duplicate' };
+    throw error;
+  }
+}

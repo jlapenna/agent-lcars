@@ -2,15 +2,21 @@ import crypto from 'node:crypto';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { enqueueGitHubWebhook, publishActionsEvent } = vi.hoisted(() => ({
-  enqueueGitHubWebhook: vi.fn(),
-  publishActionsEvent: vi.fn(),
-}));
+const { enqueueGitHubWebhook, publishActionsEvent, queueGithubAgentEvents } =
+  vi.hoisted(() => ({
+    enqueueGitHubWebhook: vi.fn(),
+    publishActionsEvent: vi.fn(),
+    queueGithubAgentEvents: vi.fn(),
+  }));
 
 vi.mock('@/lib/hosted-webhook-queue', () => ({ enqueueGitHubWebhook }));
 vi.mock('@/lib/github-actions-events', () => ({
   GITHUB_ACTIONS_EVENTS: new Set(['workflow_job', 'workflow_run']),
   publishActionsEvent,
+}));
+
+vi.mock('@/lib/github-agent-event-intake', () => ({
+  queueGithubAgentEvents,
 }));
 
 import { GITHUB_WEBHOOK_MAX_BYTES, POST } from './route';
@@ -270,5 +276,29 @@ describe('POST /api/control-plane/webhook GitHub Actions events', () => {
     await POST(webhookRequest(HOME_REPO));
     expect(publishActionsEvent).not.toHaveBeenCalled();
     expect(enqueueGitHubWebhook).toHaveBeenCalled();
+  });
+
+  it('queues a fleet repository’s run for agent events beside the publish', async () => {
+    queueGithubAgentEvents.mockResolvedValue('enqueued');
+    const response = await POST(
+      webhookRequest(HOME_REPO, { 'x-github-event': 'workflow_run' }),
+    );
+    expect(response.status).toBe(202);
+    expect(queueGithubAgentEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryId: 'e29e8f0a-7530-11f0-9f9d-8f1bc3e88820',
+        eventName: 'workflow_run',
+      }),
+      { repository: { full_name: HOME_REPO } },
+    );
+  });
+
+  it('queues no agent events for a repository outside the fleet', async () => {
+    await POST(
+      webhookRequest('jlapenna/not-a-control-plane-repo', {
+        'x-github-event': 'workflow_run',
+      }),
+    );
+    expect(queueGithubAgentEvents).not.toHaveBeenCalled();
   });
 });

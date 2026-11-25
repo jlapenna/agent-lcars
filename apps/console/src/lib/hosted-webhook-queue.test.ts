@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  enqueueGitHubAgentEvents,
   enqueueGitHubWebhook,
   type GitHubWebhookEnvelope,
   type WebhookTaskQueue,
@@ -95,5 +96,36 @@ describe('hosted GitHub webhook queue', () => {
     };
 
     await expect(enqueueGitHubWebhook(envelope, queue)).rejects.toBe(error);
+  });
+});
+
+describe('hosted GitHub agent event queue', () => {
+  it('queues the same envelope to the events route under its own task name', async () => {
+    const enqueue = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      enqueueGitHubAgentEvents(envelope, { enqueue }),
+    ).resolves.toEqual({ outcome: 'enqueued' });
+    expect(enqueue).toHaveBeenCalledWith({
+      taskId: `github-events-${envelope.deliveryId}`,
+      url: 'https://agent-console.example.test/api/control-plane/webhook/events',
+      headers: {
+        'content-type': 'application/json',
+        'x-github-delivery': envelope.deliveryId,
+        'x-github-event': 'issues',
+        'x-hub-signature-256': envelope.signature,
+      },
+      body: envelope.rawBody,
+    });
+  });
+
+  it('treats an existing task for the delivery as a duplicate', async () => {
+    const enqueue = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error(), { code: 6 }));
+
+    await expect(
+      enqueueGitHubAgentEvents(envelope, { enqueue }),
+    ).resolves.toEqual({ outcome: 'duplicate' });
   });
 });

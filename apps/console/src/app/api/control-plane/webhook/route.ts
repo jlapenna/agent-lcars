@@ -8,6 +8,7 @@ import {
   GITHUB_ACTIONS_EVENTS,
   publishActionsEvent,
 } from '@/lib/github-actions-events';
+import { queueGithubAgentEvents } from '@/lib/github-agent-event-intake';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
 import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
 
@@ -96,12 +97,23 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Every repository the App is installed on is forwarded; the exporter
     // keeps only the repositories it is configured to watch.
     try {
-      const result = await publishActionsEvent({
-        rawBody,
-        deliveryId,
-        eventName,
-        repository,
-      });
+      const [result] = await Promise.all([
+        publishActionsEvent({ rawBody, deliveryId, eventName, repository }),
+        // A completed run in a fleet repository is also an agent event
+        // (#3569). Queued beside the publish, so it adds no wait, and it
+        // never throws, so it cannot fail the delivery.
+        isControlPlaneRepository(repository)
+          ? queueGithubAgentEvents(
+              {
+                rawBody,
+                deliveryId,
+                eventName,
+                signature: header(request, 'x-hub-signature-256'),
+              },
+              payload,
+            )
+          : undefined,
+      ]);
       return NextResponse.json(result, {
         status: 202,
         headers: { 'Cache-Control': 'no-store' },
