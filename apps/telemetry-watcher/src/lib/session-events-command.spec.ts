@@ -1,3 +1,4 @@
+import { ORPCError } from '@orpc/client';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LocalCallResult, LocalRequest } from './events/local-protocol';
@@ -243,5 +244,139 @@ describe('help', () => {
       '[lcars-event] github:pr:jlapenna/homelab#3827 review by jlapenna',
     );
     expect(help).toContain('when the session is idle');
+  });
+});
+
+describe('inside a dispatched run (#3570)', () => {
+  const RUN_ENV = {
+    // A run also carries a provider session id; the run token wins.
+    CLAUDE_CODE_SESSION_ID: 's1',
+    LCARS_RUN_ID: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+    LCARS_RUN_TOKEN: 'run-token-1',
+    LCARS_CONSOLE_URL: 'https://lcars.test',
+  };
+  const WORK_VIEW = {
+    ...VIEW,
+    key: 'github:run:jlapenna/agent-lcars/42',
+    source: 'github:run' as const,
+    kinds: undefined,
+    until: 'completed',
+    target: { type: 'work' as const, workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
+  };
+
+  function inRun(argv: string[], status: number, body: unknown) {
+    const out: string[] = [];
+    const err: string[] = [];
+    const call = vi.fn();
+    const fetchImpl = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    const exit = executeSessionEventsCommand(argv, {
+      env: RUN_ENV,
+      stdout: (line) => out.push(line),
+      stderr: (line) => err.push(line),
+      call,
+      fetch: fetchImpl as unknown as typeof fetch,
+    });
+    return {
+      exit,
+      out: () => out.join('\n'),
+      err: () => err.join('\n'),
+      call,
+      request: async () => {
+        const [input, init] = fetchImpl.mock.calls[0]!;
+        const request = new Request(input, init);
+        return {
+          method: request.method,
+          url: request.url,
+          authorization: request.headers.get('authorization'),
+          body: request.method === 'GET' ? undefined : await request.json(),
+        };
+      },
+    };
+  }
+
+  it('subscribes the run’s Work through LCARS with the run token, not the delivery agent', async () => {
+    const r = inRun(
+      [
+        'subscribe',
+        'github:run:jlapenna/agent-lcars/42',
+        '--until',
+        'completed',
+      ],
+      201,
+      WORK_VIEW,
+    );
+    expect(await r.exit).toBe(0);
+    expect(r.call).not.toHaveBeenCalled();
+    expect(await r.request()).toEqual({
+      method: 'POST',
+      url: 'https://lcars.test/api/work/v1/events/subscriptions',
+      authorization: 'Bearer run-token-1',
+      body: {
+        runId: RUN_ENV.LCARS_RUN_ID,
+        key: 'github:run:jlapenna/agent-lcars/42',
+        until: 'completed',
+      },
+    });
+    expect(r.out()).toContain(
+      `Subscribed ${VIEW.id} to github:run:jlapenna/agent-lcars/42 for Work 01J5Z3K9QX8F0N2B4V6C8D1E3G`,
+    );
+    expect(r.out()).toContain('end your turn with the waiting deliverable');
+  });
+
+  it('lists and removes the Work’s subscriptions', async () => {
+    const listed = inRun(['subscriptions'], 200, {
+      subscriptions: [WORK_VIEW],
+    });
+    expect(await listed.exit).toBe(0);
+    expect(await listed.request()).toMatchObject({
+      method: 'GET',
+      url: `https://lcars.test/api/work/v1/events/subscriptions?runId=${encodeURIComponent(RUN_ENV.LCARS_RUN_ID)}`,
+    });
+    expect(listed.out()).toContain('work=01J5Z3K9QX8F0N2B4V6C8D1E3G');
+
+    const removed = inRun(['unsubscribe', VIEW.id], 200, {
+      id: VIEW.id,
+      deleted: true,
+    });
+    expect(await removed.exit).toBe(0);
+    expect(await removed.request()).toMatchObject({
+      method: 'DELETE',
+      url: `https://lcars.test/api/work/v1/events/subscriptions/${VIEW.id}`,
+      body: { runId: RUN_ENV.LCARS_RUN_ID },
+    });
+    expect(removed.out()).toBe(`Unsubscribed ${VIEW.id}`);
+  });
+
+  it('reports a refusal from LCARS', async () => {
+    const forbidden = inRun(
+      ['subscribe', 'lcars:session:x'],
+      403,
+      new ORPCError('FORBIDDEN', {
+        message: 'A run may subscribe only its own Work',
+      }).toJSON(),
+    );
+    expect(await forbidden.exit).toBe(1);
+    expect(forbidden.err()).toContain('A run may subscribe only its own Work');
+
+    const expired = inRun(
+      ['subscriptions'],
+      401,
+      new ORPCError('UNAUTHORIZED', {
+        message: 'Invalid or expired run token',
+      }).toJSON(),
+    );
+    expect(await expired.exit).toBe(1);
+    expect(expired.err()).toContain('the run may have ended');
+  });
+
+  it('refuses --all in a run', async () => {
+    const r = inRun(['subscriptions', '--all'], 200, { subscriptions: [] });
+    expect(await r.exit).toBe(2);
   });
 });

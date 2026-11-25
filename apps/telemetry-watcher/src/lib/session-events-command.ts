@@ -2,12 +2,16 @@ import { parseArgs } from 'node:util';
 
 import {
   AGENT_EVENT_SOURCES,
+  agentEventsContract,
   type AgentEventSource,
   agentEventSubscriptionIdSchema,
   type AgentEventSubscriptionView,
   renderAgentEventNotice,
   validateSubscriptionRequest,
 } from '@agent-lcars/work';
+import { createORPCClient, ORPCError } from '@orpc/client';
+import type { RouterContractClient } from '@orpc/contract';
+import { OpenAPILink } from '@orpc/openapi/fetch';
 
 import {
   callEventsAgent,
@@ -23,6 +27,11 @@ import { resolveSessionId } from './session-id';
  * asks this host's delivery agent to route events to it. The agent forwards
  * the request to LCARS as the host's own identity, and LCARS accepts it only
  * for a session its telemetry reports live on that host.
+ *
+ * Inside a dispatched run (`LCARS_RUN_ID` and `LCARS_RUN_TOKEN` set, #3570)
+ * there is no delivery agent: the command calls LCARS directly with the run
+ * token, and the subscription belongs to the run's Work. A matching event
+ * starts a new run of that Work with the notice as its input.
  */
 export const SESSION_EVENT_SUBCOMMANDS = [
   'subscribe',
@@ -99,7 +108,13 @@ ${exampleNotice()}
 
 Subscribing again with the same key, kinds and --until returns the same
 subscription. The session is the one named by LCARS_SESSION_ID,
-CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID or ANTIGRAVITY_CONVERSATION_ID.`;
+CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID or ANTIGRAVITY_CONVERSATION_ID.
+
+Inside a dispatched LCARS run (LCARS_RUN_ID and LCARS_RUN_TOKEN set), the
+subscription belongs to the run's native Work instead: the run ends its turn
+with a waiting deliverable (agent-protocol "Waiting on an event"), and a
+matching event starts a new run of the Work with the notice as its input.
+subscriptions and unsubscribe then see that Work's subscriptions.`;
 }
 
 export interface SessionEventsCommandDeps {
@@ -110,6 +125,8 @@ export interface SessionEventsCommandDeps {
     socketPath: string,
     request: LocalRequest,
   ) => Promise<LocalCallResult>;
+  /** The Work API's fetch, for a dispatched run calling LCARS directly. */
+  readonly fetch?: typeof fetch;
 }
 
 export function defaultSessionEventsCommandDeps(
@@ -120,7 +137,23 @@ export function defaultSessionEventsCommandDeps(
     stdout: (line) => process.stdout.write(`${line}\n`),
     stderr: (line) => process.stderr.write(`${line}\n`),
     call: (socketPath, request) => callEventsAgent(socketPath, request),
+    fetch: globalThis.fetch,
   };
+}
+
+const DEFAULT_CONSOLE_ORIGIN = 'https://lcars.jlapenna.net';
+/** A Work API call from a run must not hold the agent's turn for long. */
+const RUN_CALL_TIMEOUT_MS = 30_000;
+
+type AgentEventsClient = RouterContractClient<typeof agentEventsContract>;
+
+/** The run a command acts for, when it runs inside a dispatched run. */
+function dispatchedRun(
+  env: NodeJS.ProcessEnv,
+): { runId: string; token: string } | undefined {
+  const runId = env['LCARS_RUN_ID'];
+  const token = env['LCARS_RUN_TOKEN'];
+  return runId && token ? { runId, token } : undefined;
 }
 
 const USAGE_EXIT = 2;
@@ -225,6 +258,8 @@ function subscriptionLine(subscription: AgentEventSubscriptionView): string {
   if (subscription.until) parts.push(`until=${subscription.until}`);
   if (subscription.target.type === 'session') {
     parts.push(`session=${subscription.target.sessionId}`);
+  } else {
+    parts.push(`work=${subscription.target.workId}`);
   }
   parts.push(`since ${subscription.createdAt}`);
   return parts.join('  ');
@@ -277,6 +312,9 @@ export async function executeSessionEventsCommand(
     deps.stderr(`lcars session ${parsed.command}: ${message}`);
     return code;
   };
+
+  const run = dispatchedRun(deps.env);
+  if (run !== undefined) return executeForRun(parsed, run, deps, fail);
 
   let request: LocalRequest;
   if (parsed.command === 'unsubscribe') {
@@ -366,4 +404,106 @@ export async function executeSessionEventsCommand(
     deps.stdout(`Unsubscribed ${response.deleted}`);
   }
   return 0;
+}
+
+/** The run-token path (#3570): the Work API directly, no delivery agent. */
+async function executeForRun(
+  parsed: Exclude<Parsed, { command: 'help' }>,
+  run: { runId: string; token: string },
+  deps: SessionEventsCommandDeps,
+  fail: (message: string, code?: number) => number,
+): Promise<number> {
+  const fetchImpl = deps.fetch ?? globalThis.fetch;
+  const client: AgentEventsClient = createORPCClient(
+    new OpenAPILink(agentEventsContract, {
+      origin:
+        deps.env['LCARS_CONSOLE_URL'] ??
+        deps.env['LCARS_URL'] ??
+        DEFAULT_CONSOLE_ORIGIN,
+      url: '/api/work/v1',
+      headers: () => ({ authorization: `Bearer ${run.token}` }),
+      fetch: fetchImpl,
+    }),
+  );
+  const options = { signal: AbortSignal.timeout(RUN_CALL_TIMEOUT_MS) };
+  try {
+    switch (parsed.command) {
+      case 'subscribe': {
+        const validated = validateSubscriptionRequest({
+          key: parsed.key,
+          ...(parsed.kinds && { kinds: parsed.kinds }),
+          ...(parsed.until !== undefined && { until: parsed.until }),
+        });
+        if (!validated.ok) return fail(validated.error, USAGE_EXIT);
+        const subscription = await client.subscribe(
+          {
+            runId: run.runId,
+            key: validated.value.key,
+            ...(validated.value.kinds && {
+              kinds: [...validated.value.kinds],
+            }),
+            ...(validated.value.until !== undefined && {
+              until: validated.value.until,
+            }),
+          },
+          options,
+        );
+        if (parsed.json) {
+          deps.stdout(JSON.stringify(subscription));
+          return 0;
+        }
+        const workId =
+          subscription.target.type === 'work' ? subscription.target.workId : '';
+        deps.stdout(
+          `Subscribed ${subscription.id} to ${subscription.key} for Work ${workId}`,
+        );
+        deps.stdout(
+          `  kinds ${subscription.kinds?.join(', ') ?? 'all'}${subscription.until ? `; ends after ${subscription.until}` : ''}`,
+        );
+        deps.stdout(
+          '  A matching event starts a new run of this Work with the notice as its input. Do not wait for it: end your turn with the waiting deliverable the agent protocol describes.',
+        );
+        deps.stdout(
+          `  Stop with: lcars session unsubscribe ${subscription.id}`,
+        );
+        return 0;
+      }
+      case 'subscriptions': {
+        if (parsed.all)
+          return fail(
+            '--all lists a host’s sessions; a dispatched run lists its own Work’s subscriptions',
+            USAGE_EXIT,
+          );
+        const { subscriptions } = await client.list(
+          { runId: run.runId },
+          options,
+        );
+        if (parsed.json) deps.stdout(JSON.stringify({ subscriptions }));
+        else if (subscriptions.length === 0) deps.stdout('No subscriptions.');
+        else for (const s of subscriptions) deps.stdout(subscriptionLine(s));
+        return 0;
+      }
+      case 'unsubscribe': {
+        if (!agentEventSubscriptionIdSchema.safeParse(parsed.id).success)
+          return fail(`${parsed.id} is not a subscription id`, USAGE_EXIT);
+        const removed = await client.unsubscribe(
+          { id: parsed.id, runId: run.runId },
+          options,
+        );
+        if (parsed.json) deps.stdout(JSON.stringify(removed));
+        else deps.stdout(`Unsubscribed ${removed.id}`);
+        return 0;
+      }
+    }
+  } catch (error) {
+    if (error instanceof ORPCError)
+      return fail(
+        error.code === 'UNAUTHORIZED'
+          ? `LCARS refused this run's token (${error.message}); the run may have ended or its lease expired`
+          : error.message,
+      );
+    return fail(
+      `could not reach LCARS: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
