@@ -1019,6 +1019,8 @@ describe('automatic pull-request review & conflict remediation', () => {
         'Qualify the dependency update',
       );
       expect(run?.params?.['context']).toContain('gh pr ready');
+      expect(run?.params?.['context']).toContain('gh pr close');
+      expect(run?.params?.['context']).toContain('agent-result:v1:no-op');
       await f.orchestrator.report(`${REPO}#4040/r1`, { ok: true });
 
       expect(
