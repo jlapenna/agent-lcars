@@ -1,3 +1,4 @@
+import { taskKey } from '@agent-lcars/orchestrator';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getAuthoritativeQueueItems } from './authoritative-queue';
@@ -9,11 +10,24 @@ const { getWatchedRepos, listOpenGithubAnchorProjectionPage, listRuns } =
     getWatchedRepos: vi.fn(() => [{ owner: 'jlapenna', name: 'agent-lcars' }]),
   }));
 
-vi.mock('./orchestrator-runtime', () => ({
-  createOrchestratorRuntime: () => ({
-    store: { listOpenGithubAnchorProjectionPage, listRuns },
-  }),
-}));
+vi.mock('./orchestrator-runtime', () => {
+  return {
+    createOrchestratorRuntime: () => ({
+      store: {
+        listOpenGithubAnchorProjectionPage,
+        listRuns,
+        // The queue reads every needs-human item's runs in one batch; this
+        // fake answers it from the per-task `listRuns` mock.
+        listRunsForTasks: async (ids: Parameters<typeof taskKey>[0][]) =>
+          new Map(
+            await Promise.all(
+              ids.map(async (id) => [taskKey(id), await listRuns(id)] as const),
+            ),
+          ),
+      },
+    }),
+  };
+});
 
 vi.mock('./github-client', () => ({ getWatchedRepos }));
 

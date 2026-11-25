@@ -7,6 +7,7 @@ import {
   isWorkAnchor,
   LIFECYCLE_METRICS_WINDOW_SECONDS,
   lifecycleMetricSnapshot,
+  taskKey,
 } from '@agent-lcars/orchestrator';
 import { isClaudeSubagentSessionId } from '@agent-lcars/telemetry';
 import { workRepository } from '@agent-lcars/work';
@@ -389,14 +390,16 @@ export const workRouter = os.router({
     // Tasks are persisted in the current strict shape. A corrupt record is
     // a data-integrity failure, not a reason to silently omit work from a
     // control-plane response.
-    const unjoined = await Promise.all(
-      native.map(async ({ workId, task }) =>
-        toItemView({
-          workId,
-          task,
-          runs: await context.runtime.store.listRuns({ workId }),
-        }),
-      ),
+    // One batched read of the page's runs, not a query per task.
+    const runsByTask = await context.runtime.store.listRunsForTasks(
+      native.map(({ workId }) => ({ workId })),
+    );
+    const unjoined = native.map(({ workId, task }) =>
+      toItemView({
+        workId,
+        task,
+        runs: runsByTask.get(taskKey({ workId })) ?? [],
+      }),
     );
     const page = unjoined
       .filter((item) => input.state === undefined || item.state === input.state)
