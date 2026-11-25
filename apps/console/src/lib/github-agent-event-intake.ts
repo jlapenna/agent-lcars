@@ -61,6 +61,7 @@ const checkRunsPage = z.object({
   check_runs: z.array(
     z.object({
       id: z.number().int().positive(),
+      name: z.string(),
       status: z.string(),
       conclusion: z.string().nullable(),
     }),
