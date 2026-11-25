@@ -26,6 +26,7 @@ import {
   isRefusal,
   type Refusal,
 } from './decide';
+import { taskDerivedFrom } from './item-state';
 import {
   type LifecycleMetricRead,
   type LifecycleMetricRecords,
@@ -49,6 +50,8 @@ import {
   runSchema,
   runStateSchema,
   settleOutboxEntry,
+  type Task,
+  type TaskDerived,
   taskDocumentSchema,
   type TaskId,
   taskIdSchema,
@@ -163,6 +166,20 @@ function isAlreadyExists(error: unknown): boolean {
  * `encodeURIComponent`-ed before use as a document id, consistently on both
  * write and read.
  */
+/** The stored item state for a task write: derived from the task's runs as
+ * they will be once `written` (each replacing its stored copy by run id)
+ * commits, or absent when the stored runs could not all be read. */
+function storedDerived(
+  task: Task,
+  stored: readonly Run[] | undefined,
+  written: readonly (Run | undefined)[],
+): { derived?: TaskDerived } {
+  if (stored === undefined) return {};
+  const runs = new Map(stored.map((run) => [run.runId, run]));
+  for (const run of written) if (run !== undefined) runs.set(run.runId, run);
+  return { derived: taskDerivedFrom(task, [...runs.values()]) };
+}
+
 export class FirestoreStore implements OrchestratorStore {
   readonly #firestore: Firestore;
   readonly #tasks: CollectionReference;
@@ -623,6 +640,9 @@ export class FirestoreStore implements OrchestratorStore {
         requestId,
         previousRun,
       });
+      const storedRuns = isRefusal(outcome)
+        ? undefined
+        : await this.#taskRunsIn(tx, outcome.task.task);
       const cooldownWrites = isRefusal(outcome)
         ? []
         : await this.#prepareProviderCooldownWrites(tx, [
@@ -644,6 +664,10 @@ export class FirestoreStore implements OrchestratorStore {
       const nextTaskDoc: z.infer<typeof taskDocSchema> = {
         task: outcome.task,
         revision: (task?.revision ?? 0) + 1,
+        ...storedDerived(outcome.task, storedRuns, [
+          outcome.run,
+          ...(outcome.additionalRuns ?? []),
+        ]),
       };
       tx.set(taskRef, nextTaskDoc);
       if (outcome.run !== undefined) {
@@ -678,6 +702,7 @@ export class FirestoreStore implements OrchestratorStore {
       if (currentRevision !== expectedRevision) {
         throw new StoreConflict(decision.task.task);
       }
+      const storedRuns = await this.#taskRunsIn(tx, decision.task.task);
       const cooldownWrites = await this.#prepareProviderCooldownWrites(tx, [
         decision.run,
         ...(decision.additionalRuns ?? []),
@@ -686,6 +711,10 @@ export class FirestoreStore implements OrchestratorStore {
       const nextTaskDoc: z.infer<typeof taskDocSchema> = {
         task: decision.task,
         revision: (expectedRevision ?? 0) + 1,
+        ...storedDerived(decision.task, storedRuns, [
+          decision.run,
+          ...(decision.additionalRuns ?? []),
+        ]),
       };
       tx.set(taskRef, nextTaskDoc);
 
@@ -776,6 +805,7 @@ export class FirestoreStore implements OrchestratorStore {
       if (taskRef === undefined) {
         throw new Error('run transaction decision has no task reference');
       }
+      const storedRuns = await this.#taskRunsIn(tx, outcome.task.task);
       const cooldownWrites = await this.#prepareProviderCooldownWrites(tx, [
         outcome.run,
         ...(outcome.additionalRuns ?? []),
@@ -783,6 +813,10 @@ export class FirestoreStore implements OrchestratorStore {
       tx.set(taskRef, {
         task: outcome.task,
         revision: (task?.revision ?? 0) + 1,
+        ...storedDerived(outcome.task, storedRuns, [
+          outcome.run,
+          ...(outcome.additionalRuns ?? []),
+        ]),
       });
       if (outcome.run !== undefined) {
         tx.set(this.#runRef(outcome.run.runId), outcome.run);
@@ -1560,6 +1594,22 @@ export class FirestoreStore implements OrchestratorStore {
 
   /** Equality-only query shape, shared by the public history read and the
    * request transaction so durable idempotency never needs a new index. */
+  /** Every run of a task, read inside `tx` so the stored item state is
+   * derived from the same snapshot the transaction writes over. Undefined
+   * when any of them does not parse: the task is then written without a
+   * stored state (readers derive it) rather than one derived from part of
+   * its runs, and an unrelated malformed run cannot fail the transaction. */
+  async #taskRunsIn(tx: Transaction, id: TaskId): Promise<Run[] | undefined> {
+    const snapshot = await tx.get(this.#runsForTask(id));
+    const runs: Run[] = [];
+    for (const doc of snapshot.docs) {
+      const parsed = runSchema.safeParse(doc.data());
+      if (!parsed.success) return undefined;
+      runs.push(parsed.data);
+    }
+    return runs;
+  }
+
   #runsForTask(id: TaskId) {
     return isWorkAnchor(id)
       ? this.#runs.where('task.workId', '==', id.workId)

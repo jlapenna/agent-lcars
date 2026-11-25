@@ -6,6 +6,7 @@ export {
   type FirestoreScheduleStoreOptions,
 } from './firestore-schedule-store';
 export { FirestoreStore, type FirestoreStoreOptions } from './firestore-store';
+export * from './item-state';
 export * from './lifecycle-metrics';
 export { MemoryScheduleStore } from './memory-schedule-store';
 export { MemoryStore } from './memory-store';

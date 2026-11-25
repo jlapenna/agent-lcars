@@ -4,7 +4,7 @@ import {
   runEvidenceSchema,
   runMessageBytes,
 } from '@agent-lcars/dispatch-contracts';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   changeCredentialOperation,
@@ -21,6 +21,7 @@ import {
   requestRun,
   runStartDeadlineAt,
 } from './decide';
+import { taskDerivedFrom } from './item-state';
 import { lifecycleMetricSnapshot } from './lifecycle-metrics';
 import {
   type LeasedOutboxEntry,
@@ -97,8 +98,28 @@ function onlyClaim(entries: readonly LeasedOutboxEntry[]): LeasedOutboxEntry {
  */
 export function runOrchestratorStoreContract(
   name: string,
-  makeStore: () => OrchestratorStore | Promise<OrchestratorStore>,
+  makeStoreUnchecked: () => OrchestratorStore | Promise<OrchestratorStore>,
 ): void {
+  // Every store a test creates is checked after it for stored item-state
+  // drift (#3566): whatever the test did, each task's stored `derived` must
+  // equal the state derived from the task and its current runs.
+  const created: OrchestratorStore[] = [];
+  const makeStore = async () => {
+    const store = await makeStoreUnchecked();
+    created.push(store);
+    return store;
+  };
+  afterEach(async () => {
+    for (const store of created.splice(0)) {
+      for (const versioned of await store.listTasks(1_000)) {
+        const runs = await store.listRuns(versioned.task.task);
+        expect(
+          versioned.derived,
+          `stored item state of ${JSON.stringify(versioned.task.task)}`,
+        ).toEqual(taskDerivedFrom(versioned.task, runs));
+      }
+    }
+  });
   describe(`OrchestratorStore contract: ${name}`, () => {
     it('binds a source to one time-ordered Work identity under concurrent admission', async () => {
       const store = await makeStore();

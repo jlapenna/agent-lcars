@@ -4,6 +4,7 @@ import {
   isRefusal,
   type Refusal,
 } from './decide';
+import { taskDerivedFrom } from './item-state';
 import {
   type LifecycleMetricRead,
   type LifecycleMetricRecords,
@@ -437,10 +438,6 @@ export class MemoryStore implements OrchestratorStore {
     if (current?.revision !== expectedRevision) {
       throw new StoreConflict(decision.task.task);
     }
-    this.#tasks.set(key, {
-      task: structuredClone(decision.task),
-      revision: (expectedRevision ?? 0) + 1,
-    });
     if (decision.run !== undefined) {
       this.#runs.set(decision.run.runId, structuredClone(decision.run));
       this.#requestRuns.set(
@@ -459,6 +456,15 @@ export class MemoryStore implements OrchestratorStore {
         run.runId,
       );
     }
+    // After the runs, so the stored item state reflects them (#3566).
+    this.#tasks.set(key, {
+      task: structuredClone(decision.task),
+      revision: (expectedRevision ?? 0) + 1,
+      derived: taskDerivedFrom(
+        decision.task,
+        [...this.#runs.values()].filter((run) => taskKey(run.task) === key),
+      ),
+    });
     for (const run of [decision.run, ...(decision.additionalRuns ?? [])]) {
       if (run === undefined) continue;
       const cooldown = providerCooldownForRun(run);
