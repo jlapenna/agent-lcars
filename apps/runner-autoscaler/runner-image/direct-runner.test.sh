@@ -2511,6 +2511,26 @@ jq -e '.message | contains("Which database should I use?")' < <(tail -n1 "$COMPL
 
 echo "scenario reply-prompt: OK"
 
+# --- Scenario 1f: an event-resume round (#3570) gets the event notice as
+# its prompt, resuming the session that subscribed -------------------------
+export FAKE_MODE=event
+export FAKE_REPLY='[lcars-event] github:run:octo/example/42 completed'
+run_scenario event-prompt
+unset FAKE_MODE FAKE_REPLY
+
+[ "$rc" -eq 0 ] || fail "event-prompt: expected exit 0, got $rc"
+grep -q -- '--resume sess_1' "$CLAUDE_ARGS_LOG" 2>/dev/null ||
+  fail "event-prompt: claude was not passed --resume sess_1 ($(cat "$CLAUDE_ARGS_LOG" 2>/dev/null))"
+grep -q 'An event you subscribed to before ending your last turn arrived:' "$CLAUDE_ARGS_LOG" 2>/dev/null ||
+  fail "event-prompt: prompt did not carry the event-round framing ($(cat "$CLAUDE_ARGS_LOG" 2>/dev/null))"
+grep -q 'github:run:octo/example/42 completed' "$CLAUDE_ARGS_LOG" 2>/dev/null ||
+  fail "event-prompt: prompt did not carry the notice ($(cat "$CLAUDE_ARGS_LOG" 2>/dev/null))"
+if grep -q 'A human replied on' "$CLAUDE_ARGS_LOG" 2>/dev/null; then
+  fail "event-prompt: an event round was framed as a human reply ($(cat "$CLAUDE_ARGS_LOG"))"
+fi
+
+echo "scenario event-prompt: OK"
+
 # --- Scenario 2: no-deliverable ---------------------------------------------
 # The PR-marker lookup gh api call finds nothing, so the native verifier's
 # own gate fails closed. direct-runner.sh must still POST /complete (with
