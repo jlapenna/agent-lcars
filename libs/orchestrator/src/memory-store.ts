@@ -648,6 +648,18 @@ export class MemoryStore implements OrchestratorStore {
     };
   }
 
+  async listGithubAnchorsMergedSince(
+    since: string,
+  ): Promise<GithubAnchorProjection['anchor'][]> {
+    return structuredClone(
+      [...this.#githubAnchorProjections.values()].flatMap(({ projection }) =>
+        projection?.mergedAt != null && projection.mergedAt >= since
+          ? [projection.anchor]
+          : [],
+      ),
+    );
+  }
+
   #sortedOpenGithubAnchorProjections(): GithubAnchorProjection[] {
     return structuredClone(
       [...this.#githubAnchorProjections.values()]
