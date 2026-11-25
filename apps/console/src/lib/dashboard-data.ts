@@ -3,6 +3,7 @@ import { cache } from 'react';
 import { type ActionItemsResult } from './action-items';
 import { type AgentActivity, getAgentActivity } from './agent-activity';
 import { getAuthoritativeQueueItems } from './authoritative-queue';
+import { shareInFlight } from './in-flight';
 
 /**
  * The authoritative queue and agent activity that Bridge, Inbox, Agents and
@@ -15,7 +16,8 @@ import { getAuthoritativeQueueItems } from './authoritative-queue';
  * shares one read between the page and its components within a render. The
  * frame's readouts and inbox badge load in a separate request (a Route
  * Handler, where `cache` does not share), so `loadShellReadouts` passes one
- * activity read to the inbox snapshot explicitly.
+ * activity read to the inbox snapshot explicitly, and concurrent requests
+ * share a read still in flight (in-flight.ts).
  */
 
 /** Wall-clock time the underlying read ran. The header's "Data as of" label
@@ -27,17 +29,19 @@ export interface Fetched<T> {
 }
 
 export const getCachedQueueItems = cache(
-  async (): Promise<Fetched<ActionItemsResult>> => {
-    const fetchedAt = new Date().toISOString();
-    return { data: await getAuthoritativeQueueItems(), fetchedAt };
-  },
+  (): Promise<Fetched<ActionItemsResult>> =>
+    shareInFlight('authoritative-queue', async () => {
+      const fetchedAt = new Date().toISOString();
+      return { data: await getAuthoritativeQueueItems(), fetchedAt };
+    }),
 );
 
 export const getCachedAgentActivity = cache(
-  async (): Promise<Fetched<AgentActivity>> => {
-    const fetchedAt = new Date().toISOString();
-    return { data: await getAgentActivity(), fetchedAt };
-  },
+  (): Promise<Fetched<AgentActivity>> =>
+    shareInFlight('agent-activity', async () => {
+      const fetchedAt = new Date().toISOString();
+      return { data: await getAgentActivity(), fetchedAt };
+    }),
 );
 
 /** The age the page should report, given every source it rendered from: the
