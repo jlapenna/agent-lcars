@@ -48,11 +48,9 @@ import {
   type WorkRevision,
   workRevisionSchema,
 } from './model';
+import { providerIsCoolingDown } from './provider-cooldown';
 import {
-  providerCooldownForRun,
-  providerIsCoolingDown,
-} from './provider-cooldown';
-import {
+  isFallbackFailure,
   reportResultWithFallback,
   rerouteQueuedRun,
   selectFallbackPipeline,
@@ -475,12 +473,12 @@ export class Orchestrator {
             task.task.activeRunId === run.runId &&
             (run.state === 'pending' || run.state === 'running') &&
             run.providerFallback !== undefined &&
-            providerCooldownForRun({
+            isFallbackFailure({
               ...run,
               state: 'finished',
               result,
               updatedAt: this.clock.now(),
-            }) !== undefined &&
+            }) &&
             selectFallbackPipeline(
               run,
               this.fallbackAuthority?.allowedPipelines(task.task, run) ?? [],
@@ -542,12 +540,12 @@ export class Orchestrator {
               run !== undefined &&
               task.task.activeRunId === run.runId &&
               run.credentialPendingResult !== undefined &&
-              providerCooldownForRun({
+              isFallbackFailure({
                 ...run,
                 state: 'finished',
                 result: run.credentialPendingResult.result,
                 updatedAt: input.now(),
-              }) !== undefined &&
+              }) &&
               selectFallbackPipeline(
                 run,
                 authority.allowedPipelines(task.task, run),
