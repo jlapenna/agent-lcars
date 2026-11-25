@@ -86,6 +86,11 @@ export interface OrchestratorRouteDeps {
    * settles) or a closed item's reopen. The workflow applies whatever state
    * it then reads. Never rejects. */
   expireItemSessions?: (workId: string) => Promise<void>;
+  /** Runs the repository's Agent PR Auto-Merge sweep (`agent-automerge.yml`)
+   * on its default branch, so an approval arms the PR now instead of at the
+   * next push, CI completion or daily run. The workflow decides what to arm.
+   * May reject; the caller logs and continues. */
+  reconcileAutomerge?: (repo: string, ref: string) => Promise<void>;
   /** Exact GitHub lifecycle read that fences a close delivery against a
    * reopen. A close webhook that is dropped entirely needs no sweep: the
    * claim route repeats this read before a closed anchor's queued
@@ -271,6 +276,54 @@ async function wakeDeliveryMonitors(
   if (woken > 0) await deps.drain(Math.max(10, woken * 2));
 }
 
+const approvalSchema = z.object({
+  action: z.literal('submitted'),
+  repository: z.object({
+    full_name: z.string().min(1),
+    default_branch: z.string().min(1),
+  }),
+  review: z.object({ state: z.literal('approved') }),
+  pull_request: z.object({
+    draft: z.boolean().optional(),
+    head: z.object({
+      repo: z.object({ full_name: z.string().min(1) }).nullable(),
+    }),
+  }),
+});
+
+/** An approval is the request to land a pull request (jlapenna/agent-lcars#3508).
+ * Nothing else wakes the auto-merge sweep when one arrives: CI usually finished
+ * before the review did, so an approved PR waited for the next push to the
+ * base branch or the daily run. Forks and drafts never reach the sweep's arm. */
+async function reconcileAutomergeOnApproval(
+  deps: OrchestratorRouteDeps,
+  input: { event: string; deliveryId: string; payload: unknown },
+): Promise<void> {
+  if (
+    input.event !== 'pull_request_review' ||
+    deps.reconcileAutomerge === undefined
+  )
+    return;
+  const parsed = approvalSchema.safeParse(input.payload);
+  if (!parsed.success) return;
+  const { repository, pull_request: pr } = parsed.data;
+  if (pr.draft === true || pr.head.repo?.full_name !== repository.full_name)
+    return;
+  try {
+    await deps.reconcileAutomerge(
+      repository.full_name,
+      repository.default_branch,
+    );
+  } catch (error) {
+    logger.warn(
+      'agent-lcars: auto-merge sweep dispatch failed for %s (%s); the next push, CI completion or daily run arms it:',
+      repository.full_name,
+      input.deliveryId,
+      error,
+    );
+  }
+}
+
 const prRemediationTriggerSchema = z.object({
   action: z.string().optional(),
   repository: z.object({ full_name: z.string().min(1) }),
@@ -371,6 +424,7 @@ export async function handleWebhookDelivery(
         error,
       );
     }
+    await reconcileAutomergeOnApproval(deps, input);
     const interpreted = interpretDelivery(input);
     if (interpreted.kind === 'ignore') {
       const ignored = await handleIgnoredDelivery(deps, input, interpreted);

@@ -670,6 +670,83 @@ describe('handleWebhookDelivery', () => {
     expect(refresh).toHaveBeenCalledWith(ISSUE);
   });
 
+  describe('auto-merge sweep on approval', () => {
+    const review = (
+      state: string,
+      pr: Record<string, unknown> = {},
+      action = 'submitted',
+    ) => ({
+      action,
+      repository: { full_name: 'jlapenna/homelab', default_branch: 'main' },
+      review: { id: 7, state },
+      pull_request: {
+        state: 'open',
+        number: 3800,
+        draft: false,
+        head: { repo: { full_name: 'jlapenna/homelab' } },
+        ...pr,
+      },
+    });
+
+    it('runs the sweep once for an approval of a same-repository PR', async () => {
+      const { deps } = fixture();
+      const reconcileAutomerge = vi.fn().mockResolvedValue(undefined);
+      deps.reconcileAutomerge = reconcileAutomerge;
+
+      await handleWebhookDelivery(deps, {
+        event: 'pull_request_review',
+        deliveryId: 'approval',
+        payload: review('approved'),
+      });
+
+      expect(reconcileAutomerge).toHaveBeenCalledExactlyOnceWith(
+        'jlapenna/homelab',
+        'main',
+      );
+    });
+
+    it.each([
+      ['a comment review', review('commented')],
+      ['a change request', review('changes_requested')],
+      ['a dismissed approval', review('approved', {}, 'dismissed')],
+      ['a draft', review('approved', { draft: true })],
+      [
+        'a fork',
+        review('approved', {
+          head: { repo: { full_name: 'someone/homelab' } },
+        }),
+      ],
+      ['a deleted fork', review('approved', { head: { repo: null } })],
+    ])('leaves the sweep alone for %s', async (_, payload) => {
+      const { deps } = fixture();
+      const reconcileAutomerge = vi.fn().mockResolvedValue(undefined);
+      deps.reconcileAutomerge = reconcileAutomerge;
+
+      await handleWebhookDelivery(deps, {
+        event: 'pull_request_review',
+        deliveryId: 'not-an-approval',
+        payload,
+      });
+
+      expect(reconcileAutomerge).not.toHaveBeenCalled();
+    });
+
+    it('acknowledges the delivery when the dispatch fails', async () => {
+      const { deps } = fixture();
+      deps.reconcileAutomerge = vi
+        .fn()
+        .mockRejectedValue(new Error('403 Resource not accessible'));
+
+      const result = await handleWebhookDelivery(deps, {
+        event: 'pull_request_review',
+        deliveryId: 'approval-dispatch-fails',
+        payload: review('approved'),
+      });
+
+      expect(result.status).toBe(200);
+    });
+  });
+
   it('ignores a delivery with no trigger label', async () => {
     const { deps } = fixture();
     const result = await handleWebhookDelivery(deps, {

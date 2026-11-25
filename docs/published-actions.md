@@ -93,9 +93,10 @@ same-repository PR whose `reviewDecision` is `APPROVED`, whoever opened it.
 Approval is the gate, and most maintainer-login PRs are agent-written
 (jlapenna/homelab#3800 sat approved and unarmed). Fork PRs and Renovate or
 Dependabot PRs are never armed this way. Adding `status:needs-human` disarms any PR
-the sweep could have armed, whoever opened it. Arming an approved PR happens on the
-next reconcile event: a push to the base branch, a successful PR CI run, the
-daily schedule or a manual dispatch.
+the sweep could have armed, whoever opened it. The console starts each repository's `agent-automerge.yml` through
+`workflow_dispatch` when it receives an approving review of a same-repository,
+non-draft PR, so the sweep arms it within minutes. A push to the base branch, a
+successful PR CI run and the daily schedule remain the backstop.
 
 `agent-automerge-reusable.yml`'s `reconcile-automerge` job also updates a
 BEHIND branch on any open, non-draft, non-parked PR that already has
