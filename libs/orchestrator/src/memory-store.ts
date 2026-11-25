@@ -11,6 +11,7 @@ import {
   validateLifecycleMetricRead,
 } from './lifecycle-metrics';
 import type {
+  GithubAnchorMergeEvidence,
   GithubAnchorProjection,
   LeasedOutboxEntry,
   OutboxEntry,
@@ -23,6 +24,8 @@ import type {
 } from './model';
 import {
   byOutboxClaimFairness,
+  GITHUB_ANCHOR_MERGE_EVIDENCE_FIELDS,
+  githubAnchorMergeEvidenceSchema,
   githubAnchorProjectionSchema,
   isClaimant,
   isLive,
@@ -657,6 +660,25 @@ export class MemoryStore implements OrchestratorStore {
           ? [projection.anchor]
           : [],
       ),
+    );
+  }
+
+  async readGithubAnchorMergeEvidence(
+    anchors: readonly GithubAnchorProjection['anchor'][],
+  ): Promise<(GithubAnchorMergeEvidence | undefined)[]> {
+    return (await this.readGithubAnchorProjections(anchors)).map(
+      (projection) =>
+        projection === undefined
+          ? undefined
+          : githubAnchorMergeEvidenceSchema.parse(
+              Object.fromEntries(
+                GITHUB_ANCHOR_MERGE_EVIDENCE_FIELDS.flatMap((field) =>
+                  projection[field] === undefined
+                    ? []
+                    : [[field, projection[field]]],
+                ),
+              ),
+            ),
     );
   }
 
