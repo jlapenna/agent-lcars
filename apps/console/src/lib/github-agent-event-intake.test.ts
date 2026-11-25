@@ -305,8 +305,18 @@ describe('routeGithubAgentEvents', () => {
     it('routes once every check run on the head is complete', async () => {
       const { deps, publish, checkRuns } = await setup([subscription('a')], {
         checkRuns: async () => [
-          { id: 11, status: 'completed', conclusion: 'success' },
-          { id: 12, status: 'completed', conclusion: 'failure' },
+          {
+            id: 11,
+            name: 'check-11',
+            status: 'completed',
+            conclusion: 'success',
+          },
+          {
+            id: 12,
+            name: 'check-12',
+            status: 'completed',
+            conclusion: 'failure',
+          },
         ],
       });
       await routeGithubAgentEvents(checkRun(), deps);
@@ -325,7 +335,12 @@ describe('routeGithubAgentEvents', () => {
     it('coalesces completions that see the same finished set into one notice', async () => {
       const { deps, publish } = await setup([subscription('a')], {
         checkRuns: async () => [
-          { id: 11, status: 'completed', conclusion: 'success' },
+          {
+            id: 11,
+            name: 'check-11',
+            status: 'completed',
+            conclusion: 'success',
+          },
         ],
       });
       await routeGithubAgentEvents(checkRun(), deps);
@@ -339,8 +354,13 @@ describe('routeGithubAgentEvents', () => {
     it('routes nothing while a check is still running, or when the read fails', async () => {
       const running = await setup([subscription('a')], {
         checkRuns: async () => [
-          { id: 11, status: 'completed', conclusion: 'success' },
-          { id: 12, status: 'queued', conclusion: null },
+          {
+            id: 11,
+            name: 'check-11',
+            status: 'completed',
+            conclusion: 'success',
+          },
+          { id: 12, name: 'check-12', status: 'queued', conclusion: null },
         ],
       });
       expect(
