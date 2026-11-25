@@ -4,7 +4,7 @@
   "private": true,
   "description": "Image-only native CLI dependencies, updated by Renovate and installed with npm ci.",
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.331",
+    "@anthropic-ai/claude-code": "2.1.332",
     "@openai/codex": "0.172.0"
   }
 }
