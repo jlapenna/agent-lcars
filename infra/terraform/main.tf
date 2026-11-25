@@ -800,6 +800,26 @@ resource "google_secret_manager_secret_iam_member" "agent_lcars_app_private_key_
   member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
 }
 
+# The pull-request author App's private key (jlapenna/agent-lcars#3522).
+# GitHub refuses an approval from a PR's own author, so dispatched runs open
+# pull requests as `agent-lcars-author[bot]` and the `agent-lcars[bot]`
+# review can approve them. Upload the value out of band like the key above:
+#   gcloud secrets versions add AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY --data-file=<key.pem>
+resource "google_secret_manager_secret" "agent_lcars_author_app_private_key" {
+  secret_id = "AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.services]
+}
+
+resource "google_secret_manager_secret_iam_member" "agent_lcars_author_app_private_key_accessor" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.agent_lcars_author_app_private_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+
 # The App Hosting BUILD preparer resolves every apphosting.yaml secret
 # reference at rollout time and needs secret METADATA access
 # (secretmanager.versions.get, in roles/secretmanager.viewer) on top of the
@@ -818,6 +838,21 @@ resource "google_secret_manager_secret_iam_member" "agent_lcars_app_private_key_
 resource "google_secret_manager_secret_iam_member" "agent_lcars_app_private_key_version_manager" {
   project   = var.project_id
   secret_id = google_secret_manager_secret.agent_lcars_app_private_key.secret_id
+  role      = "roles/secretmanager.secretVersionManager"
+  member    = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-firebaseapphosting.iam.gserviceaccount.com"
+}
+
+# The same build-preparer grants for the pull-request author App's key.
+resource "google_secret_manager_secret_iam_member" "agent_lcars_author_app_private_key_viewer" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.agent_lcars_author_app_private_key.secret_id
+  role      = "roles/secretmanager.viewer"
+  member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_secret_manager_secret_iam_member" "agent_lcars_author_app_private_key_version_manager" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.agent_lcars_author_app_private_key.secret_id
   role      = "roles/secretmanager.secretVersionManager"
   member    = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-firebaseapphosting.iam.gserviceaccount.com"
 }

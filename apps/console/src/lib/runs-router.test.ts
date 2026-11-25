@@ -3700,6 +3700,133 @@ describe('checkoutToken', () => {
     expect(JSON.stringify(body)).not.toContain(runToken);
   });
 
+  describe('pull-request author App (#3522)', () => {
+    async function claimedRun(work: string) {
+      const { store, orchestrator, now } = fixture();
+      const runId = await seedQueuedRun(store, orchestrator, {
+        workId: wid(work),
+        now: NOW,
+      });
+      const runToken = mintRunToken();
+      await store.claimQueuedRun({
+        pipelines: ['claude'],
+        now: NOW,
+        claimedBy: 'runner-1',
+        claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
+        tokenHash: hashRunToken(runToken),
+      });
+      return { store, orchestrator, now, runId, runToken };
+    }
+    const expiresAt = '2026-08-26T10:53:21.000Z';
+    const checkoutTokens = {
+      tokenFor: async () => 'ghs_checkout',
+      expiringTokenFor: async () => ({ token: 'ghs_checkout', expiresAt }),
+      expiringTokenForRepositories: async () => ({
+        token: 'ghs_checkout',
+        expiresAt,
+      }),
+    };
+
+    it("returns the author App's token for the anchor repository", async () => {
+      const { store, orchestrator, now, runId, runToken } = await claimedRun(
+        'work-pr-author-token',
+      );
+      const authorTokenFor = vi.fn(async (repo: string) => ({
+        token: `ghs_author-for-${repo}`,
+        expiresAt,
+      }));
+      const r = await call(
+        {
+          store,
+          orchestrator,
+          now,
+          tokens: context.tokens,
+          checkoutTokens,
+          pullRequestAuthorTokens: () => ({
+            tokenFor: async (repo) => (await authorTokenFor(repo)).token,
+            expiringTokenFor: authorTokenFor,
+            expiringTokenForRepositories: async () => {
+              throw new Error('not used');
+            },
+          }),
+          codexAuth: context.codexAuth,
+          bearerToken: runToken,
+        },
+        'GET',
+        runPath(runId, '/checkout-token'),
+      );
+      expect(r.status).toBe(200);
+      expect(authorTokenFor).toHaveBeenCalledWith('jlapenna/agent-lcars');
+      const body = r.json as { token: string; pullRequestAuthor?: unknown };
+      expect(body.token).toBe('ghs_checkout');
+      expect(body.pullRequestAuthor).toEqual({
+        login: 'agent-lcars-author[bot]',
+        token: 'ghs_author-for-jlapenna/agent-lcars',
+        expiresAt,
+      });
+    });
+
+    it('still returns the checkout token when the author App key is malformed', async () => {
+      const { store, orchestrator, now, runId, runToken } = await claimedRun(
+        'work-pr-author-bad-key',
+      );
+      const r = await call(
+        {
+          store,
+          orchestrator,
+          now,
+          tokens: context.tokens,
+          checkoutTokens,
+          pullRequestAuthorTokens: () => {
+            throw new Error('GitHub App private key is not a valid PEM');
+          },
+          codexAuth: context.codexAuth,
+          bearerToken: runToken,
+        },
+        'GET',
+        runPath(runId, '/checkout-token'),
+      );
+      expect(r.status).toBe(200);
+      const body = r.json as { token: string; pullRequestAuthor?: unknown };
+      expect(body.token).toBe('ghs_checkout');
+      expect(body.pullRequestAuthor).toBeUndefined();
+    });
+
+    it('still returns the checkout token when the author App cannot mint', async () => {
+      const { store, orchestrator, now, runId, runToken } = await claimedRun(
+        'work-pr-author-missing',
+      );
+      const r = await call(
+        {
+          store,
+          orchestrator,
+          now,
+          tokens: context.tokens,
+          checkoutTokens,
+          pullRequestAuthorTokens: () => ({
+            tokenFor: async () => {
+              throw new Error('not installed');
+            },
+            expiringTokenFor: async () => {
+              throw new Error('not installed');
+            },
+            expiringTokenForRepositories: async () => {
+              throw new Error('not installed');
+            },
+          }),
+          codexAuth: context.codexAuth,
+          bearerToken: runToken,
+        },
+        'GET',
+        runPath(runId, '/checkout-token'),
+      );
+      expect(r.status).toBe(200);
+      const body = r.json as { token: string; pullRequestAuthor?: unknown };
+      expect(body.token).toBe('ghs_checkout');
+      expect(body.pullRequestAuthor).toBeUndefined();
+    });
+  });
+
   // #1993: `agent-option:cross-repo` -- one grant per fleet owner among
   // `getWatchedRepos()`, minted through `expiringTokenForRepositories`.
   describe('agent-option:cross-repo (#1993)', () => {

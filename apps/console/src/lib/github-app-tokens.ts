@@ -360,6 +360,68 @@ export function createDispatchTokenProvider(
   });
 }
 
+/** What the pull-request author App may do: open a pull request on a
+ * branch the run already pushed with its `agent-lcars[bot]` token. */
+export const PULL_REQUEST_AUTHOR_PERMISSIONS: Record<string, string> = {
+  contents: 'read',
+  pull_requests: 'write',
+};
+
+/**
+ * The provider for the App that opens dispatched runs' pull requests
+ * (`AGENT_LCARS_AUTHOR_APP_CLIENT_ID`/`AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY`).
+ * GitHub refuses an approval from a pull request's own author, so a PR
+ * opened as `agent-lcars[bot]` could not be approved by the LCARS review
+ * (jlapenna/agent-lcars#3522). Returns `undefined` while the App is not
+ * configured; runs then open pull requests with their ordinary token.
+ */
+export function createPullRequestAuthorTokenProvider(
+  env: Record<string, string | undefined>,
+): ExpiringDispatchTokenProvider | undefined {
+  const clientId = env['AGENT_LCARS_AUTHOR_APP_CLIENT_ID'];
+  const privateKeyPem = env['AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY'];
+  if (!clientId || !privateKeyPem) return undefined;
+  parsePrivateKey(privateKeyPem);
+  return new AppInstallationTokenProvider({
+    clientId,
+    privateKeyPem,
+    permissions: PULL_REQUEST_AUTHOR_PERMISSIONS,
+  });
+}
+
+let cachedPullRequestAuthor:
+  | {
+      clientId: string | undefined;
+      privateKeyPem: string | undefined;
+      provider: ExpiringDispatchTokenProvider | undefined;
+    }
+  | undefined;
+
+/**
+ * {@link createPullRequestAuthorTokenProvider}, reused for as long as the
+ * App's configuration is unchanged, so each checkout-token refresh does not
+ * parse the key again or repeat installation lookups. A rotated key builds a
+ * new provider. A construction error is not cached, so every call reports it.
+ */
+export function pullRequestAuthorTokenProvider(
+  env: Record<string, string | undefined>,
+): ExpiringDispatchTokenProvider | undefined {
+  const clientId = env['AGENT_LCARS_AUTHOR_APP_CLIENT_ID'];
+  const privateKeyPem = env['AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY'];
+  if (
+    cachedPullRequestAuthor === undefined ||
+    cachedPullRequestAuthor.clientId !== clientId ||
+    cachedPullRequestAuthor.privateKeyPem !== privateKeyPem
+  ) {
+    cachedPullRequestAuthor = {
+      clientId,
+      privateKeyPem,
+      provider: createPullRequestAuthorTokenProvider(env),
+    };
+  }
+  return cachedPullRequestAuthor.provider;
+}
+
 /**
  * Defers `factory` (normally a `createDispatchTokenProvider` call) until
  * this provider's `tokenFor` is actually invoked, then builds and caches

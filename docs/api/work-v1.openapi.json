@@ -20372,6 +20372,22 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "pullRequestAuthor": {
+                      "type": "object",
+                      "properties": {
+                        "login": {
+                          "type": "string"
+                        },
+                        "token": {
+                          "type": "string"
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["login", "token", "expiresAt"],
+                      "additionalProperties": false
                     }
                   },
                   "required": ["token", "expiresAt", "repository"],

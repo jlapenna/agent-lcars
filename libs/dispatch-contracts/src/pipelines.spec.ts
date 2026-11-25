@@ -26,7 +26,11 @@ describe('bot identities', () => {
     // acknowledged limitation behind the native verifier being unable to tell
     // their deliverables apart, so the list must be deduplicated, not
     // per-pipeline.
-    expect(AGENT_BOT_LOGINS).toEqual(['claude[bot]', 'agent-lcars[bot]']);
+    expect(AGENT_BOT_LOGINS).toEqual([
+      'claude[bot]',
+      'agent-lcars[bot]',
+      'agent-lcars-author[bot]',
+    ]);
   });
 });
 

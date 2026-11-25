@@ -1,6 +1,9 @@
 import 'server-only';
 
-import type { IssueReference } from '@agent-lcars/dispatch-contracts';
+import {
+  type IssueReference,
+  PULL_REQUEST_AUTHOR_BOT_LOGIN,
+} from '@agent-lcars/dispatch-contracts';
 import {
   formatAttemptId,
   parseRunGeneration,
@@ -100,6 +103,9 @@ export interface RunsContext {
   orchestrator: Orchestrator;
   tokens: DispatchTokenProvider;
   checkoutTokens: ExpiringDispatchTokenProvider;
+  /** Mints the pull-request author App's token (`checkoutToken`'s
+   *  `pullRequestAuthor`); absent while that App is not configured. */
+  pullRequestAuthorTokens?: () => ExpiringDispatchTokenProvider | undefined;
   codexAuth: CodexAuthStore;
   jobCredentials?: Pick<JobSecrets, 'github' | 'deliver' | 'refused'>;
   /** Same outbox drain every other mutating route reaches through
@@ -186,6 +192,37 @@ function claimantSubject(principal: WorkPrincipal): string {
  *  non-`claim` route calls this first, by hand (not middleware: the runId
  *  lives in the validated input, which middleware registered via `.use`
  *  cannot see). */
+/**
+ * The pull-request author App's token for `repo`, or `undefined` when that
+ * App is not configured or cannot mint here (for example, not installed on
+ * the owner). A run without it opens its pull request as `agent-lcars[bot]`,
+ * which the console then routes to the maintainer for approval, so a mint
+ * failure must not refuse the checkout itself.
+ */
+async function pullRequestAuthorGrant(
+  context: RunsContext,
+  repo: string,
+): Promise<{ login: string; token: string; expiresAt: string } | undefined> {
+  try {
+    // Inside the try: a malformed key throws while the provider is built,
+    // and that must not fail the checkout either.
+    const provider = context.pullRequestAuthorTokens?.();
+    if (provider === undefined) return undefined;
+    const token = await provider.expiringTokenFor(repo);
+    return {
+      login: PULL_REQUEST_AUTHOR_BOT_LOGIN,
+      token: token.token,
+      expiresAt: token.expiresAt,
+    };
+  } catch (error) {
+    logger.warn(
+      { err: error, repo },
+      'pull-request author token unavailable; the run opens its PR as agent-lcars[bot]',
+    );
+    return undefined;
+  }
+}
+
 async function requireRunToken(
   context: RunsContext,
   runId: string,
@@ -1379,6 +1416,10 @@ export const runsRouter = os.router({
       }
     }
 
+    const pullRequestAuthor = await pullRequestAuthorGrant(
+      context,
+      target.repo,
+    );
     if (run.params?.['crossRepo'] !== 'true') {
       const token = await context.checkoutTokens.expiringTokenFor(target.repo);
       return {
@@ -1386,6 +1427,7 @@ export const runsRouter = os.router({
         repository: target.repo,
         expiresAt: token.expiresAt,
         ...(profile?.gitIdentity ? { gitIdentity: profile.gitIdentity } : {}),
+        ...(pullRequestAuthor ? { pullRequestAuthor } : {}),
       };
     }
 
@@ -1449,6 +1491,7 @@ export const runsRouter = os.router({
       expiresAt: anchorGrant.expiresAt,
       grants,
       ...(profile?.gitIdentity ? { gitIdentity: profile.gitIdentity } : {}),
+      ...(pullRequestAuthor ? { pullRequestAuthor } : {}),
     };
   }),
 

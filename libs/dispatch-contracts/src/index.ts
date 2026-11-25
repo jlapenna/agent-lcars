@@ -24,6 +24,7 @@ export {
   isDispatchPipeline,
   PIPELINE_CONTRACTS,
   pipelineContract,
+  PULL_REQUEST_AUTHOR_BOT_LOGIN,
   REPLY_COMMANDS,
   REVIEW_LABELS,
 } from './pipelines';

@@ -135,6 +135,14 @@ export const REPLY_COMMANDS: ReadonlyMap<string, AgentPipeline> = new Map(
 );
 
 /**
+ * REST-shaped login of the App that opens dispatched runs' pull requests.
+ * GitHub refuses an approval from a pull request's own author, so the PR
+ * author must not be `agent-lcars[bot]`, the identity that reviews and
+ * approves (jlapenna/agent-lcars#3522).
+ */
+export const PULL_REQUEST_AUTHOR_BOT_LOGIN = 'agent-lcars-author[bot]';
+
+/**
  * REST-shaped logins of every pipeline that opens pull requests or comments
  * under its own identity, deduplicated. Must equal the `AGENT_BOT_LOGINS` repo
  * variable that agent-automerge.yml reads — that variable is deployment
@@ -142,9 +150,12 @@ export const REPLY_COMMANDS: ReadonlyMap<string, AgentPipeline> = new Map(
  * pins the two together instead.
  */
 export const AGENT_BOT_LOGINS: readonly string[] = Object.freeze([
-  ...new Set(
-    DISPATCH_PIPELINES.map((pipeline) => PIPELINE_CONTRACTS[pipeline].botLogin),
-  ),
+  ...new Set([
+    ...DISPATCH_PIPELINES.map(
+      (pipeline) => PIPELINE_CONTRACTS[pipeline].botLogin,
+    ),
+    PULL_REQUEST_AUTHOR_BOT_LOGIN,
+  ]),
 ]);
 
 export function isDispatchPipeline(

@@ -1853,6 +1853,19 @@ export const runsContract = {
             }),
           )
           .optional(),
+        /** The pull-request author App's token for the anchor repository,
+         *  present when that App is configured. The runner opens pull
+         *  requests with it, so the PR's author is never the
+         *  `agent-lcars[bot]` reviewer, whose approval GitHub would refuse
+         *  as a self-approval (#3522). Every other GitHub call keeps using
+         *  `token`. */
+        pullRequestAuthor: z
+          .strictObject({
+            login: z.string(),
+            token: z.string(),
+            expiresAt: z.string(),
+          })
+          .optional(),
       }),
     ),
   codexAuth: runBase
