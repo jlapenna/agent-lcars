@@ -517,8 +517,14 @@ describe('finalizeGithubAgentEvent', () => {
 });
 
 describe('finishedChecks', () => {
-  const run = (id: number, status: string, conclusion: string | null) => ({
+  const run = (
+    id: number,
+    status: string,
+    conclusion: string | null,
+    name = `check-${id}`,
+  ) => ({
     id,
+    name,
     status,
     conclusion,
   });
@@ -548,5 +554,35 @@ describe('finishedChecks', () => {
         run(4, 'completed', 'neutral'),
       ]),
     ).toEqual({ id: `github.checks.${SHA}.4`, detail: 'all passed' });
+  });
+
+  it('counts only the newest run of each check, ignoring superseded runs', () => {
+    // #3600: marking the PR ready superseded the first CI run; its
+    // cancelled jobs and failed roll-ups stayed listed on the head.
+    expect(
+      finishedChecks(SHA, [
+        run(1, 'completed', 'cancelled', 'Verify'),
+        run(2, 'completed', 'failure', 'E2E'),
+        run(3, 'completed', 'cancelled', 'Full verification (console)'),
+        run(11, 'completed', 'success', 'Verify'),
+        run(12, 'completed', 'success', 'E2E'),
+        run(13, 'completed', 'success', 'Full verification (console)'),
+      ]),
+    ).toEqual({ id: `github.checks.${SHA}.13`, detail: 'all passed' });
+  });
+
+  it('still waits on, and fails for, the newest run of a check', () => {
+    expect(
+      finishedChecks(SHA, [
+        run(1, 'completed', 'success', 'Verify'),
+        run(5, 'in_progress', null, 'Verify'),
+      ]),
+    ).toBeUndefined();
+    expect(
+      finishedChecks(SHA, [
+        run(1, 'completed', 'success', 'Verify'),
+        run(5, 'completed', 'cancelled', 'Verify'),
+      ]),
+    ).toEqual({ id: `github.checks.${SHA}.5`, detail: '1 failed' });
   });
 });
