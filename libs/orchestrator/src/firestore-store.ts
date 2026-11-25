@@ -1429,6 +1429,14 @@ export class FirestoreStore implements OrchestratorStore {
     });
   }
 
+  async listRunsWithSummary(summary: string): Promise<Run[]> {
+    // Equality on one field: the automatic single-field index serves it.
+    const snapshot = await this.#runs
+      .where('result.summary', '==', summary)
+      .get();
+    return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
+  }
+
   async listQueuedRuns(limit?: number): Promise<Run[]> {
     // Combining the `queue.state` equality filter with `orderBy('createdAt')`
     // (a different field) would need a composite index -- see

@@ -257,6 +257,12 @@ export class MemoryStore implements OrchestratorStore {
     return runs;
   }
 
+  async listRunsWithSummary(summary: string): Promise<Run[]> {
+    return [...this.#runs.values()]
+      .filter((run) => run.result?.summary === summary)
+      .map((run) => structuredClone(run));
+  }
+
   async transactRequest(input: {
     taskId: TaskId;
     requestId: string;

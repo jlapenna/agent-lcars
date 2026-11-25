@@ -3417,6 +3417,25 @@ export function runOrchestratorStoreContract(
       });
     });
 
+    describe('runs by reported summary', () => {
+      it('lists every run that reported a summary, whatever its task', async () => {
+        const { store, orchestrator } = await fixture();
+        const parked = await started(orchestrator, 'req-park');
+        await orchestrator.report(parked.run.runId, {
+          ok: true,
+          summary: 'park',
+        });
+        const live = await started(orchestrator, 'req-live');
+
+        const parks = await store.listRunsWithSummary('park');
+
+        expect(parks.map((run) => run.runId)).toEqual([parked.run.runId]);
+        expect(parks[0]?.result).toMatchObject({ summary: 'park' });
+        expect(await store.listRunsWithSummary('report')).toEqual([]);
+        expect(parks.map((run) => run.runId)).not.toContain(live.run.runId);
+      });
+    });
+
     describe('native-task listing', () => {
       it('lists native anchors only, never GitHub-anchored tasks', async () => {
         const { store, orchestrator } = await fixture();
