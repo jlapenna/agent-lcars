@@ -1,6 +1,6 @@
 ---
 name: lcars-usage
-description: Operate Agent LCARS and check work ownership before implementing a GitHub issue in an LCARS-enrolled repository. Use for interactive Work or session operations, fleet ownership checks, determining whether a task is an explicit LCARS dispatch, diagnosing why an approved pull request is not merging, and waiting for something to happen - another agent session finishing, LCARS Work changing state - instead of polling or looping on sleep. LCARS application development and control-plane internals have separate repository skills.
+description: Operate Agent LCARS and check work ownership before implementing a GitHub issue in an LCARS-enrolled repository. Use for interactive Work or session operations, fleet ownership checks, determining whether a task is an explicit LCARS dispatch, diagnosing why an approved pull request is not merging, and waiting for something to happen - a pull request's review, checks or merge, an Actions run, another agent session finishing, LCARS Work changing state - instead of polling or looping on sleep. LCARS application development and control-plane internals have separate repository skills.
 ---
 
 # Using Agent LCARS
@@ -99,11 +99,20 @@ idle. Do this instead of a `sleep` loop, a polling script or a long-running
 watcher process:
 
 ```bash
+lcars session subscribe github:pr:<owner>/<repo>#<n> --until merged
+lcars session subscribe github:pr:<owner>/<repo>#<n> --kinds checks-finished,review
+lcars session subscribe github:run:<owner>/<repo>/<run-id>
 lcars session subscribe lcars:session:<other-session-id> --until ended
 lcars session subscribe lcars:work:<work-id> --until done
 lcars session subscriptions          # this session's subscriptions
 lcars session unsubscribe <id>
 ```
+
+GitHub events arrive for repositories LCARS watches. A pull request notice
+covers reviews, review threads, comments, pushes, auto-merge changes, checks
+finishing (`all passed` or `<n> failed`, counting the newest run of each
+check) and merging or closing. Merge conflicts and falling behind the base
+branch have no event yet; check those with `gh`.
 
 `lcars session subscribe --help` lists every source, its kinds and what a
 notice looks like. Use `--kinds` to receive only some kinds and `--until` to
