@@ -325,7 +325,7 @@ describe('getAgentActivity', () => {
     });
     expect(activity.queue).toEqual({ queued: 0, claimed: 0, running: 1 });
     expect(store.listLiveRuns).toHaveBeenCalledTimes(1);
-    expect(store.listRecentRuns).toHaveBeenCalledWith(100, undefined);
+    expect(store.listRecentRuns).toHaveBeenCalledWith(24, undefined);
     expect(store.readTask).toHaveBeenCalledTimes(2);
   });
 
@@ -361,7 +361,7 @@ describe('getAgentActivity', () => {
     expect(activity.recentRuns.map((entry) => entry.id)).toEqual([
       finished.runId,
     ]);
-    expect(store.listRecentRuns).toHaveBeenCalledWith(100, undefined);
+    expect(store.listRecentRuns).toHaveBeenCalledWith(24, undefined);
     expect(store.readTask).toHaveBeenCalledTimes(1);
     expect(store).not.toHaveProperty('listTasks');
     expect(store).not.toHaveProperty('listRuns');
@@ -620,7 +620,8 @@ describe('getAgentActivity run history', () => {
         result: { ok: true },
         updatedAt: minutesAgo(minutes),
       });
-    const firstPage = Array.from({ length: 100 }, (_, i) => finished(i + 1, 5));
+    // The first page is the outcome feed's size; later pages are larger.
+    const firstPage = Array.from({ length: 24 }, (_, i) => finished(i + 1, 5));
     const secondPage = [finished(101, 20), finished(102, 45)];
     store.listRecentRuns.mockImplementation(
       async (_limit: number, before?: { runId: string }) =>
@@ -633,13 +634,39 @@ describe('getAgentActivity run history', () => {
 
     const history = (await getAgentActivity()).runHistory;
 
+    expect(store.listRecentRuns).toHaveBeenNthCalledWith(1, 24, undefined);
     expect(store.listRecentRuns).toHaveBeenNthCalledWith(2, 100, {
       updatedAt: minutesAgo(5),
-      runId: 'octo/example#100/r1',
+      runId: 'octo/example#24/r1',
     });
     // Every run updated inside the window, across both pages; not the
     // run from before it.
-    expect(history).toHaveLength(101);
+    expect(history).toHaveLength(25);
+  });
+
+  it('continues older outcomes after a full first page with few terminal runs', async () => {
+    const page = Array.from({ length: 24 }, (_, i) =>
+      run({
+        runId: `octo/example#${i + 1}/r1`,
+        task: { repo: 'octo/example', issue: i + 1 },
+        state: i < 3 ? 'finished' : 'running',
+        ...(i < 3 ? { result: { ok: true } } : {}),
+        updatedAt: minutesAgo(5),
+      }),
+    );
+    store.listRecentRuns.mockImplementation(
+      async (_limit: number, before?: { runId: string }) =>
+        before === undefined ? page : [],
+    );
+    store.readTask.mockImplementation(async (task: Task['task']) => ({
+      task: githubTask('issue' in task ? task.issue : 1),
+      revision: 1,
+    }));
+
+    expect((await getAgentActivity()).olderOutcomes).toEqual({
+      updatedAt: minutesAgo(5),
+      runId: 'octo/example#24/r1',
+    });
   });
 
   it('withholds the history when the feed stops advancing short of 30 minutes', async () => {
