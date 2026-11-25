@@ -65,6 +65,9 @@ jobs:
           - full_name: jlapenna/fleet-runtime
             owner: jlapenna
             repository: fleet-runtime
+          - full_name: jlapenna/ebayclaw
+            owner: jlapenna
+            repository: ebayclaw
 
     steps:
       - uses: actions/checkout@v7
