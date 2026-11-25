@@ -1,6 +1,8 @@
 import type { CliSessionDoc, SessionDoc } from '@agent-lcars/telemetry';
-import { describe, expect, it } from 'vitest';
+import { agentEventDeliverySchema } from '@agent-lcars/work';
+import { describe, expect, it, vi } from 'vitest';
 
+import { routeAgentEvent } from './agent-event-routing';
 import { MemoryAgentEventSubscriptionStore } from './agent-event-store';
 import {
   type AgentEventsContext,
@@ -8,7 +10,9 @@ import {
   createAgentEventsHandler,
   deliveryHost,
   MAX_SUBSCRIPTIONS_PER_SESSION,
+  sessionEventId,
   sessionLiveOnHost,
+  sessionReportedByHost,
 } from './agent-event-subscriptions-router';
 import type { WorkPrincipal } from './work-auth';
 
@@ -400,5 +404,174 @@ describe('GET and DELETE /events/subscriptions', () => {
     expect(
       (await call(pike, 'DELETE', `/events/subscriptions/${ids[0]}`)).status,
     ).toBe(404);
+  });
+});
+
+describe('POST /events/session', () => {
+  /** A context whose events are routed for real through its own store, to
+   * a recording publisher. */
+  function routed(overrides: Parameters<typeof context>[0] = {}) {
+    const ctx = context({
+      sessions: [cliSession('session-a'), cliSession('session-b')],
+      ...overrides,
+    });
+    let n = 0;
+    const publish = vi.fn(async () => `message-${++n}`);
+    ctx.routeEvent = (event) =>
+      routeAgentEvent(event, { store: ctx.store, publisher: { publish } });
+    return { ctx, publish };
+  }
+
+  const report = (ctx: AgentEventsContext, body: Record<string, unknown>) =>
+    call(ctx, 'POST', '/events/session', body);
+
+  it('routes an ended session to its subscribers once', async () => {
+    const { ctx, publish } = routed();
+    await subscribe(ctx, {
+      sessionId: 'session-b',
+      key: 'lcars:session:session-a',
+      until: 'ended',
+    });
+    const body = {
+      sessionId: 'session-a',
+      kind: 'ended',
+      occurredAt: '2026-11-25T11:59:30.000Z',
+    };
+    const first = await report(ctx, body);
+    expect(first).toEqual({
+      status: 200,
+      json: {
+        eventId: 'session.session-a.ended.2026-11-25T11:59:30.000Z',
+        delivered: 1,
+      },
+    });
+    const [data, attributes] = publish.mock.calls[0] as unknown as [
+      Buffer,
+      Record<string, string>,
+    ];
+    expect(attributes['host']).toBe('pike');
+    const delivery = agentEventDeliverySchema.parse(
+      JSON.parse(data.toString('utf8')),
+    );
+    expect(delivery).toMatchObject({
+      target: { type: 'session', sessionId: 'session-b', host: 'pike' },
+      event: {
+        key: 'lcars:session:session-a',
+        kind: 'ended',
+        occurredAt: '2026-11-25T11:59:30.000Z',
+      },
+      ended: true,
+    });
+    // The until kind ended the subscription; a repeat routes nowhere.
+    expect(ctx.store.documents.size).toBe(0);
+    expect((await report(ctx, body)).json['delivered']).toBe(0);
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts an ended report for a session that is no longer live', async () => {
+    const { ctx } = routed({
+      sessions: [cliSession('session-a', { liveness: 'ended' })],
+    });
+    expect(
+      (
+        await report(ctx, {
+          sessionId: 'session-a',
+          kind: 'ended',
+          occurredAt: '2026-11-25T11:59:30.000Z',
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it('routes idle only for a live session on the host', async () => {
+    const live = routed();
+    await subscribe(live.ctx, {
+      sessionId: 'session-b',
+      key: 'lcars:session:session-a',
+      kinds: ['idle'],
+    });
+    const idle = {
+      sessionId: 'session-a',
+      kind: 'idle',
+      occurredAt: '2026-11-25T11:59:50.000Z',
+    };
+    expect((await report(live.ctx, idle)).json['delivered']).toBe(1);
+    // An idle subscription stays for the next one.
+    expect(live.ctx.store.documents.size).toBe(1);
+
+    const ended = routed({
+      sessions: [cliSession('session-a', { liveness: 'ended' })],
+    });
+    const refused = await report(ended.ctx, idle);
+    expect(refused.status).toBe(403);
+    expect(refused.json['message']).toBe(
+      'Session session-a is not a live session reported by pike',
+    );
+  });
+
+  it("refuses another host's session, and a missing one, alike", async () => {
+    const { ctx, publish } = routed({
+      principal: deliveryPrincipal('laforge'),
+    });
+    for (const sessionId of ['session-a', 'session-missing']) {
+      const { status, json } = await report(ctx, {
+        sessionId,
+        kind: 'ended',
+        occurredAt: '2026-11-25T11:59:30.000Z',
+      });
+      expect(status).toBe(403);
+      expect(json['message']).toBe(
+        `Session ${sessionId} is not a session reported by laforge`,
+      );
+    }
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ kind: 'started' }],
+    [{ occurredAt: 'yesterday' }],
+    [{ occurredAt: '2026-11-25T12:10:00.000Z' }],
+    [{ host: 'pike' }],
+  ])('refuses a malformed report %j', async (change) => {
+    const { ctx, publish } = routed();
+    const { status } = await report(ctx, {
+      sessionId: 'session-a',
+      kind: 'ended',
+      occurredAt: '2026-11-25T11:59:30.000Z',
+      ...change,
+    });
+    expect(status).toBe(400);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('requires a host delivery identity', async () => {
+    const { ctx } = routed({
+      principal: { ...deliveryPrincipal('pike'), scopes: new Set() },
+    });
+    expect(
+      (
+        await report(ctx, {
+          sessionId: 'session-a',
+          kind: 'ended',
+          occurredAt: '2026-11-25T11:59:30.000Z',
+        })
+      ).status,
+    ).toBe(401);
+  });
+});
+
+describe('session report helpers', () => {
+  it('names the host of a CLI session, live or not', () => {
+    expect(
+      sessionReportedByHost(cliSession('a', { liveness: 'ended' }), 'pike'),
+    ).toBe(true);
+    expect(sessionReportedByHost(cliSession('a'), 'laforge')).toBe(false);
+    expect(sessionReportedByHost(undefined, 'pike')).toBe(false);
+  });
+
+  it('derives a valid, stable event id', () => {
+    expect(sessionEventId('s', 'idle', '2026-11-25T12:00:00.000Z')).toBe(
+      'session.s.idle.2026-11-25T12:00:00.000Z',
+    );
   });
 });

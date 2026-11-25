@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { auth } from '@/auth';
+import { routeAgentEvent } from '@/lib/agent-event-routing';
 import { agentEventSubscriptionStore } from '@/lib/agent-event-store';
 import { createAgentEventsHandler } from '@/lib/agent-event-subscriptions-router';
 import { getCliSessions } from '@/lib/cli-sessions';
@@ -120,6 +121,7 @@ async function handle(request: Request): Promise<Response> {
         store: agentEventSubscriptionStore,
         getSessionDoc: sessionForResume,
         now: () => new Date(),
+        routeEvent: (event) => routeAgentEvent(event),
       },
     });
     if (eventsResult.matched && eventsResult.response !== undefined)

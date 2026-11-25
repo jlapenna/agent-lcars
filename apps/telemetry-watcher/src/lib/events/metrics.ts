@@ -1,5 +1,6 @@
 import * as http from 'node:http';
 
+import type { SessionReportKind } from './subscribe-forwarder';
 import {
   UNDELIVERABLE_REASONS,
   type UndeliverableReason,
@@ -23,6 +24,16 @@ export const DELIVERY_OUTCOMES = [
 ] as const;
 export type DeliveryOutcome = (typeof DELIVERY_OUTCOMES)[number];
 
+/** Session reports: reported; retried (will try again); rejected (LCARS
+ * refused it, so it is not retried); failed (given up after retries). */
+export const SESSION_REPORT_OUTCOMES = [
+  'reported',
+  'retried',
+  'rejected',
+  'failed',
+] as const;
+export type SessionReportOutcome = (typeof SESSION_REPORT_OUTCOMES)[number];
+
 /** Seconds from the router publishing a delivery to its turn starting. */
 const LATENCY_BUCKETS = [1, 5, 15, 30, 60, 300, 900, 3_600, 21_600] as const;
 
@@ -41,6 +52,15 @@ export class DeliveryMetrics {
   readonly undeliverable = new Map<UndeliverableReason, number>(
     UNDELIVERABLE_REASONS.map((reason) => [reason, 0]),
   );
+  /** Local subscribe, list and unsubscribe requests, by `op` and
+   * `outcome` (`ok` or the error code the CLI was given). */
+  readonly localRequests = new Map<string, number>();
+  /** Session idle and ended reports to LCARS, by kind and outcome. */
+  readonly sessionReports = new Map<string, number>(
+    (['idle', 'ended'] as const).flatMap((kind) =>
+      SESSION_REPORT_OUTCOMES.map((outcome) => [`${kind}\u0000${outcome}`, 0]),
+    ),
+  );
   private readonly latencyBuckets = LATENCY_BUCKETS.map(() => 0);
   private latencyCount = 0;
   private latencySum = 0;
@@ -51,6 +71,19 @@ export class DeliveryMetrics {
 
   countUndeliverable(reason: UndeliverableReason): void {
     this.undeliverable.set(reason, (this.undeliverable.get(reason) ?? 0) + 1);
+  }
+
+  countLocalRequest(op: string, outcome: string): void {
+    const key = `${op}\u0000${outcome}`;
+    this.localRequests.set(key, (this.localRequests.get(key) ?? 0) + 1);
+  }
+
+  countSessionReport(
+    kind: SessionReportKind,
+    outcome: SessionReportOutcome,
+  ): void {
+    const key = `${kind}\u0000${outcome}`;
+    this.sessionReports.set(key, (this.sessionReports.get(key) ?? 0) + 1);
   }
 
   observeLatency(seconds: number): void {
@@ -107,6 +140,18 @@ export class DeliveryMetrics {
         ([reason, value]) =>
           `${PREFIX}_undeliverable_total{reason="${reason}"} ${value}`,
       ),
+      `# HELP ${PREFIX}_local_requests_total Subscribe, list and unsubscribe requests from sessions on this host, by outcome (ok or the error returned).`,
+      `# TYPE ${PREFIX}_local_requests_total counter`,
+      ...[...this.localRequests].map(([key, value]) => {
+        const [op, outcome] = key.split('\u0000');
+        return `${PREFIX}_local_requests_total{op="${op}",outcome="${outcome}"} ${value}`;
+      }),
+      `# HELP ${PREFIX}_session_reports_total Reports of this host's sessions going idle or ending, by outcome: reported; retried (will try again); rejected (LCARS refused it); failed (gave up).`,
+      `# TYPE ${PREFIX}_session_reports_total counter`,
+      ...[...this.sessionReports].map(([key, value]) => {
+        const [kind, outcome] = key.split('\u0000');
+        return `${PREFIX}_session_reports_total{kind="${kind}",outcome="${outcome}"} ${value}`;
+      }),
       `# HELP ${PREFIX}_delivery_latency_seconds Seconds from publication to a started turn.`,
       `# TYPE ${PREFIX}_delivery_latency_seconds histogram`,
       ...LATENCY_BUCKETS.map(
