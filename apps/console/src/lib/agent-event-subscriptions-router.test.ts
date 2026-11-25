@@ -163,8 +163,6 @@ describe('POST /events/subscriptions', () => {
     { key: 'github:run:outside/upstream/42' },
     { key: 'github:issue:outside/upstream#1' },
     { key: 'outline:doc:12345678-1234-1234-1234-123456789abc' },
-    { key: 'github:pr:jlapenna/homelab#3827', kinds: ['behind'] },
-    { key: 'github:pr:jlapenna/homelab#3827', until: 'conflict' },
   ])('refuses a registration without a producer: %j', async (request) => {
     const ctx = context();
     const { status } = await subscribe(ctx, {

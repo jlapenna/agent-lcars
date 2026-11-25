@@ -277,8 +277,7 @@ the outbox gauges.
 
 GitHub subscriptions are admitted only for the configured control-plane
 repositories, whose App webhooks feed the source. Registrations for other
-repositories, Outline, or explicit `conflict`/`behind` kinds are refused until
-their producers are available. A default PR subscription receives the kinds
+repositories and Outline are refused until their producers are available. A default PR subscription receives the kinds
 currently produced and automatically includes newly enabled kinds. A successful registration must correspond to a working
 source so callers can safely end their turn.
 
