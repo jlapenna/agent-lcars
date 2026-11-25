@@ -1,7 +1,10 @@
 import 'server-only';
 
 import { auth } from '@/auth';
-import { routeAgentEvent } from '@/lib/agent-event-routing';
+import {
+  defaultAgentEventPublisher,
+  routeAgentEvent,
+} from '@/lib/agent-event-routing';
 import { agentEventSubscriptionStore } from '@/lib/agent-event-store';
 import { createAgentEventsHandler } from '@/lib/agent-event-subscriptions-router';
 import { getCliSessions } from '@/lib/cli-sessions';
@@ -36,6 +39,7 @@ import {
   rawBearerToken,
 } from '@/lib/work-auth';
 import { workRequestForbiddenReason } from '@/lib/work-authorization';
+import { queueWorkEventResume } from '@/lib/work-event-resume';
 import { workGrants } from '@/lib/work-grants';
 import { createWorkHandler } from '@/lib/work-router';
 import {
@@ -114,21 +118,39 @@ async function handle(request: Request): Promise<Response> {
     return withNoStore(await jobSecretsHttp(request, principal));
   if (pathname === `${PREFIX}/jobs` || pathname.startsWith(`${PREFIX}/jobs/`))
     return withNoStore(await repositoryJobsHttp(request, principal));
+  const runtime = createOrchestratorRuntime();
   if (pathname.startsWith(`${PREFIX}/events/`)) {
     const eventsResult = await agentEventsHandler.handle(request, {
       prefix: PREFIX,
       context: {
         ...(principal === undefined ? {} : { principal }),
+        // A run subscribing its Work presents its run token (#3570).
+        ...(bearerToken === undefined ? {} : { bearerToken }),
+        readRun: (runId) => runtime.store.readRun(runId),
         store: agentEventSubscriptionStore,
         getSessionDoc: sessionForResume,
         now: () => new Date(),
-        routeEvent: (event) => routeAgentEvent(event),
+        routeEvent: async (event) => {
+          const routed = await routeAgentEvent(event, {
+            store: agentEventSubscriptionStore,
+            publisher: defaultAgentEventPublisher,
+            resumeWork: queueWorkEventResume(runtime.orchestrator),
+          });
+          // An idle Work resumes now rather than at the next maintenance
+          // drain.
+          if (
+            routed.deliveries.some(
+              (delivery) => delivery.outcome === 'resume-queued',
+            )
+          )
+            await runtime.drain();
+          return routed;
+        },
       },
     });
     if (eventsResult.matched && eventsResult.response !== undefined)
       return withNoStore(eventsResult.response);
   }
-  const runtime = createOrchestratorRuntime();
   const runsResult = await runsHandler.handle(request, {
     prefix: PREFIX,
     context: {

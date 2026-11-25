@@ -96,6 +96,8 @@ describe.each(stores)('%s agent event subscription store', (_name, make) => {
       ]);
       expect(await store.countForSession('session-a')).toBe(1);
       expect(await store.countForSession('session-z')).toBe(0);
+      expect(ids(await store.listForWork('W1'))).toEqual(['w']);
+      expect(ids(await store.listForWork('W2'))).toEqual([]);
     },
   );
 

@@ -2042,6 +2042,39 @@ describe('brief', () => {
     });
   });
 
+  it('briefs an event-resume run with its notice where a reply round reads its turn (#3570)', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-event'),
+      now: NOW,
+      params: {
+        mode: 'event',
+        eventNotice: '[lcars-event] github:run:o/r/1 completed',
+        eventDeliveries: 'sub:ev-1',
+      },
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
+      tokenHash: hashRunToken(token),
+    });
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/brief'),
+    );
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({
+      mode: 'event',
+      reply: '[lcars-event] github:run:o/r/1 completed',
+      replyChannel: '',
+      replyPrincipal: '',
+    });
+  });
+
   it('omits resume when the claimed run carries no resumeSessionId', async () => {
     const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {

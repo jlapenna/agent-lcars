@@ -17,6 +17,7 @@ import { drainOutbox } from './orchestrator-dispatch';
 
 // Work state changes queue agent events; these tests do not cover routing.
 vi.mock('./agent-event-routing', () => ({
+  defaultAgentEventPublisher: { publish: vi.fn() },
   routeAgentEvent: vi.fn(async () => ({ eventId: 'unused', deliveries: [] })),
 }));
 

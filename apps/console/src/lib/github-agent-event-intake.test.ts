@@ -2,6 +2,12 @@ import {
   agentEventDeliverySchema,
   type AgentEventSubscription,
 } from '@agent-lcars/work';
+import {
+  decidedRun,
+  isRefusal,
+  MemoryStore as MemoryOrchestratorStore,
+  Orchestrator,
+} from '@agent-lcars/orchestrator';
 import { describe, expect, it, vi } from 'vitest';
 
 import { MemoryAgentEventSubscriptionStore } from './agent-event-store';
@@ -10,6 +16,7 @@ import {
   queueGithubAgentEvents,
   routeGithubAgentEvents,
 } from './github-agent-event-intake';
+import { queueWorkEventResume } from './work-event-resume';
 
 const DELIVERY = '72d3162e-cc78-11e3-81ab-4c9367dc0958';
 const SHA = 'c'.repeat(40);
@@ -99,8 +106,12 @@ async function setup(
   const publish = vi.fn(async () => `message-${++n}`);
   const checkRuns = vi.fn(reads.checkRuns ?? (async () => []));
   const threadsResolved = vi.fn(reads.threadsResolved ?? (async () => true));
+  const resumeWork = vi.fn(async () => ({ outcome: 'queued' as const }));
+  const drain = vi.fn(async () => undefined);
   return {
     store,
+    resumeWork,
+    drain,
     listForKey,
     publish,
     checkRuns,
@@ -108,6 +119,8 @@ async function setup(
     deps: {
       store,
       publisher: { publish },
+      resumeWork,
+      drain,
       reads: { checkRuns, threadsResolved },
     },
   };
@@ -123,6 +136,71 @@ function notices(publish: ReturnType<typeof vi.fn>) {
 }
 
 describe('routeGithubAgentEvents', () => {
+  it('resumes a Work a dispatched run subscribed to the pull request, then drains (#3570)', async () => {
+    const store = new MemoryOrchestratorStore();
+    const orchestrator = new Orchestrator(store, {
+      now: () => '2026-11-25T12:00:00.000Z',
+    });
+    const workId = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
+    const first = await orchestrator.request({
+      taskId: { workId },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      work: { spec: { title: 'waits on a review' } },
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(first)) throw new Error(first.reason);
+    await orchestrator.report(decidedRun(first).runId, {
+      ok: true,
+      summary: 'park',
+    });
+    const { deps, publish, drain } = await setup([
+      subscription('w', { target: { type: 'work', workId } }),
+    ]);
+    const result = await routeGithubAgentEvents(
+      {
+        event: 'pull_request_review',
+        deliveryId: DELIVERY,
+        receivedAt: '2026-11-25T12:00:00.000Z',
+        payload: review('jlapenna', 'OWNER'),
+      },
+      { ...deps, resumeWork: queueWorkEventResume(orchestrator) },
+    );
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        kind: 'review',
+        outcome: 'routed',
+        published: 0,
+      }),
+    ]);
+    expect(publish).not.toHaveBeenCalled();
+    expect(drain).toHaveBeenCalledTimes(1);
+    expect(
+      (await store.readTask({ workId }))?.task.eventResumes?.pending,
+    ).toEqual([
+      expect.objectContaining({
+        deliveryId: `w:github.${DELIVERY}.review`,
+        notice: expect.stringContaining(
+          `[lcars-event] ${KEY} review by jlapenna`,
+        ),
+      }),
+    ]);
+  });
+
+  it('does not drain when no Work resumed', async () => {
+    const { deps, drain } = await setup([subscription('a')]);
+    await routeGithubAgentEvents(
+      {
+        event: 'pull_request_review',
+        deliveryId: DELIVERY,
+        receivedAt: '2026-11-25T12:00:00.000Z',
+        payload: review('jlapenna', 'OWNER'),
+      },
+      deps,
+    );
+    expect(drain).not.toHaveBeenCalled();
+  });
+
   it('routes a trusted review to the key’s subscribers with one lookup', async () => {
     const { deps, publish, listForKey } = await setup([
       subscription('a'),

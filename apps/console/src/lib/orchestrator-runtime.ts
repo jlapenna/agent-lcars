@@ -23,6 +23,7 @@ import { drainOutbox } from '@/lib/orchestrator-dispatch';
 import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';
 import { dispatchSessionExpiry } from '@/lib/session-expiry';
 import { providerFallbackAuthority } from '@/lib/work-provider-fallback';
+import { sessionDocsForRuns } from '@/lib/work-sessions';
 
 import { reconcileFleetTriage } from './fleet-triage-work';
 import { executeSummaries } from './inbox-summary-work';
@@ -215,6 +216,7 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
         {
           store,
           orchestrator,
+          sessionDocsForRuns,
           ...github,
         },
         limit,

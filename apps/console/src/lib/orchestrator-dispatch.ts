@@ -22,7 +22,11 @@ import {
 } from '@agent-lcars/work';
 import { deriveItemState } from '@agent-lcars/work/derive';
 
-import { routeAgentEvent as routeAgentEventDefault } from './agent-event-routing';
+import {
+  defaultAgentEventPublisher,
+  routeAgentEvent as routeAgentEventDefault,
+} from './agent-event-routing';
+import { agentEventSubscriptionStore } from './agent-event-store';
 import { type AnchorTarget, anchorTarget } from './anchor-target';
 import { agentFleetLogin, consoleUrl } from './deployment';
 import { publishFleetTriage } from './fleet-triage-publish';
@@ -43,6 +47,11 @@ import {
   readGithubIntakePermission,
 } from './ready-delivery';
 import { dispatchSessionExpiry, isClosedItemState } from './session-expiry';
+import {
+  admitWorkEventResume,
+  queueWorkEventResume,
+  type WorkEventResumeDeps,
+} from './work-event-resume';
 
 /**
  * The outbox drain: turns `@agent-lcars/orchestrator` decisions into real
@@ -167,6 +176,9 @@ export interface DispatchDeps {
   /** Injectable for tests; defaults to the subscription router
    *  (`./agent-event-routing`'s `routeAgentEvent`). */
   routeAgentEvent?: (event: AgentEvent) => Promise<unknown>;
+  /** Session telemetry for an event-resume run to continue its Work's own
+   *  conversation (`admitWorkEventResume`); absent, it starts fresh. */
+  sessionDocsForRuns?: WorkEventResumeDeps['sessionDocsForRuns'];
 }
 
 export interface DrainOutboxResult {
@@ -249,6 +261,8 @@ export async function drainOutbox(
         await handleMonitorDelivery(deps, entry);
       } else if (entry.kind === 'agent-event') {
         await handleAgentEvent(deps, entry);
+      } else if (entry.kind === 'event-resume') {
+        await handleEventResume(deps, entry);
       } else {
         await handleReportOutcome(deps, entry, result);
       }
@@ -352,7 +366,58 @@ async function handleAgentEvent(
     occurredAt: entry.createdAt,
     consoleUrl: consoleUrl(),
   });
-  await (deps.routeAgentEvent ?? routeAgentEventDefault)(event);
+  await (deps.routeAgentEvent ?? defaultRouteAgentEvent(deps))(event);
+  await settleClaim(deps, entry, 'done');
+}
+
+/** The production router, recording Work-target events through this
+ * drain's own orchestrator. */
+export function defaultRouteAgentEvent(
+  deps: Pick<DispatchDeps, 'orchestrator'>,
+): (event: AgentEvent) => Promise<unknown> {
+  return (event) =>
+    routeAgentEventDefault(event, {
+      store: agentEventSubscriptionStore,
+      publisher: defaultAgentEventPublisher,
+      resumeWork: queueWorkEventResume(deps.orchestrator),
+    });
+}
+
+/**
+ * Events wait on a native Work for a run to take them (#3570). The entry is
+ * written when an event arrives for an idle Work, or when a run settles with
+ * events waiting. Admission is one transaction that rechecks the Work: a run
+ * that took it in the meantime will hand the events on when it settles, and
+ * a concurrent drain that already admitted them leaves nothing to do, so
+ * every outcome but a thrown error settles the entry.
+ */
+async function handleEventResume(
+  deps: DispatchDeps,
+  entry: LeasedOutboxEntry,
+): Promise<void> {
+  if (!isWorkAnchor(entry.task)) {
+    logger.error(
+      'agent-lcars: event-resume outbox entry %s has no Work anchor',
+      entry.entryId,
+    );
+    await settleClaim(deps, entry, 'failed');
+    return;
+  }
+  const outcome = await admitWorkEventResume(
+    {
+      store: deps.store,
+      orchestrator: deps.orchestrator,
+      ...(deps.sessionDocsForRuns === undefined
+        ? {}
+        : { sessionDocsForRuns: deps.sessionDocsForRuns }),
+    },
+    entry.task,
+  );
+  logger.info(
+    'agent-lcars: event-resume for work %s: %s',
+    entry.task.workId,
+    outcome,
+  );
   await settleClaim(deps, entry, 'done');
 }
 

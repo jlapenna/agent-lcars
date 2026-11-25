@@ -1,7 +1,9 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import { required } from '@agent-lcars/util-server';
 import {
+  type AgentEvent,
   type AgentEventDelivery,
   agentEventDeliveryId,
   agentEventSchema,
@@ -11,11 +13,11 @@ import {
 } from '@agent-lcars/work';
 import { PubSub } from '@google-cloud/pubsub';
 
-import {
-  type AgentEventSubscriptionStore,
-  agentEventSubscriptionStore,
-  type StoredAgentEventSubscription,
+import type {
+  AgentEventSubscriptionStore,
+  StoredAgentEventSubscription,
 } from './agent-event-store';
+import type { WorkResumeOutcome, WorkResumeRequest } from './work-event-resume';
 
 /** Publishes one delivery to the topic each host's delivery agent pulls. */
 export interface AgentEventPublisher {
@@ -42,6 +44,9 @@ export const defaultAgentEventPublisher: AgentEventPublisher =
 export interface AgentEventRoutingDeps {
   store: AgentEventSubscriptionStore;
   publisher: AgentEventPublisher;
+  /** Records the event on a Work a dispatched run subscribed, so it resumes
+   * that Work (`queueWorkEventResume`). */
+  resumeWork: (request: WorkResumeRequest) => Promise<WorkResumeOutcome>;
 }
 
 export type RoutedDelivery =
@@ -62,14 +67,29 @@ export type RoutedDelivery =
   | {
       readonly subscriptionId: string;
       readonly deliveryId: string;
-      /** A Work target, which this router cannot deliver to yet (#3570). */
-      readonly outcome: 'unsupported-target';
+      /** A Work target: the event now waits on the Work and resumes it. */
+      readonly outcome: 'resume-queued';
+      readonly workId: string;
+      readonly ended: boolean;
+    }
+  | {
+      readonly subscriptionId: string;
+      readonly deliveryId: string;
+      /** A Work target that can never take the event (unknown, closed,
+       * or over its event-resume limit); the subscription is
+       * removed. */
+      readonly outcome: 'resume-refused';
+      readonly workId: string;
+      readonly reason: string;
     };
 
 /**
  * Routes one event to every subscription that matches it (#3538): one
- * Pub/Sub message per subscription, addressed to the subscribing session's
- * host, and the subscription is removed when the event ends it.
+ * Pub/Sub message per session subscription, addressed to the subscribing
+ * session's host, and the subscription is removed when the event ends it.
+ * A Work subscription (#3570) records the event on that Work instead, which
+ * starts a resume run of it once no run holds it; a Work that can never take
+ * the event loses the subscription.
  *
  * Repeating an event id is safe. A subscription remembers the event ids it
  * was published for and skips them, and one the event ended is gone. Two
@@ -82,10 +102,7 @@ export type RoutedDelivery =
  */
 export async function routeAgentEvent(
   input: unknown,
-  deps: AgentEventRoutingDeps = {
-    store: agentEventSubscriptionStore,
-    publisher: defaultAgentEventPublisher,
-  },
+  deps: AgentEventRoutingDeps,
 ): Promise<{ eventId: string; deliveries: RoutedDelivery[] }> {
   const event = agentEventSchema.parse(input);
   return routeAgentEventToSubscriptions(
@@ -120,11 +137,21 @@ export async function routeAgentEventToSubscriptions(
       continue;
     }
     const { target } = subscription;
-    if (target.type !== 'session') {
-      deliveries.push({ ...base, outcome: 'unsupported-target' });
+    const ended = eventEndsSubscription(subscription, event);
+    if (target.type === 'work') {
+      try {
+        deliveries.push(
+          await resumeWorkTarget(deps, subscription, target.workId, {
+            event,
+            deliveryId,
+            ended,
+          }),
+        );
+      } catch (error) {
+        failures.push(error);
+      }
       continue;
     }
-    const ended = eventEndsSubscription(subscription, event);
     const body: AgentEventDelivery = {
       deliveryId,
       subscriptionId: subscription.id,
@@ -156,4 +183,48 @@ export async function routeAgentEventToSubscriptions(
       `${failures.length} of ${subscriptions.length} deliveries for event ${event.id} failed`,
     );
   return { eventId: event.id, deliveries };
+}
+
+/** Records the event on the subscribed Work and settles the subscription:
+ * kept on a transient refusal, removed when the Work can never take it. */
+async function resumeWorkTarget(
+  deps: AgentEventRoutingDeps,
+  subscription: StoredAgentEventSubscription,
+  workId: string,
+  input: {
+    event: AgentEvent;
+    deliveryId: string;
+    ended: boolean;
+  },
+): Promise<RoutedDelivery> {
+  const { event, deliveryId, ended } = input;
+  const base = { subscriptionId: subscription.id, deliveryId };
+  const resumed = await deps.resumeWork({
+    workId,
+    deliveryId,
+    notice: renderAgentEventNotice(event, subscription, ended),
+  });
+  switch (resumed.outcome) {
+    case 'refused':
+      await deps.store.settleRouted(subscription.id, event.id, true);
+      logger.warn(
+        'agent-lcars: removed event subscription %s: work %s refused event %s (%s)',
+        subscription.id,
+        workId,
+        event.id,
+        resumed.reason,
+      );
+      return {
+        ...base,
+        outcome: 'resume-refused',
+        workId,
+        reason: resumed.reason,
+      };
+    case 'duplicate':
+      await deps.store.settleRouted(subscription.id, event.id, ended);
+      return { ...base, outcome: 'duplicate' };
+    case 'queued':
+      await deps.store.settleRouted(subscription.id, event.id, ended);
+      return { ...base, outcome: 'resume-queued', workId, ended };
+  }
 }

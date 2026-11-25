@@ -20723,8 +20723,8 @@
     "/events/subscriptions": {
       "post": {
         "operationId": "createAgentEventSubscription",
-        "summary": "Subscribe a live session on the calling host to an event key",
-        "description": "Requires events.deliver. Accepted only when the session telemetry reports the calling host and the session has not ended. Idempotent: the same session, key, kinds and until return the existing subscription. Work targets (workId) are not accepted yet.",
+        "summary": "Subscribe a live session on the calling host, or a dispatched run's Work, to an event key",
+        "description": "With events.deliver: accepted only when the session telemetry reports the calling host and the session has not ended. With a run token and runId: the subscription targets the run’s own native Work (a workId naming any other Work is refused), and a matching event starts a resume run of that Work with the event notice as its input. Idempotent: the same target, key, kinds and until return the existing subscription.",
         "tags": ["events"],
         "requestBody": {
           "required": true,
@@ -20756,6 +20756,11 @@
                   "sessionId": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+                  },
+                  "runId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 175
                   },
                   "workId": {
                     "type": "string",
@@ -20871,7 +20876,7 @@
             }
           },
           "403": {
-            "description": "No live session on the calling host",
+            "description": "No live session on the calling host, or not the run’s own resumable Work",
             "content": {
               "application/json": {
                 "schema": {
@@ -20888,7 +20893,7 @@
             }
           },
           "409": {
-            "description": "Subscription limit reached for the session",
+            "description": "Subscription limit reached for the session or Work",
             "content": {
               "application/json": {
                 "schema": {
@@ -20913,7 +20918,7 @@
       },
       "get": {
         "operationId": "listAgentEventSubscriptions",
-        "summary": "List the calling host's event subscriptions",
+        "summary": "List the calling host's event subscriptions, or a run's Work's",
         "tags": ["events"],
         "parameters": [
           {
@@ -20922,6 +20927,17 @@
             "schema": {
               "type": "string",
               "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "in": "query",
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
             },
             "allowEmptyValue": true,
             "allowReserved": true
@@ -21137,7 +21153,7 @@
     "/events/subscriptions/{id}": {
       "delete": {
         "operationId": "deleteAgentEventSubscription",
-        "summary": "Remove one of the calling host's event subscriptions",
+        "summary": "Remove one of the calling host's, or a run's Work's, event subscriptions",
         "tags": ["events"],
         "parameters": [
           {
@@ -21155,7 +21171,13 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                  "runId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 175
+                  }
+                }
               }
             }
           }
@@ -21184,7 +21206,7 @@
             }
           },
           "404": {
-            "description": "No such subscription on this host",
+            "description": "No such subscription for this caller",
             "content": {
               "application/json": {
                 "schema": {

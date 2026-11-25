@@ -38,7 +38,13 @@ async function seeded(...subscriptions: AgentEventSubscription[]) {
   for (const s of subscriptions) await store.create(s);
   let n = 0;
   const publish = vi.fn(async () => `message-${++n}`);
-  return { store, publish, deps: { store, publisher: { publish } } };
+  const resumeWork = vi.fn(async () => ({ outcome: 'queued' as const }));
+  return {
+    store,
+    publish,
+    resumeWork,
+    deps: { store, publisher: { publish }, resumeWork },
+  };
 }
 
 function published(publish: ReturnType<typeof vi.fn>) {
@@ -186,18 +192,97 @@ describe('routeAgentEvent', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
-  it('skips Work targets until they are supported', async () => {
-    const { publish, deps } = await seeded(
-      subscription('w', { target: { type: 'work', workId: 'W1' } }),
+  it('records an event on a subscribed Work instead of publishing it (#3570)', async () => {
+    const { store, publish, resumeWork, deps } = await seeded(
+      subscription('w', {
+        target: { type: 'work', workId: 'W1' },
+        until: 'review',
+      }),
     );
     expect((await routeAgentEvent(review, deps)).deliveries).toEqual([
       {
         subscriptionId: 'w',
         deliveryId: 'w:gh-delivery-1',
-        outcome: 'unsupported-target',
+        outcome: 'resume-queued',
+        workId: 'W1',
+        ended: true,
       },
     ]);
+    expect(resumeWork).toHaveBeenCalledWith({
+      workId: 'W1',
+      deliveryId: 'w:gh-delivery-1',
+      notice: expect.stringContaining(
+        '[lcars-event] github:pr:jlapenna/homelab#3827 review by jlapenna',
+      ),
+    });
+    expect(
+      (resumeWork.mock.calls[0] as unknown as [{ notice: string }])[0].notice,
+    ).toContain('Subscription w has ended.');
     expect(publish).not.toHaveBeenCalled();
+    // Ended by its until kind, so a repeat finds nothing.
+    expect(await store.get('w')).toBeUndefined();
+  });
+
+  it('remembers a Work delivery and reports a repeat the Work already has as a duplicate', async () => {
+    const { store, resumeWork, deps } = await seeded(
+      subscription('w', { target: { type: 'work', workId: 'W1' } }),
+    );
+    await routeAgentEvent(review, deps);
+    expect((await store.get('w'))?.routedEventIds).toEqual(['gh-delivery-1']);
+    expect((await routeAgentEvent(review, deps)).deliveries).toEqual([
+      {
+        subscriptionId: 'w',
+        deliveryId: 'w:gh-delivery-1',
+        outcome: 'duplicate',
+      },
+    ]);
+    expect(resumeWork).toHaveBeenCalledTimes(1);
+
+    resumeWork.mockResolvedValueOnce({ outcome: 'duplicate' } as never);
+    expect(
+      (await routeAgentEvent({ ...review, id: 'gh-delivery-2' }, deps))
+        .deliveries,
+    ).toEqual([
+      {
+        subscriptionId: 'w',
+        deliveryId: 'w:gh-delivery-2',
+        outcome: 'duplicate',
+      },
+    ]);
+  });
+
+  it('removes a Work subscription whose Work refuses the event', async () => {
+    const { store, resumeWork, deps } = await seeded(
+      subscription('w', { target: { type: 'work', workId: 'W1' } }),
+    );
+    resumeWork.mockResolvedValueOnce({
+      outcome: 'refused',
+      reason: 'task-closed',
+    } as never);
+    expect((await routeAgentEvent(review, deps)).deliveries).toEqual([
+      {
+        subscriptionId: 'w',
+        deliveryId: 'w:gh-delivery-1',
+        outcome: 'resume-refused',
+        workId: 'W1',
+        reason: 'task-closed',
+      },
+    ]);
+    expect(await store.get('w')).toBeUndefined();
+  });
+
+  it('retries a Work target whose resume could not be recorded', async () => {
+    const { store, resumeWork, deps } = await seeded(
+      subscription('w', { target: { type: 'work', workId: 'W1' } }),
+    );
+    resumeWork.mockRejectedValueOnce(new Error('firestore unavailable'));
+    await expect(routeAgentEvent(review, deps)).rejects.toThrow(
+      '1 of 1 deliveries for event gh-delivery-1 failed',
+    );
+    expect((await store.get('w'))?.routedEventIds).toBeUndefined();
+    expect(
+      (await routeAgentEvent(review, deps)).deliveries.map((d) => d.outcome),
+    ).toEqual(['resume-queued']);
   });
 
   it('routes the rest when one publish fails, then throws so a retry sends only the failed one', async () => {

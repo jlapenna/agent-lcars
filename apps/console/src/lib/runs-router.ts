@@ -755,7 +755,7 @@ export const runsRouter = os.router({
         ? mode === 'claw'
         : run.pipeline === 'goose'
           ? mode === 'recipe'
-          : ['implement', 'review', 'reply'].includes(mode))
+          : ['implement', 'review', 'reply', 'event'].includes(mode))
     ) {
       throw errors.UNAUTHORIZED({ message: 'run has no valid dispatch mode' });
     }
@@ -779,7 +779,12 @@ export const runsRouter = os.router({
     const triageContext = triageBriefContext(run);
     const params = {
       mode,
-      reply: run.params?.['reply'] ?? '',
+      // An event-resume run (#3570) reads its event notice where a reply
+      // round reads the human's turn; `mode` tells the two apart.
+      reply:
+        (mode === 'event'
+          ? run.params?.['eventNotice']
+          : run.params?.['reply']) ?? '',
       replyChannel: run.params?.['replyChannel'] ?? '',
       replyPrincipal: run.params?.['replyPrincipal'] ?? '',
       runbook: run.params?.['runbook'] ?? '',

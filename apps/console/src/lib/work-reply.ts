@@ -17,10 +17,6 @@ import {
   taskKey,
 } from '@agent-lcars/orchestrator';
 import {
-  isClaudeSubagentSessionId,
-  type SessionDoc,
-} from '@agent-lcars/telemetry';
-import {
   isSourceManagedWork,
   recipeWorkSpecSchema,
   type WorkOrigin,
@@ -33,16 +29,7 @@ import { isClosedItemState } from './session-expiry';
 import { hasCrossRepoOption } from './watched-repo';
 import { forbiddenReason, type WorkContext } from './work-mint';
 import { authorizeProviderFallback } from './work-provider-fallback';
-
-/** The pipelines whose CLI session can be restored. Values are
- *  `SessionAgent` members (`libs/telemetry/src/lib/types.ts`), matching
- *  what `selectResumeSession` compares against `doc.agent` below. */
-const RESUMABLE_PIPELINES: Record<string, string> = {
-  claude: 'claude-code',
-  codex: 'codex',
-  opencode: 'opencode',
-  agy: 'antigravity',
-};
+import { resumeParamsFor } from './work-resume-session';
 
 export interface ReplyRequest {
   /** The orchestrator's own anchor union: `{ workId }` for a native item,
@@ -104,53 +91,6 @@ function replyReceipt(run: Run, request: ReplyRequest): ReplyOutcome {
     runId: run.runId,
     resumed: run.params?.['resumeSessionId'] !== undefined,
   };
-}
-
-/** The artifact a resume actually restores from. Claude and Codex archive
- *  their raw session, so it is the transcript itself; OpenCode's transcript
- *  is a sanitized rendering whose every word is a redaction marker, so only
- *  its separate raw export can carry the conversation -- an OpenCode
- *  session therefore never falls back to `transcriptGcsUri`, even when it
- *  has one (e.g. the raw-export capture failed but the sanitized capture
- *  didn't; see `opencode-export-capture.ts`). Falling back there would
- *  silently resume into redaction markers, exactly what `resumeGcsUri` was
- *  added to prevent. */
-export function resumeUriFor(doc: SessionDoc): string | undefined {
-  if (doc.source !== 'issue-agent' || doc.transcriptGcsUri === undefined) {
-    return undefined;
-  }
-  if (doc.agent === 'claude-code' && isClaudeSubagentSessionId(doc.sessionId)) {
-    return undefined;
-  }
-  if (doc.agent === 'opencode') {
-    return doc.resumeGcsUri;
-  }
-  return doc.resumeGcsUri ?? doc.transcriptGcsUri;
-}
-
-/**
- * The newest session that this item can actually resume: it must belong to
- * one of this item's own runs, carry a resumable artifact, and be the
- * agent the requested pipeline runs. Pure, so the ownership rules are
- * testable without a Firestore double.
- */
-export function selectResumeSession(
-  sessions: readonly SessionDoc[],
-  runIds: ReadonlySet<string>,
-  pipeline: string,
-): SessionDoc | undefined {
-  const agent = RESUMABLE_PIPELINES[pipeline];
-  if (agent === undefined) return undefined;
-  return sessions
-    .filter(
-      (doc) =>
-        doc.source === 'issue-agent' &&
-        doc.intentId !== undefined &&
-        runIds.has(doc.intentId) &&
-        doc.agent === agent &&
-        resumeUriFor(doc) !== undefined,
-    )
-    .sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt))[0];
 }
 
 /**
@@ -305,14 +245,7 @@ export async function requestReply(
   if (mayResume) {
     const runIds = new Set(runs.map((r) => r.runId));
     const sessions = await context.sessionDocsForRuns([...runIds]);
-    const chosen = selectResumeSession(sessions, runIds, pipeline);
-    const resumeUri = chosen === undefined ? undefined : resumeUriFor(chosen);
-    if (chosen !== undefined && resumeUri !== undefined) {
-      resumeParams = {
-        resumeSessionId: chosen.sessionId,
-        resumeTranscriptGcsUri: resumeUri,
-      };
-    }
+    resumeParams = resumeParamsFor(sessions, runIds, pipeline);
   }
 
   const outcome = await context.runtime.orchestrator.request({
