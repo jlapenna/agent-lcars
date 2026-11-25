@@ -8,7 +8,7 @@
     "test": "bash package-review.test.sh"
   },
   "dependencies": {
-    "@anthropics/claude-plugins-official": "github:anthropics/claude-plugins-official#6985b2d88dc08b4a0d202f5f0301f02e360b9cb1"
+    "@anthropics/claude-plugins-official": "github:anthropics/claude-plugins-official#0fbfda5a91f4adc311daca25acc99132f40f0b6e"
   },
   "nx": {
     "targets": {

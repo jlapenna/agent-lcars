@@ -331,8 +331,8 @@ importers:
   packages/anthropic-code-review:
     dependencies:
       '@anthropics/claude-plugins-official':
-        specifier: github:anthropics/claude-plugins-official#6985b2d88dc08b4a0d202f5f0301f02e360b9cb1
-        version: https://codeload.github.com/anthropics/claude-plugins-official/tar.gz/6985b2d88dc08b4a0d202f5f0301f02e360b9cb1
+        specifier: github:anthropics/claude-plugins-official#0fbfda5a91f4adc311daca25acc99132f40f0b6e
+        version: https://codeload.github.com/anthropics/claude-plugins-official/tar.gz/0fbfda5a91f4adc311daca25acc99132f40f0b6e
 
   packages/fleet-tools: {}
 
@@ -350,8 +350,8 @@ packages:
       '@modelcontextprotocol/server':
         optional: true
 
-  '@anthropics/claude-plugins-official@https://codeload.github.com/anthropics/claude-plugins-official/tar.gz/6985b2d88dc08b4a0d202f5f0301f02e360b9cb1':
-    resolution: {gitHosted: true, integrity: sha512-JoflAUnzcbbYWtOMg3TqkNBUDy4qnHCItt68m87zbtMbVB5RZjnBY6OipK1E3wPsp1TJA0Qap8jphbAHXUKx+g==, tarball: https://codeload.github.com/anthropics/claude-plugins-official/tar.gz/6985b2d88dc08b4a0d202f5f0301f02e360b9cb1}
+  '@anthropics/claude-plugins-official@https://codeload.github.com/anthropics/claude-plugins-official/tar.gz/0fbfda5a91f4adc311daca25acc99132f40f0b6e':
+    resolution: {gitHosted: true, integrity: sha512-n+mQQVEXKU7sOHbuG/hzsdUR5pg1WalD3A7lI011LtXcvzTsU+qIrY/B/5ni+As3ENYkTy5Ic3zUe5BPin0HLg==, tarball: https://codeload.github.com/anthropics/claude-plugins-official/tar.gz/0fbfda5a91f4adc311daca25acc99132f40f0b6e}
     version: 0.0.0
 
   '@apidevtools/json-schema-ref-parser@9.1.2':
@@ -7785,7 +7785,7 @@ snapshots:
     optionalDependencies:
       '@modelcontextprotocol/server': 2.4.0
 
-  '@anthropics/claude-plugins-official@https://codeload.github.com/anthropics/claude-plugins-official/tar.gz/6985b2d88dc08b4a0d202f5f0301f02e360b9cb1': {}
+  '@anthropics/claude-plugins-official@https://codeload.github.com/anthropics/claude-plugins-official/tar.gz/0fbfda5a91f4adc311daca25acc99132f40f0b6e': {}
 
   '@apidevtools/json-schema-ref-parser@9.1.2':
     dependencies:
