@@ -537,6 +537,13 @@ Approval is the request to land it; the ruleset still decides when it merges.
 Otherwise leave a human-authored PR's merge state unchanged unless the
 maintainer explicitly asked this run to merge it.
 
+GitHub refuses the queue-only mutation with `Pull request ... is in clean
+status` when the PR could merge now, which is the usual state of an approved
+PR. That refusal is not a failure to park on: with the head unchanged and the
+approval and required checks green on it, run the same guard chained to
+`gh pr merge "$pr_number" --repo "$repository" --auto --squash --match-head-commit "$reviewed_head"`
+(never `--admin`), then verify the merge and its rules evaluation.
+
 The repository's Agent PR Auto-Merge workflow is a reconciliation backstop,
 not a substitute for this worker-owned handoff. If arming or the readback
 fails, apply the one-diagnosis-one-targeted-action rule below; if it still
