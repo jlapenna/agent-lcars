@@ -299,6 +299,13 @@ export interface OrchestratorStore {
    * fields are read: a run document carries its whole event history.
    */
   listRunRefsWithSummary(summary: string): Promise<RunRef[]>;
+  /**
+   * Recompute a task's stored item state (`derived`, #3566) from its current
+   * runs, in one transaction, without changing its revision. For tasks last
+   * written before the state was stored. False when the task does not exist
+   * or one of its runs cannot be read.
+   */
+  refreshTaskDerived(id: TaskId): Promise<boolean>;
   /** Store a run's whole final message out of line, as the chunks
    * `splitRunMessage` produced. Content-addressed by `overflow.sha256` and
    * idempotent; never changes the run document. */
