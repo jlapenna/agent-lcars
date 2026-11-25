@@ -74,11 +74,10 @@
         }
       ],
       "permissions": {
-        "actions": "read",
         "administration": "write",
         "metadata": "read"
       },
-      "_note": "What runner scale-set listeners register with. Its private key is deployed on the homelab controller for those listeners (github-runner-autoscaler/lcars-app-private-key.pem) and the collector reads it there in place, so this App is asserted from the same host with no new key distribution (jlapenna/homelab#768). It was previously modelled as unassertable on the belief that the key only existed in the ansible vault; that was wrong. It still carries actions:read (App settings UI, 2026-09-20), granted for the github-actions-exporter's former REST polling (jlapenna/agent-lcars#2024). The exporter now consumes App webhooks over Pub/Sub (jlapenna/agent-lcars#3525) and no longer uses this App; remove actions:read here and in the App settings once that cutover is verified. Prose: docs/fleet-credentials.md ('Actions exporter key')."
+      "_note": "What runner scale-set listeners register with. Its private key is deployed on the homelab controller for those listeners (github-runner-autoscaler/lcars-app-private-key.pem) and the collector reads it there in place, so this App is asserted from the same host with no new key distribution (jlapenna/homelab#768). It was previously modelled as unassertable on the belief that the key only existed in the ansible vault; that was wrong. Its former actions:read grant (2026-09-20) served only the github-actions-exporter's REST polling (jlapenna/agent-lcars#2024) and was removed once the exporter moved to App webhooks over Pub/Sub (jlapenna/agent-lcars#3525). Prose: docs/fleet-credentials.md ('Actions exporter key')."
     }
   ],
   "_fleetCoverageNote": "Every entry in fleetRepositories must be covered by some App installation. supersprinklesracing/www was found uncovered this way (#1380).",
