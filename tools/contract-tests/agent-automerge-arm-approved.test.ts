@@ -37,8 +37,19 @@ done
 case "$args" in
   "api --paginate repos/o/r/pulls?"*)
     jq -r "$jq_prog" "$STATE/pulls.json" ;;
+  "pr merge "*"--disable-auto"*)
+    echo "$3" >>"$STATE/disarmed"
+    grep -vx "$3" "$STATE/armed" >"$STATE/armed.next" || true
+    mv "$STATE/armed.next" "$STATE/armed" ;;
   "pr merge "*)
-    pr="$3"; echo "$pr" >>"$STATE/armed" ;;
+    echo "$3" >>"$STATE/armed" ;;
+  "pr view "*"--json autoMergeRequest"*)
+    if grep -qx "$3" "$STATE/armed" 2>/dev/null; then
+      out='{"autoMergeRequest":{"enabledBy":{"login":"app/agent-lcars"}}}'
+    else
+      out='{"autoMergeRequest":null}'
+    fi
+    if [ -n "$jq_prog" ]; then jq -e "$jq_prog" <<<"$out"; else echo "$out"; fi ;;
   "pr view "*"--json reviewDecision"*)
     jq -r --arg pr "$3" '.[$pr] // ""' "$STATE/decisions.json" ;;
   "pr view "*"--json state,autoMergeRequest"*)
@@ -70,7 +81,11 @@ const pull = (
   base: { repo: { full_name: 'o/r' } },
 });
 
-function runArm(pulls: unknown[], decisions: Record<string, string>) {
+function runArm(
+  pulls: unknown[],
+  decisions: Record<string, string>,
+  prearmed: number[] = [],
+) {
   const state = mkdtempSync(path.join(tmpdir(), 'automerge-arm-'));
   const bin = path.join(state, 'bin');
   spawnSync('mkdir', [bin]);
@@ -78,6 +93,10 @@ function runArm(pulls: unknown[], decisions: Record<string, string>) {
   chmodSync(path.join(bin, 'gh'), 0o755);
   writeFileSync(path.join(state, 'pulls.json'), JSON.stringify(pulls));
   writeFileSync(path.join(state, 'decisions.json'), JSON.stringify(decisions));
+  writeFileSync(
+    path.join(state, 'armed'),
+    prearmed.map((pr) => `${pr}\n`).join(''),
+  );
   const result = spawnSync('bash', ['-e', '-c', armScript ?? ''], {
     env: {
       ...process.env,
@@ -97,12 +116,17 @@ function runArm(pulls: unknown[], decisions: Record<string, string>) {
       return [];
     }
   };
-  return { result, armed: lines('armed'), cleared: lines('cleared') };
+  return {
+    result,
+    armed: lines('armed'),
+    cleared: lines('cleared'),
+    disarmed: lines('disarmed'),
+  };
 }
 
 describe('reconcile-automerge arm admission', () => {
   it('arms agent PRs and approved same-repository PRs, nothing else', () => {
-    const { result, armed, cleared } = runArm(
+    const { result, armed, cleared, disarmed } = runArm(
       [
         pull(1, 'claude[bot]'),
         pull(2, 'jlapenna'), // approved: homelab#3800's shape
@@ -110,7 +134,7 @@ describe('reconcile-automerge arm admission', () => {
         pull(4, 'jlapenna', { fork: true }),
         pull(5, 'renovate[bot]'),
         pull(6, 'jlapenna', { draft: true }),
-        pull(7, 'jlapenna', { parked: true }),
+        pull(7, 'jlapenna', { parked: true }), // App-armed, then parked
         pull(8, 'jlapenna'), // changes requested
       ],
       {
@@ -122,9 +146,12 @@ describe('reconcile-automerge arm admission', () => {
         '7': 'APPROVED',
         '8': 'CHANGES_REQUESTED',
       },
+      [7],
     );
     expect(result.status, result.stderr + result.stdout).toBe(0);
     expect(armed).toEqual(['1', '2']);
+    // Parking holds a human PR the sweep armed, as it does an agent PR.
+    expect(disarmed).toEqual(['7']);
     // Review requests are an agent-PR concern; a human PR's stay untouched.
     expect(new Set(cleared)).toEqual(new Set(['1']));
     expect(result.stdout).toContain(

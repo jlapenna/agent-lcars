@@ -92,7 +92,8 @@ non-parked PR that is either agent-authored (`bot-logins`) or a
 same-repository PR whose `reviewDecision` is `APPROVED`, whoever opened it.
 Approval is the gate, and most maintainer-login PRs are agent-written
 (jlapenna/homelab#3800 sat approved and unarmed). Fork PRs and Renovate or
-Dependabot PRs are never armed this way. Arming an approved PR happens on the
+Dependabot PRs are never armed this way. Adding `status:needs-human` disarms any PR
+the sweep could have armed, whoever opened it. Arming an approved PR happens on the
 next reconcile event: a push to the base branch, a successful PR CI run, the
 daily schedule or a manual dispatch.
 

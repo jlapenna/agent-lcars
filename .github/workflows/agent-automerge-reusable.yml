@@ -82,8 +82,7 @@ jobs:
     if: >
       (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') &&
       github.event.action == 'labeled' &&
-      github.event.label.name == 'status:needs-human' &&
-      contains(fromJSON(inputs.bot-logins), github.event.pull_request.user.login)
+      github.event.label.name == 'status:needs-human'
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 5
     permissions:
@@ -94,7 +93,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - name: Disable auto-merge for the parked agent PR
+      - name: Disable auto-merge for the parked PR
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
@@ -332,14 +331,18 @@ jobs:
             # is the gate (jlapenna/agent-lcars#3508), and most such PRs are
             # agent-written under the maintainer's login (homelab#3800 sat
             # approved and unarmed). Forks never reach the App's arm, and
-            # dependency bots keep their own automerge.
+            # dependency bots keep their own automerge. A parked PR skips the
+            # approval read and falls through to the disarm below, so parking
+            # holds every PR this sweep could have armed.
             if [ "$AGENT" = false ]; then
               case "$AUTHOR" in
                 renovate\[bot\] | dependabot\[bot\]) continue ;;
               esac
-              if [ "$SAME_REPO" != true ] || [ "$PARKED" = true ]; then
+              if [ "$SAME_REPO" != true ]; then
                 continue
               fi
+            fi
+            if [ "$AGENT" = false ] && [ "$PARKED" != true ]; then
               if ! DECISION=$(gh pr view "$PR" --repo "$REPO" --json reviewDecision --jq .reviewDecision); then
                 echo "::error::Could not read the review decision of PR #$PR."
                 FAILED=$((FAILED + 1))
@@ -354,14 +357,14 @@ jobs:
               VIEW=$(gh pr view "$PR" --repo "$REPO" --json autoMergeRequest)
               if jq -e '.autoMergeRequest != null' <<<"$VIEW" >/dev/null; then
                 if ! gh pr merge "$PR" --repo "$REPO" --disable-auto; then
-                  echo "::error::Could not disable auto-merge for parked agent PR #$PR."
+                  echo "::error::Could not disable auto-merge for parked PR #$PR."
                   FAILED=$((FAILED + 1))
                   continue
                 fi
               fi
               if ! gh pr view "$PR" --repo "$REPO" --json autoMergeRequest \
                 --jq 'if .autoMergeRequest == null then . else error("auto-merge remains armed on parked PR") end' >/dev/null; then
-                echo "::error::Auto-merge remains armed on parked agent PR #$PR."
+                echo "::error::Auto-merge remains armed on parked PR #$PR."
                 FAILED=$((FAILED + 1))
               fi
               continue
