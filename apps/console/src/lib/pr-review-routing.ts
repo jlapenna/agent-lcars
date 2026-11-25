@@ -1,8 +1,8 @@
 import {
   AGENT_LABELS,
   type AgentPipeline,
-  PULL_REQUEST_AUTHOR_BOT_LOGIN,
   DISPATCH_PIPELINES,
+  PULL_REQUEST_AUTHOR_BOT_LOGIN,
 } from '@agent-lcars/dispatch-contracts';
 
 export const UNIFIED_REVIEW_LABEL = 'review';
