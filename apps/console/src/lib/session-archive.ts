@@ -16,9 +16,9 @@ import {
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
+  listSessionDocsWrittenSince,
 } from '@agent-lcars/telemetry/server';
 import { isE2eTesting } from '@agent-lcars/util-server';
-import { cacheLife } from 'next/cache';
 
 import { DEFAULT_ARCHIVE_DAYS, ONE_HOUR_DAYS } from './archive-window';
 import {
@@ -28,6 +28,15 @@ import {
   type WatchedRepo,
 } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
+import {
+  getArchiveSnapshotFirestore,
+  loadArchiveSnapshot,
+  saveArchiveSnapshot,
+} from './session-archive-snapshot';
+import {
+  createSessionArchiveSync,
+  type SessionArchiveSync,
+} from './session-archive-sync';
 import { matchesSessionFind } from './session-find';
 import { aggregateSessionLedger, type SessionLedger } from './session-ledger';
 import {
@@ -296,42 +305,74 @@ async function listArchiveDocs(
 }
 
 /**
- * Same short window as the dashboard's projection cache
- * (DASHBOARD_CACHE_LIFE): loads within 30 s reuse one read, and nothing
- * served is older than 60 s. Sessions, Costs and the cost readouts all read
- * this archive, and the 14-day window is about 6,000 documents: some 5 s of
- * Firestore streaming that every navigation used to pay again. Telemetry is
- * read-only to the console, so no console write needs to invalidate it.
+ * The archive window Sessions, Costs and the cost readouts read, kept
+ * current in memory: each read fetches only the sessions written since the
+ * previous one. The 14-day window is about 6,500 documents and some 2 to
+ * 5 s to stream, which is what pages used to pay, or avoid by serving a
+ * copy up to a minute old. An instance that has not read it yet starts from
+ * the saved snapshot (session-archive-snapshot.ts) instead.
+ *
+ * Held on `globalThis` rather than in a module-level constant: Next bundles
+ * App Router pages and Route Handlers into separate module graphs that
+ * share one JS realm, so a module constant would hold two copies of the
+ * window and load each on its own (see e2e-github-fixtures.ts).
  */
-const SESSION_ARCHIVE_CACHE_LIFE = { stale: 30, revalidate: 30, expire: 60 };
+const ARCHIVE_SYNC_KEY = '__agentLcarsSessionArchiveSync';
 
-/** Keyed by the window in days rather than its exact start, so successive
- * loads share an entry; the cached read fixes its own start. */
-async function listCachedArchiveDocs(
-  days: number,
-  source: ArchiveDocsFilter['source'],
-  issueNumber: number | undefined,
-): Promise<SessionDoc[]> {
-  'use cache';
-  cacheLife(SESSION_ARCHIVE_CACHE_LIFE);
-  return listArchiveDocs({
-    activeSince: new Date(
-      Date.now() - days * 24 * 60 * 60 * 1000,
-    ).toISOString(),
-    ...(source && { source }),
-    ...(issueNumber !== undefined && { issueNumber }),
-  });
+function archiveSync(): SessionArchiveSync {
+  const realm = globalThis as Record<string, unknown>;
+  realm[ARCHIVE_SYNC_KEY] ??= createSessionArchiveSync(
+    {
+      listActiveSince: (activeSince) => listArchiveDocs({ activeSince }),
+      listWrittenSince: async (since) =>
+        listSessionDocsWrittenSince(
+          await getAgentTelemetryReaderFirestore(),
+          since,
+        ),
+      now: () => Date.now(),
+      loadSnapshot: () => loadArchiveSnapshot(getArchiveSnapshotFirestore()),
+      saveSnapshot: (snapshot) =>
+        saveArchiveSnapshot(getArchiveSnapshotFirestore(), snapshot),
+      onSnapshotError: (operation, error) =>
+        logger.warn(
+          `agent-lcars: session archive snapshot ${operation} failed:`,
+          error,
+        ),
+    },
+    DEFAULT_ARCHIVE_DAYS,
+  );
+  return realm[ARCHIVE_SYNC_KEY] as SessionArchiveSync;
 }
 
-/** Windows up to the 14-day default read through the cache; wider ones, a
- * snapshot's own clock, and hermetic E2E fixtures read Firestore directly. */
-function readArchiveDocs(
+/** Windows longer than a day, up to the 14-day default, read the in-memory
+ * archive. A day or less (Bridge, the rail's 24-hour figures) reads
+ * Firestore directly: about 500 documents in 0.4 s, where an instance that
+ * has not loaded the archive yet would first read all 14 days. Wider
+ * windows, a snapshot's own clock, and hermetic E2E fixtures (whose resets
+ * delete documents) also read directly. */
+async function readArchiveDocs(
   filter: ArchiveDocsFilter,
-  cacheableDays: number | undefined,
+  syncedDays: number | undefined,
 ): Promise<SessionDoc[]> {
-  return cacheableDays === undefined || isE2eTesting()
-    ? listArchiveDocs(filter)
-    : listCachedArchiveDocs(cacheableDays, filter.source, filter.issueNumber);
+  if (syncedDays === undefined || syncedDays <= 1 || isE2eTesting())
+    return listArchiveDocs(filter);
+  return (await archiveSync().read(syncedDays)).filter(
+    (doc) =>
+      (filter.source === undefined || doc.source === filter.source) &&
+      (filter.issueNumber === undefined ||
+        (doc.source === 'issue-agent' &&
+          doc.issueNumber === filter.issueNumber)),
+  );
+}
+
+/** Tokens used by every session active within `days` (at most the 14-day
+ * default window). Throws when the session store cannot be read. */
+export async function getArchiveTokenTotal(days: number): Promise<number> {
+  const activeSince = new Date(
+    Date.now() - days * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const docs = await readArchiveDocs({ activeSince }, days);
+  return docs.reduce((sum, doc) => sum + totalTokens(doc.tokens), 0);
 }
 
 export async function getSessionArchive(
@@ -362,7 +403,7 @@ export async function getSessionArchive(
           issueNumber: query.issueNumber,
         }),
       },
-      // A snapshot consumer names its own clock, so it reads uncached.
+      // A snapshot consumer names its own clock, so it reads Firestore directly.
       options.observedAt === undefined && query.days <= DEFAULT_ARCHIVE_DAYS
         ? query.days
         : undefined,

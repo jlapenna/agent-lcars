@@ -1,10 +1,6 @@
 import { expect, test } from '@playwright/test';
 
 import { E2E_ITEM_NUMBERS, usePopulatedFixtures } from './seed';
-import {
-  cachedConsoleSession,
-  startCachedConsole,
-} from './util/cached-console';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 import { workAdminHeaders } from './util/native-work';
 import {
@@ -293,62 +289,4 @@ test.describe('live authoritative dashboards', () => {
     expect(denied.status()).toBe(401);
     expect(denied.headers()['content-type']).not.toContain('text/event-stream');
   });
-});
-
-// This sibling process uses real Auth.js cookies and Next's production cache,
-// with the fixture adapter DISABLED. It stays inside the hermetic emulator
-// boundary: no runtime override, credential or extra API surface in the app.
-test('live updates expire the actual production persistent cache', async ({
-  page,
-  request,
-}) => {
-  test.setTimeout(90_000);
-  const server = await startCachedConsole();
-  try {
-    await page.context().addCookies([await cachedConsoleSession(server.url)]);
-    const session = await page.request.get(`${server.url}/api/auth/session`);
-    expect((await session.json()).user.isAdmin).toBe(true);
-    // The sibling cannot use the E2E auth or seed adapter.
-    expect(
-      (
-        await request.post(`${server.url}/api/e2e/seed`, {
-          data: { action: 'reset' },
-        })
-      ).status(),
-    ).toBe(403);
-    let allowStream = false;
-    await page.route('**/api/dashboard/stream', async (route) => {
-      if (allowStream) await route.continue();
-      else await route.abort();
-    });
-    await page.goto(
-      `${server.url}/inbox?repo=supersprinklesracing%2Fsprinkles`,
-    );
-    const row = page.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`);
-    await expect(row).toBeVisible();
-    const before = await row.textContent();
-    await updateDashboardAnchor({
-      issue: E2E_ITEM_NUMBERS.humanNeeded,
-      title: 'Production cached evidence changed',
-    });
-    await page.reload();
-    // A real persistent-cache hit still serves the old projection. This
-    // assertion would fail if the test accidentally selected the E2E bypass.
-    await expect(row).toHaveText(before ?? '');
-    allowStream = true;
-    await expect(row).toContainText('Production cached evidence changed', {
-      timeout: 30_000,
-    });
-    // Another request sees the expired tag as well, not only this tab's RSC.
-    const second = await page.context().newPage();
-    await second.route('**/api/dashboard/stream', (route) => route.abort());
-    await second.goto(`${server.url}/inbox`);
-    await expect(
-      second.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`),
-    ).toContainText('Production cached evidence changed');
-    await second.close();
-  } finally {
-    await page.goto('about:blank');
-    await server.stop();
-  }
 });

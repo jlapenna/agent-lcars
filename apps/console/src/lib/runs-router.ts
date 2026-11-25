@@ -596,6 +596,9 @@ export const runsRouter = os.router({
         runId: claimed.runId,
         ...('workId' in claimed.task ? { workId: claimed.task.workId } : {}),
         pipeline: claimed.pipeline,
+        ...(typeof claimed.params?.['mode'] === 'string'
+          ? { mode: claimed.params['mode'] }
+          : {}),
         ...(claimed.pipeline === 'goose' &&
         (claimed.params?.['providerAuth'] === 'claude' ||
           claimed.params?.['providerAuth'] === 'agy')

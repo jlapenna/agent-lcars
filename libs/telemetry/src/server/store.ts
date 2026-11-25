@@ -17,7 +17,7 @@ import {
   Timestamp as AdminTimestamp,
 } from 'firebase-admin/firestore';
 
-import { parseSessionDoc } from '../lib/session-doc';
+import { parseSessionDoc, SESSION_WRITTEN_AT_FIELD } from '../lib/session-doc';
 import {
   SessionDoc,
   SessionRepository,
@@ -107,6 +107,7 @@ export async function upsertSession(write: SessionWrite): Promise<void> {
         ...Object.fromEntries(
           clearFields.map((field) => [field, AdminFieldValue.delete()]),
         ),
+        [SESSION_WRITTEN_AT_FIELD]: AdminFieldValue.serverTimestamp(),
       },
       { merge: true },
     );
@@ -139,6 +140,7 @@ export async function setSessionExpiry(
           expireAt === null
             ? AdminFieldValue.delete()
             : AdminTimestamp.fromDate(new Date(expireAt)),
+        [SESSION_WRITTEN_AT_FIELD]: AdminFieldValue.serverTimestamp(),
       });
     return true;
   } catch (error) {
@@ -225,8 +227,11 @@ export interface ListSessionDocsOptions {
   exhaustive?: boolean;
 }
 
-function readSessionSnapshot(snapshot: QueryDocumentSnapshot): SessionDoc {
-  const data = snapshot.data();
+/** A stored session document as a {@link SessionDoc}: the native `expireAt`
+ * Timestamp becomes the ISO string the type carries, and the
+ * `writtenAt` storage stamp is dropped. */
+function sessionFromStored(stored: Record<string, unknown>): SessionDoc {
+  const { [SESSION_WRITTEN_AT_FIELD]: _writtenAt, ...data } = stored;
   const expireAt = data['expireAt'];
   return parseSessionDoc({
     ...data,
@@ -234,6 +239,28 @@ function readSessionSnapshot(snapshot: QueryDocumentSnapshot): SessionDoc {
       expireAt: expireAt.toDate().toISOString(),
     }),
   });
+}
+
+function readSessionSnapshot(snapshot: QueryDocumentSnapshot): SessionDoc {
+  return sessionFromStored(snapshot.data());
+}
+
+/** Session documents written at or after `since`, with the time the read
+ * observed. Every commit at or before `readTime` is reflected, so passing
+ * it back as the next `since` misses no write. Served by the automatic
+ * single-field `writtenAt` index. */
+export async function listSessionDocsWrittenSince(
+  firestore: Firestore,
+  since: Timestamp,
+): Promise<{ docs: SessionDoc[]; readTime: Timestamp }> {
+  const snapshot = await firestore
+    .collection(SESSIONS_COLLECTION)
+    .where(SESSION_WRITTEN_AT_FIELD, '>=', since)
+    .get();
+  return {
+    docs: snapshot.docs.map(readSessionSnapshot),
+    readTime: snapshot.readTime,
+  };
 }
 
 /** Firestore's maximum number of values in one `in` filter. */
@@ -363,13 +390,7 @@ export async function getSessionDoc(
   if (!data) {
     return undefined;
   }
-  const expireAt = data['expireAt'];
-  return parseSessionDoc({
-    ...data,
-    ...(expireAt instanceof Timestamp && {
-      expireAt: expireAt.toDate().toISOString(),
-    }),
-  });
+  return sessionFromStored(data);
 }
 
 /** @internal Reset cached clients for testing only. */

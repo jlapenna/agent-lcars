@@ -523,3 +523,76 @@ func TestQueueJobProjectsProviderTokenOnlyForItsRecipeHarness(t *testing.T) {
 		}
 	}
 }
+
+// Reviews use a fraction of the implement shape; a smaller slot places them
+// as soon as a node frees that much room (agent-lcars review sizing).
+func TestQueueJobUsesReviewShapeOnlyForReviewRuns(t *testing.T) {
+	q, _ := kubeQueueFixture(queueReadyNode())
+	full := map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"}
+	review := map[string]string{"cpu": "1", "memory": "3Gi", "ephemeral-storage": "8Gi"}
+	q.config.Requests, q.config.Limits, q.config.ReviewResources = full, full, review
+	resources := func(l directRunnerLaunch) core.ResourceRequirements {
+		t.Helper()
+		job, err := q.job(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return job.Spec.Template.Spec.Containers[0].Resources
+	}
+	equal := func(got core.ResourceList, want map[string]string) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for name, quantity := range want {
+			value, ok := got[core.ResourceName(name)]
+			if !ok || value.Cmp(resource.MustParse(quantity)) != 0 {
+				return false
+			}
+		}
+		return true
+	}
+	for _, pipeline := range []string{"claude", "codex", "agy"} {
+		got := resources(directRunnerLaunch{runID: "o/r#1/r1", pipeline: pipeline, mode: "review"})
+		if !equal(got.Requests, review) || !equal(got.Limits, review) {
+			t.Fatalf("%s review used %v / %v, want the review shape", pipeline, got.Requests, got.Limits)
+		}
+	}
+	for _, l := range []directRunnerLaunch{
+		{runID: "o/r#1/r2", pipeline: "claude", mode: "implement"},
+		{runID: "o/r#1/r3", pipeline: "claude"},
+		{runID: "work:recipe/r1", pipeline: "goose", mode: "review"},
+	} {
+		got := resources(l)
+		if !equal(got.Requests, full) || !equal(got.Limits, full) {
+			t.Fatalf("%+v used %v, want the full shape", l, got.Requests)
+		}
+	}
+	q.config.ReviewResources = nil
+	got := resources(directRunnerLaunch{runID: "o/r#1/r4", pipeline: "claude", mode: "review"})
+	if !equal(got.Requests, full) {
+		t.Fatalf("without review_resources a review used %v, want the full shape", got.Requests)
+	}
+}
+
+func TestQueueConfigValidatesReviewResources(t *testing.T) {
+	base := func(review map[string]string) queueKubernetesConfig {
+		full := map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"}
+		return queueKubernetesConfig{Namespace: "lcars-work", CredentialsSecret: "credentials", ServiceAccount: "worker", MaxConcurrent: 5, NodeSelector: map[string]string{"kubernetes.io/os": "linux"}, Requests: full, Limits: full, ReviewResources: review}
+	}
+	valid := base(map[string]string{"cpu": "1", "memory": "3Gi", "ephemeral-storage": "8Gi"})
+	if err := valid.validate(); err != nil {
+		t.Fatalf("valid review shape refused: %v", err)
+	}
+	for name, review := range map[string]map[string]string{
+		"exceeds requests": {"cpu": "3", "memory": "3Gi", "ephemeral-storage": "8Gi"},
+		"missing storage":  {"cpu": "1", "memory": "3Gi"},
+		"extra resource":   {"cpu": "1", "memory": "3Gi", "ephemeral-storage": "8Gi", "nvidia.com/gpu": "1"},
+		"zero memory":      {"cpu": "1", "memory": "0", "ephemeral-storage": "8Gi"},
+		"unparseable":      {"cpu": "one", "memory": "3Gi", "ephemeral-storage": "8Gi"},
+	} {
+		config := base(review)
+		if err := config.validate(); err == nil {
+			t.Fatalf("%s: invalid review shape accepted", name)
+		}
+	}
+}

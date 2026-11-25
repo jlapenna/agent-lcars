@@ -496,6 +496,12 @@ executor is working an issue; a human assignee owns it regardless.
   - `kubernetes`: `namespace`, `kubeconfig`, `credentials_secret`,
     `service_account`, `max_concurrent`, `node_selector`, `requests`,
     `limits`, `tolerations`, plus:
+    - `review_resources`: an optional smaller shape for provider `review`
+      runs (`cpu`, `memory`, `ephemeral-storage`; requests equal limits,
+      each within `requests`). The claim response carries the run's `mode`,
+      and the executor launches reviews with this shape so they place as soon
+      as a node frees that much room. Implement, reply and recipe runs keep
+      `requests`/`limits`.
     - `runtimes`: per-pipeline execution runtimes keyed by `claw-*` pipeline
       name, each with a digest-pinned `image`, `requests` equal to `limits`
       within 2 CPU / 6 GiB / 40 GiB, an `active_deadline_seconds` below the

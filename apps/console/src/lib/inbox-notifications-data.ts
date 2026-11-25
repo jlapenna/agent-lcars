@@ -37,19 +37,29 @@ export function notificationDecisions(
 
 /** Re-check both session and native Work grants immediately before display.
  * This returns only authorized identifiers, never user content or credentials. */
-export async function loadInboxNotificationSnapshot(): Promise<InboxNotificationSnapshot> {
+export async function loadInboxNotificationSnapshot(
+  activityRead?: ReturnType<typeof getCachedAgentActivity>,
+): Promise<InboxNotificationSnapshot> {
   const session = await auth();
   if (!session?.user?.isAdmin || !session.user.id)
     throw new Error('Unauthorized');
-  return loadNotificationSnapshotFor(session.user.id, await workContext());
+  return loadNotificationSnapshotFor(
+    session.user.id,
+    await workContext(),
+    activityRead,
+  );
 }
 
 export async function loadNotificationSnapshotFor(
   userId: string,
   ctx: Pick<Awaited<ReturnType<typeof workContext>>, 'runtime' | 'principal'>,
+  /** An activity read the caller already started. `React.cache` only shares a
+   * read inside a render, so a Route Handler passes its own. */
+  activityRead: ReturnType<
+    typeof getCachedAgentActivity
+  > = getCachedAgentActivity(),
 ): Promise<InboxNotificationSnapshot> {
   const nativeReadStartedAt = Date.now();
-  const activityRead = getCachedAgentActivity();
   const [queue, activity, sessions, native, snoozes] = await Promise.all([
     getCachedQueueItems(),
     activityRead,

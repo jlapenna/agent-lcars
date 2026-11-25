@@ -22,7 +22,8 @@ history — move values with pipes, `read -rs`, or files created under
 | `antigravity-oauth-token` | Console QueueExecutor (run time)                                                                | homelab vault `agent_lcars_antigravity_oauth_token` (`lcars-runner-credentials`)         | maintainer only (`agy auth login`) |
 | `hindsight-api-token`     | Console QueueExecutor (run time, per-repo `agent-lcars::<repo>` memory)                         | homelab vault `hindsight_api_token` + age store `HINDSIGHT_API_TOKEN`                    | maintainer (homelab secrets)       |
 | `AGENT_LCARS_PRIVATE_KEY` | every pipeline's token mint; console                                                            | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`)                     | maintainer (App settings UI)       |
-| Autoscaler App key        | runner registration (homelab autoscaler); github-actions-exporter (homelab)                     | homelab vault `github_autoscaler_lcars_app_private_key`                                  | maintainer (App settings UI)       |
+| Autoscaler App key        | runner registration (homelab autoscaler)                                                        | homelab vault `github_autoscaler_lcars_app_private_key`                                  | maintainer (App settings UI)       |
+| Actions exporter key      | github-actions-exporter (homelab) Pub/Sub subscriber                                            | homelab vault `github_actions_exporter_key_json`                                         | maintainer (`gcloud` keys create)  |
 | `work-reader` ID token    | interactive sessions' `lcars work owner` (Console Work API)                                     | none stored; minted per call by Google impersonation                                     | `user:jlapenna@gmail.com` only     |
 | `claw-operator` ID token  | interactive claw admission (`POST /api/work/v1/claw/agents/{owner}/{repo}/{name}/runs`, cancel) | none stored; minted per call by Google impersonation                                     | `user:jlapenna@gmail.com` only     |
 
@@ -37,9 +38,10 @@ Two GitHub Apps exist and are easy to confuse:
   [jlapenna 150568943](https://github.com/settings/installations/150568943),
   [supersprinklesracing 150568991](https://github.com/organizations/supersprinklesracing/settings/installations/150568991).
 - **Autoscaler App** (`agent-lcars-autoscaler`, client `Iv23lir3t9e2k4RAkWxw`):
-  what runner scale-set listeners register with (Administration R/W, plus
-  Actions R/O — that read belongs to the github-actions-exporter, which shares
-  this App; see "Autoscaler App key" below). Its
+  what runner scale-set listeners register with (Administration R/W and
+  Metadata R/O). Its former Actions R/O grant served only the
+  github-actions-exporter's REST polling and was removed after the exporter
+  moved to webhooks (#3525; see "Actions exporter key" below). Its
   jlapenna installation uses "All repositories", confirmed by the maintainer
   during labels onboarding on 2026-10-12. The supersprinklesracing baseline
   remains "All repositories"; #1381 records its separately owned narrowing
@@ -62,8 +64,9 @@ its membership uses the GitHub UI or the
 with a supported credential; the two require distinct administrative
 capabilities.
 
-`labels` uses GitHub-hosted CI and adds no dedicated ARC lane. Its
-`agent-lcars-autoscaler` coverage serves the Homelab Actions exporter.
+`labels` uses GitHub-hosted CI and adds no dedicated ARC lane. The Homelab
+Actions exporter receives its `workflow_job`/`workflow_run` events through the
+`agent-lcars` installation.
 GitHub App access does not itself admit a repository to the Console, establish
 an active runner, or widen Terraform-owned WIF access.
 
@@ -476,16 +479,27 @@ settings, updating the vault value, and redeploying — see homelab's
 `github-runner-autoscaler/README.md` ("GitHub App setup") for the
 provisioning walkthrough and installation IDs.
 
-The github-actions-exporter deployed on homelab shares this App: since #2024
-it authenticates as client `Iv23lir3t9e2k4RAkWxw` with a copy of this key
-mounted from homelab's `observability/github-actions-exporter-app-key.pem`
-and mints per-owner installation tokens to scrape `/actions/runs` metrics for
-repositories a fine-grained PAT could never reach. That scrape is why the App
-carries `actions: read` (App settings UI, 2026-09-20), modelled in
-`tools/iam-contract/model.json`. Rotation consequence: this key now backs the
-runner listeners **and** the exporter, so a rotation must update the vault
-value, the controller mount, and the exporter's copy in homelab's checkout in
-the same redeploy — or the exporter goes dark on Actions metrics.
+### Actions exporter key
+
+The github-actions-exporter no longer calls GitHub (#3525). The `agent-lcars`
+App's `workflow_job` and `workflow_run` webhooks reach the console, which
+publishes them to the Pub/Sub topic `github-actions-events`; the exporter on
+homelab reads subscription `github-actions-exporter` as the
+`github-actions-exporter` service account, which holds only
+`roles/pubsub.subscriber` on that subscription. It runs outside GitHub Actions
+with no OIDC identity, so it uses a user-managed key (allowlisted in
+`tools/iam-contract/model.json`). Mint it after the Terraform apply straight
+into the Homelab vault:
+
+```bash
+gcloud iam service-accounts keys create /dev/stdout \
+  --iam-account=github-actions-exporter@agent-lcars.iam.gserviceaccount.com \
+  | (cd <homelab feature worktree> && \
+     ./bin/manage-secrets.sh set --create github_actions_exporter_key_json)
+```
+
+Rotate by minting a new key the same way, redeploying the exporter, and
+deleting the old key with `gcloud iam service-accounts keys delete`.
 
 ## Repo vars that ride along
 
