@@ -5,7 +5,6 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  piscina@<4.9.4: 5.3.2
   proxy-addr@<2.0.8: 2.0.8
   brace-expansion@>=2 <2.1.6: 2.1.8
   fast-uri@<3.1.7: 3.1.9
