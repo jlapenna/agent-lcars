@@ -3438,6 +3438,32 @@ export function runOrchestratorStoreContract(
       });
     });
 
+    describe('stored item state refresh', () => {
+      it('recomputes a task’s stored item state and reports a missing task', async () => {
+        const { store, orchestrator } = await fixture();
+        const parked = await started(orchestrator, 'req-refresh');
+        await orchestrator.report(parked.run.runId, {
+          ok: true,
+          summary: 'park',
+        });
+
+        expect(await store.refreshTaskDerived(parked.run.task)).toBe(true);
+        const refreshed = await store.readTask(parked.run.task);
+        expect(refreshed?.derived).toEqual(
+          taskDerivedFrom(
+            refreshed!.task,
+            await store.listRuns(parked.run.task),
+          ),
+        );
+        expect(refreshed?.derived?.state).toBe('parked');
+        expect(
+          await store.refreshTaskDerived({
+            workId: '01J5Z3K9QX8F0N2B4V6C8D1E9Z',
+          }),
+        ).toBe(false);
+      });
+    });
+
     describe('runs by reported summary', () => {
       it('lists the task and update time of every run that reported a summary', async () => {
         const { store, orchestrator } = await fixture();

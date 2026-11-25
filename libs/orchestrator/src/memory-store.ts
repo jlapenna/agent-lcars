@@ -259,6 +259,20 @@ export class MemoryStore implements OrchestratorStore {
     return runs;
   }
 
+  async refreshTaskDerived(id: TaskId): Promise<boolean> {
+    const key = taskKey(id);
+    const current = this.#tasks.get(key);
+    if (current === undefined) return false;
+    this.#tasks.set(key, {
+      ...current,
+      derived: taskDerivedFrom(
+        current.task,
+        [...this.#runs.values()].filter((run) => taskKey(run.task) === key),
+      ),
+    });
+    return true;
+  }
+
   async listRunRefsWithSummary(summary: string): Promise<RunRef[]> {
     return [...this.#runs.values()]
       .filter((run) => run.result?.summary === summary)

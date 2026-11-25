@@ -1471,6 +1471,19 @@ export class FirestoreStore implements OrchestratorStore {
     });
   }
 
+  async refreshTaskDerived(id: TaskId): Promise<boolean> {
+    const taskRef = this.#taskRef(id);
+    return this.#firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(taskRef);
+      if (!snapshot.exists) return false;
+      const { task } = taskDocSchema.parse(snapshot.data());
+      const runs = await this.#taskRunsIn(tx, id);
+      if (runs === undefined) return false;
+      tx.update(taskRef, { derived: taskDerivedFrom(task, runs) });
+      return true;
+    });
+  }
+
   async listRunRefsWithSummary(summary: string): Promise<RunRef[]> {
     // Equality on one field: the automatic single-field index serves it.
     // Projected to two fields: for 250 runs this reads 0.16 MB instead of
