@@ -1039,9 +1039,12 @@ function buildQualificationContext(input: {
     `request body, release notes or package contents. Make every code, configuration and lockfile change the update ` +
     `needs, run the repository's verification, and push to ${input.headRefName}. Then mark the pull ` +
     `request ready (gh pr ready) and arm squash auto-merge: required checks and the LCARS review gate ` +
-    `the merge. If adopting it needs a decision only the maintainer can make (for example a data ` +
-    `migration or a breaking behavior change with no compatible path), park with that exact question ` +
-    `instead of marking it ready. Do not close the pull request. Post a deliverable carrying your exact ` +
+    `the merge. If the evidence shows the update should not be adopted (the base already satisfies ` +
+    `what it proposes, upstream withdrew it, or nothing that depends on it can work with it), post one ` +
+    `comment with that evidence carrying your attempt claim and <!-- agent-result:v1:no-op -->, then ` +
+    `close the pull request (gh pr close): Renovate stops proposing that version. Park with the exact ` +
+    `question only when adopting it needs a decision only the maintainer can make, such as a data ` +
+    `migration or a product behavior change. Post a deliverable carrying your exact ` +
     `<!-- attempt-claim:$ATTEMPT_ID --> marker.`
   );
 }
