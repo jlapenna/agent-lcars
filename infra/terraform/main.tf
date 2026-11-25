@@ -110,6 +110,29 @@ resource "google_firestore_index" "sessions_source_repo_last_activity" {
   }
 }
 
+# Telemetry writers stamp `expireAt` and readers assume Firestore deletes the
+# document after it (libs/telemetry session retention, the runner
+# autoscaler's `runner-status` snapshots), but no TTL policy existed: on
+# 2026-11-25, 3,259 sessions and 36 of 55 runner-status snapshots were past
+# their `expireAt`, and every Bridge, Agents and Shuttlebay render read the
+# retired snapshots. `index_config` is omitted so the field keeps its
+# automatic single-field indexes.
+resource "google_firestore_field" "sessions_expire_at_ttl" {
+  project    = var.project_id
+  database   = google_firestore_database.default.name
+  collection = "sessions"
+  field      = "expireAt"
+  ttl_config {}
+}
+
+resource "google_firestore_field" "runner_status_expire_at_ttl" {
+  project    = var.project_id
+  database   = google_firestore_database.default.name
+  collection = "runner-status"
+  field      = "expireAt"
+  ttl_config {}
+}
+
 # Controller state is isolated from worker telemetry at the Firestore database
 # boundary. IAM Conditions below grant every runtime identity access to exactly
 # one database; a worker-held telemetry credential can therefore never mutate
