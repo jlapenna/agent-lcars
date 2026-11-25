@@ -1,4 +1,5 @@
 import {
+  AGENT_BOT_LOGINS,
   type AgentPipeline,
   isDispatchPipeline,
   type IssueReference,
@@ -20,6 +21,7 @@ import {
 } from '@agent-lcars/work';
 import { z } from 'zod';
 
+import { isControlPlaneRepository } from '@/lib/deployment';
 import type { GithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
   githubAnchorProjectionAnchorsFromDelivery,
@@ -86,6 +88,11 @@ export interface OrchestratorRouteDeps {
    * settles) or a closed item's reopen. The workflow applies whatever state
    * it then reads. Never rejects. */
   expireItemSessions?: (workId: string) => Promise<void>;
+  /** Runs the repository's Agent PR Auto-Merge sweep (`agent-automerge.yml`)
+   * on its default branch, so an approval arms the PR now instead of at the
+   * next push, CI completion or daily run. The workflow decides what to arm.
+   * May reject; the caller logs and continues. */
+  reconcileAutomerge?: (repo: string, ref: string) => Promise<void>;
   /** Exact GitHub lifecycle read that fences a close delivery against a
    * reopen. A close webhook that is dropped entirely needs no sweep: the
    * claim route repeats this read before a closed anchor's queued
@@ -271,6 +278,87 @@ async function wakeDeliveryMonitors(
   if (woken > 0) await deps.drain(Math.max(10, woken * 2));
 }
 
+const approvalSchema = z.object({
+  action: z.literal('submitted'),
+  repository: z.object({
+    full_name: z.string().min(1),
+    default_branch: z.string().min(1),
+  }),
+  review: z.object({
+    state: z.literal('approved'),
+    author_association: z.string().optional(),
+    user: z.object({ login: z.string() }).nullable().optional(),
+  }),
+  pull_request: z.object({
+    state: z.literal('open'),
+    draft: z.boolean().optional(),
+    head: z.object({
+      repo: z.object({ full_name: z.string().min(1) }).nullable(),
+    }),
+  }),
+});
+
+const TRUSTED_APPROVER_ASSOCIATIONS = new Set([
+  'OWNER',
+  'MEMBER',
+  'COLLABORATOR',
+]);
+const FLEET_APPROVERS = new Set(
+  AGENT_BOT_LOGINS.map((login) => login.toLowerCase()),
+);
+
+/** Only an approval GitHub's rule could count wakes the sweep: anyone can
+ * review a public repository, and each dispatch runs privileged workflow code
+ * on a self-hosted runner. The fleet App's reviews arrive as `NONE`. */
+function isTrustedApprover(
+  review: z.infer<typeof approvalSchema>['review'],
+): boolean {
+  const login = review.user?.login.toLowerCase();
+  return (
+    (login !== undefined && FLEET_APPROVERS.has(login)) ||
+    TRUSTED_APPROVER_ASSOCIATIONS.has(review.author_association ?? '')
+  );
+}
+
+/** An approval is the request to land a pull request (jlapenna/agent-lcars#3508).
+ * Nothing else wakes the auto-merge sweep when one arrives: CI usually finished
+ * before the review did, so an approved PR waited for the next push to the
+ * base branch or the daily run. Closed PRs, forks and drafts never reach the
+ * sweep's arm, and only control-plane repositories are dispatched. */
+async function reconcileAutomergeOnApproval(
+  deps: OrchestratorRouteDeps,
+  input: { event: string; deliveryId: string; payload: unknown },
+): Promise<void> {
+  if (
+    input.event !== 'pull_request_review' ||
+    deps.reconcileAutomerge === undefined
+  )
+    return;
+  const parsed = approvalSchema.safeParse(input.payload);
+  if (!parsed.success) return;
+  const { repository, review, pull_request: pr } = parsed.data;
+  if (
+    !isControlPlaneRepository(repository.full_name) ||
+    !isTrustedApprover(review) ||
+    pr.draft === true ||
+    pr.head.repo?.full_name !== repository.full_name
+  )
+    return;
+  try {
+    await deps.reconcileAutomerge(
+      repository.full_name,
+      repository.default_branch,
+    );
+  } catch (error) {
+    logger.warn(
+      'agent-lcars: auto-merge sweep dispatch failed for %s (%s); the next push, CI completion or daily run arms it:',
+      repository.full_name,
+      input.deliveryId,
+      error,
+    );
+  }
+}
+
 const prRemediationTriggerSchema = z.object({
   action: z.string().optional(),
   repository: z.object({ full_name: z.string().min(1) }),
@@ -371,6 +459,7 @@ export async function handleWebhookDelivery(
         error,
       );
     }
+    await reconcileAutomergeOnApproval(deps, input);
     const interpreted = interpretDelivery(input);
     if (interpreted.kind === 'ignore') {
       const ignored = await handleIgnoredDelivery(deps, input, interpreted);
