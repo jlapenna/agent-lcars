@@ -102,12 +102,31 @@ export function isVerifiedDependencyUpdate(input: {
       }
     | undefined;
 }): boolean {
-  const author = input.authorLogin?.toLowerCase();
-  if (author === undefined || !DEPENDENCY_BOT_LOGINS.has(author)) return false;
-  if (!author.endsWith('[bot]')) return false;
   if (QUALIFICATION_REQUIRED_RENOVATE_REF_RE.test(input.headRef ?? '')) {
     return false;
   }
+  return isDependencyBotOnlyHead(input);
+}
+
+/** Every commit up to the head was written by the PR's dependency bot and
+ *  signed by GitHub: nobody else has put content on the branch. */
+export function isDependencyBotOnlyHead(input: {
+  authorLogin: string | undefined;
+  headOid: string;
+  commits:
+    | {
+        totalCount: number;
+        nodes: readonly {
+          oid: string;
+          authorLogin: string | undefined;
+          signedByGitHub: boolean;
+        }[];
+      }
+    | undefined;
+}): boolean {
+  const author = input.authorLogin?.toLowerCase();
+  if (author === undefined || !DEPENDENCY_BOT_LOGINS.has(author)) return false;
+  if (!author.endsWith('[bot]')) return false;
   const commits = input.commits;
   if (commits === undefined) return false;
   if (commits.totalCount < 1 || commits.totalCount > 100) return false;

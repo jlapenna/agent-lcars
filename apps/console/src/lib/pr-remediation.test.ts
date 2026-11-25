@@ -966,7 +966,13 @@ describe('automatic pull-request review & conflict remediation', () => {
       isDraft: true,
       headRefName: 'renovate/major-node-runtime',
       labels: ['type:dependency-update', 'bot:renovate'],
-      commits: [{ oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true }],
+      commits: [
+        {
+          oid: overrides.headRefOid ?? HEAD_1,
+          author: 'renovate[bot]',
+          signedByGitHub: true,
+        },
+      ],
       ...overrides,
     });
 
@@ -1023,6 +1029,49 @@ describe('automatic pull-request review & conflict remediation', () => {
         expect(await f.store.listRuns(anchor)).toHaveLength(0);
       },
     );
+
+    it.each([
+      [
+        'someone else pushed a commit',
+        [
+          { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+          { oid: HEAD_2, author: 'mallory', signedByGitHub: false },
+        ],
+      ],
+      [
+        'a commit is not GitHub-signed',
+        [{ oid: HEAD_2, author: 'renovate[bot]', signedByGitHub: false }],
+      ],
+    ])('dispatches nothing when %s', async (_case, commits) => {
+      const f = createFixture();
+      f.setPr(REPO, 4040, draft({ headRefOid: HEAD_2, commits }));
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'ignored', reason: 'unverified-dependency-head' });
+      expect(await f.store.listRuns(anchor)).toHaveLength(0);
+    });
+
+    it('never gives a qualified major the unattended dependency approval', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4040, draft());
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
+      await f.orchestrator.report(`${REPO}#4040/r1`, { ok: true });
+
+      // The agent pushed nothing and marked it ready: still only bot commits.
+      f.setPr(REPO, 4040, draft({ isDraft: false }));
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
+
+      expect(
+        vi
+          .mocked(f.fetchImpl)
+          .mock.calls.filter(
+            ([url, init]) =>
+              String(url).endsWith(`/pulls/4040/reviews`) &&
+              init?.method === 'POST',
+          ),
+      ).toEqual([]);
+    });
 
     it('still ignores a draft that a person opened', async () => {
       const f = createFixture();
@@ -1493,6 +1542,7 @@ describe('automatic pull-request review & conflict remediation', () => {
       isDraft: true,
       headRefName: 'renovate/major-node-runtime',
       labels: ['bot:renovate'],
+      commits: [{ oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true }],
     });
     f.setPr(REPO, 4051, {
       author: { __typename: 'Bot', login: 'renovate' },
