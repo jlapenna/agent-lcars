@@ -3546,3 +3546,26 @@ it('lets a repository-bound caller read its Goose occurrence through the shared 
   expect((await call(ctx, 'GET', `/items/${ID}`)).status).toBe(403);
   expect((await call(ctx, 'GET', '/items')).json.items).toEqual([]);
 });
+
+describe('item listing reads', () => {
+  it('reads the listed items’ runs in one batch, not a query per item', async () => {
+    const ctx = context();
+    for (const id of [
+      '01J5Z3K9QX8F0N2B4V6C8D1E3A',
+      '01J5Z3K9QX8F0N2B4V6C8D1E3B',
+      '01J5Z3K9QX8F0N2B4V6C8D1E3C',
+    ])
+      expect((await call(ctx, 'PUT', `/items/${id}`, { spec })).status).toBe(
+        201,
+      );
+    const perTask = vi.spyOn(ctx.runtime.store, 'listRuns');
+    const batched = vi.spyOn(ctx.runtime.store, 'listRunsForTasks');
+
+    const listed = await call(ctx, 'GET', '/items');
+
+    expect(listed.status).toBe(200);
+    expect(listed.json.items).toHaveLength(3);
+    expect(batched).toHaveBeenCalledOnce();
+    expect(perTask).not.toHaveBeenCalled();
+  });
+});

@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { logger } from '@agent-lcars/logging';
+import { type Run, taskKey } from '@agent-lcars/orchestrator';
 import { latestRun } from '@agent-lcars/work/derive';
 
 import {
@@ -51,15 +52,30 @@ export async function getAuthoritativeQueueItems(): Promise<ActionItemsResult> {
       ? [actionItemFromGithubAnchorProjection(anchor, repository)]
       : [];
   });
+  // One batched read of every needs-human item's runs, not a query each. A
+  // failed read leaves each item as it is, as a failed per-item read did.
+  const needsHuman = selected
+    .filter((item) => item.actionTypes.includes('needs-human'))
+    .map((item) => ({
+      repo: `${item.repo.owner}/${item.repo.name}`,
+      issue: item.number,
+    }));
+  const runsByTask =
+    needsHuman.length === 0
+      ? new Map<string, Run[]>()
+      : await store.listRunsForTasks(needsHuman).catch(() => undefined);
   const items = await Promise.all(
     selected.map(async (item) => {
       if (!item.actionTypes.includes('needs-human')) return item;
       try {
+        if (runsByTask === undefined) throw new Error('runs unavailable');
         const run = latestRun(
-          await store.listRuns({
-            repo: `${item.repo.owner}/${item.repo.name}`,
-            issue: item.number,
-          }),
+          runsByTask.get(
+            taskKey({
+              repo: `${item.repo.owner}/${item.repo.name}`,
+              issue: item.number,
+            }),
+          ) ?? [],
         );
         if (!run) return item;
         if (
