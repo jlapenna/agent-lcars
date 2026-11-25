@@ -530,9 +530,19 @@ at that same head in the final readback. If it merged during the request,
 verify the exact merge and rules evaluation rather than treating the arming
 command as proof of protected delivery.
 
-When implement mode takes over an existing PR, apply this handoff only if its
-author is a registered fleet bot. Leave a human-authored PR's merge state
-unchanged unless the maintainer explicitly asked this run to merge it.
+When implement mode takes over an existing PR, apply this handoff if its
+author is a registered fleet bot, or if the maintainer approved the PR — an
+`APPROVE` review or a reply approving it ("approved", "LGTM", "ship it").
+Approval is the request to land it; the ruleset still decides when it merges.
+Otherwise leave a human-authored PR's merge state unchanged unless the
+maintainer explicitly asked this run to merge it.
+
+GitHub refuses the queue-only mutation with `Pull request ... is in clean
+status` when the PR could merge now, which is the usual state of an approved
+PR. That refusal is not a failure to park on: with the head unchanged and the
+approval and required checks green on it, run the same guard chained to
+`gh pr merge "$pr_number" --repo "$repository" --auto --squash --match-head-commit "$reviewed_head"`
+(never `--admin`), then verify the merge and its rules evaluation.
 
 The repository's Agent PR Auto-Merge workflow is a reconciliation backstop,
 not a substitute for this worker-owned handoff. If arming or the readback

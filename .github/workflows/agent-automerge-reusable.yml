@@ -8,7 +8,8 @@ name: Agent PR Auto-Merge (Reusable)
 # deletion. Native repository rulesets remain the merge authority.
 #
 # Workers own the initial squash arm; reconciliation repairs missed arms,
-# updates eligible behind branches and dismisses stale bot review objections.
+# arms approved same-repository PRs whoever opened them, updates eligible
+# behind branches and dismisses stale bot review objections.
 # Required inputs, the App trust boundary and live predicates are exercised by
 # tools/contract-tests/agent-automerge-*.test.ts and actionlint.
 
@@ -81,8 +82,7 @@ jobs:
     if: >
       (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') &&
       github.event.action == 'labeled' &&
-      github.event.label.name == 'status:needs-human' &&
-      contains(fromJSON(inputs.bot-logins), github.event.pull_request.user.login)
+      github.event.label.name == 'status:needs-human'
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 5
     permissions:
@@ -93,7 +93,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - name: Disable auto-merge for the parked agent PR
+      - name: Disable auto-merge for the parked PR
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
@@ -298,7 +298,7 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - name: Arm ready open agent PRs missed by event delivery
+      - name: Arm ready open agent PRs and approved PRs missed by event delivery
         env:
           AGENT_BOT_LOGINS: ${{ inputs.bot-logins }}
           APP_LOGIN: ${{ steps.mint-app-token.outputs.app-slug && format('app/{0}', steps.mint-app-token.outputs.app-slug) || '' }}
@@ -309,7 +309,7 @@ jobs:
 
           OPEN_PRS_FILE="$RUNNER_TEMP/agent-automerge-open-prs.tsv"
           gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" \
-            --jq '.[] | [.number, .user.login, .draft, ([.labels[].name] | index("status:needs-human") != null)] | @tsv' \
+            --jq '.[] | [.number, .user.login, .draft, ([.labels[].name] | index("status:needs-human") != null), (.head.repo.full_name == .base.repo.full_name)] | @tsv' \
             >"$OPEN_PRS_FILE"
           mapfile -t OPEN_PRS <"$OPEN_PRS_FILE"
 
@@ -317,25 +317,54 @@ jobs:
           ARMED=0
           FAILED=0
           for ROW in "${OPEN_PRS[@]}"; do
-            IFS=$'\t' read -r PR AUTHOR DRAFT PARKED <<<"$ROW"
-            if [ "$DRAFT" = true ] || \
-               ! jq -e --arg login "$AUTHOR" 'index($login) != null' \
-                 <<<"$AGENT_BOT_LOGINS" >/dev/null; then
+            IFS=$'\t' read -r PR AUTHOR DRAFT PARKED SAME_REPO <<<"$ROW"
+            if [ "$DRAFT" = true ]; then
               continue
+            fi
+            AGENT=false
+            if jq -e --arg login "$AUTHOR" 'index($login) != null' \
+                 <<<"$AGENT_BOT_LOGINS" >/dev/null; then
+              AGENT=true
+            fi
+
+            # Any other same-repository PR lands once it is approved: approval
+            # is the gate (jlapenna/agent-lcars#3508), and most such PRs are
+            # agent-written under the maintainer's login (homelab#3800 sat
+            # approved and unarmed). Forks never reach the App's arm, and
+            # dependency bots keep their own automerge. A parked PR skips the
+            # approval read and falls through to the disarm below, so parking
+            # holds every PR this sweep could have armed.
+            if [ "$AGENT" = false ]; then
+              case "$AUTHOR" in
+                renovate\[bot\] | dependabot\[bot\]) continue ;;
+              esac
+              if [ "$SAME_REPO" != true ]; then
+                continue
+              fi
+            fi
+            if [ "$AGENT" = false ] && [ "$PARKED" != true ]; then
+              if ! DECISION=$(gh pr view "$PR" --repo "$REPO" --json reviewDecision --jq .reviewDecision); then
+                echo "::error::Could not read the review decision of PR #$PR."
+                FAILED=$((FAILED + 1))
+                continue
+              fi
+              if [ "$DECISION" != APPROVED ]; then
+                continue
+              fi
             fi
 
             if [ "$PARKED" = true ]; then
               VIEW=$(gh pr view "$PR" --repo "$REPO" --json autoMergeRequest)
               if jq -e '.autoMergeRequest != null' <<<"$VIEW" >/dev/null; then
                 if ! gh pr merge "$PR" --repo "$REPO" --disable-auto; then
-                  echo "::error::Could not disable auto-merge for parked agent PR #$PR."
+                  echo "::error::Could not disable auto-merge for parked PR #$PR."
                   FAILED=$((FAILED + 1))
                   continue
                 fi
               fi
               if ! gh pr view "$PR" --repo "$REPO" --json autoMergeRequest \
                 --jq 'if .autoMergeRequest == null then . else error("auto-merge remains armed on parked PR") end' >/dev/null; then
-                echo "::error::Auto-merge remains armed on parked agent PR #$PR."
+                echo "::error::Auto-merge remains armed on parked PR #$PR."
                 FAILED=$((FAILED + 1))
               fi
               continue
@@ -344,7 +373,7 @@ jobs:
             CHECKED=$((CHECKED + 1))
             # The App's own pull request keeps its review request: a maintainer
             # must approve it, because GitHub lets no account approve its own.
-            if [ "$AUTHOR" != "${APP_LOGIN#app/}[bot]" ]; then
+            if [ "$AGENT" = true ] && [ "$AUTHOR" != "${APP_LOGIN#app/}[bot]" ]; then
               REQUESTS=$(gh api "repos/$REPO/pulls/$PR/requested_reviewers")
               PAYLOAD=$(jq -c '{reviewers: [.users[].login], team_reviewers: [.teams[].slug]}' <<<"$REQUESTS")
               if jq -e '(.reviewers | length) + (.team_reviewers | length) > 0' <<<"$PAYLOAD" >/dev/null; then
@@ -382,7 +411,7 @@ jobs:
             fi
 
             if ! gh pr merge "$PR" --repo "$REPO" --auto --squash; then
-              echo "::error::Could not arm auto-merge for agent PR #$PR."
+              echo "::error::Could not arm auto-merge for PR #$PR."
               FAILED=$((FAILED + 1))
               continue
             fi
@@ -392,7 +421,7 @@ jobs:
               .state == "MERGED" or
               (.autoMergeRequest != null and .autoMergeRequest.enabledBy.login == $login)
             ' <<<"$VIEW" >/dev/null; then
-              echo "Armed squash auto-merge for agent PR #$PR."
+              echo "Armed squash auto-merge for PR #$PR (author $AUTHOR)."
               ARMED=$((ARMED + 1))
             else
               echo "::error::PR #$PR remained open without auto-merge after the arm command."

@@ -78,14 +78,24 @@ refreshes preserve the rule.
 
 ## Published reusable workflows
 
-| Workflow                       | Purpose                                        |
-| ------------------------------ | ---------------------------------------------- |
-| `agent-automerge-reusable.yml` | Arm and reconcile agent PR auto-merge.         |
-| `repo-validation.yml`          | Run actionlint, runner-label, schedule checks. |
-| `codeql-reusable.yml`          | Run the caller-configured CodeQL analysis job. |
+| Workflow                       | Purpose                                             |
+| ------------------------------ | --------------------------------------------------- |
+| `agent-automerge-reusable.yml` | Arm and reconcile agent and approved PR auto-merge. |
+| `repo-validation.yml`          | Run actionlint, runner-label, schedule checks.      |
+| `codeql-reusable.yml`          | Run the caller-configured CodeQL analysis job.      |
 
 Hosted provider workflows are retired; providers execute through the Console
 QueueExecutor instead.
+
+`reconcile-automerge` arms squash auto-merge on every open, non-draft,
+non-parked PR that is either agent-authored (`bot-logins`) or a
+same-repository PR whose `reviewDecision` is `APPROVED`, whoever opened it.
+Approval is the gate, and most maintainer-login PRs are agent-written
+(jlapenna/homelab#3800 sat approved and unarmed). Fork PRs and Renovate or
+Dependabot PRs are never armed this way. Adding `status:needs-human` disarms any PR
+the sweep could have armed, whoever opened it. Arming an approved PR happens on the
+next reconcile event: a push to the base branch, a successful PR CI run, the
+daily schedule or a manual dispatch.
 
 `agent-automerge-reusable.yml`'s `reconcile-automerge` job also updates a
 BEHIND branch on any open, non-draft, non-parked PR that already has
