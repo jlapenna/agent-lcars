@@ -18,9 +18,9 @@ import {
   type OrchestratorRouteDeps,
 } from './orchestrator-routes';
 import {
+  isConflictOnlyRound,
   MAX_AUTO_PR_REMEDIATION_ROUNDS,
   MAX_AUTO_PR_REMEDIATION_ROUNDS_TOTAL,
-  isConflictOnlyRound,
   reconcileMergedPullRequestConflicts,
   reconcileOpenPullRequestRemediations,
   reconcilePullRequestRemediation,
