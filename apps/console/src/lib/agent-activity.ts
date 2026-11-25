@@ -47,7 +47,10 @@ const RECENT_RUN_LIMIT = 8;
 const RECENT_RUN_FETCH_LIMIT = RECENT_RUN_LIMIT * 3;
 /** One updatedAt-ordered read serves both: its first RECENT_RUN_FETCH_LIMIT
  * runs are the outcome feed, and it is paged back this many runs at a time
- * until it reaches RUN_HISTORY_MINUTES for the readouts' sparklines. */
+ * until it reaches RUN_HISTORY_MINUTES for the readouts' sparklines. The
+ * first page is only the outcome feed's size: a 30-minute window held a
+ * median of 4 runs (p90 15) on 2026-11-25, so a 100-run first page read
+ * about 800 KB of runs every render that nothing displayed. */
 const RUN_HISTORY_PAGE_SIZE = 100;
 /** Runs read per page of the Agents outcome history. */
 export const OUTCOME_PAGE_SIZE = 25;
@@ -60,10 +63,12 @@ async function readRecentRunsSince(
   const runs: OrchestratorRun[] = [];
   let before: RunListCursor | undefined;
   for (;;) {
-    const page = await store.listRecentRuns(RUN_HISTORY_PAGE_SIZE, before);
+    const size =
+      before === undefined ? RECENT_RUN_FETCH_LIMIT : RUN_HISTORY_PAGE_SIZE;
+    const page = await store.listRecentRuns(size, before);
     runs.push(...page);
     const last = page.at(-1);
-    if (page.length < RUN_HISTORY_PAGE_SIZE || last === undefined)
+    if (page.length < size || last === undefined)
       return { runs, reachedSince: true };
     if (Date.parse(last.updatedAt) < since) return { runs, reachedSince: true };
     // A feed that does not advance cannot reach `since`; withhold history.
@@ -619,8 +624,10 @@ export async function getAgentActivity(): Promise<AgentActivity> {
   // Resume the history after the last outcome shown, or after the whole
   // outcome window when it held fewer terminal runs than the feed shows.
   const lastShown = recentRuns.at(-1);
+  // A full first page may have older runs behind it (it is exactly the feed's
+  // size); a shorter one is the whole feed.
   const windowEnd =
-    recentWindow.length > RECENT_RUN_FETCH_LIMIT
+    recentWindow.length >= RECENT_RUN_FETCH_LIMIT
       ? recentWindow[RECENT_RUN_FETCH_LIMIT - 1]
       : undefined;
   const olderOutcomes: RunListCursor | undefined =
