@@ -68,6 +68,9 @@ jobs:
           - full_name: jlapenna/ebayclaw
             owner: jlapenna
             repository: ebayclaw
+          - full_name: jlapenna/wedding
+            owner: jlapenna
+            repository: wedding
 
     steps:
       - uses: actions/checkout@v7

@@ -117,7 +117,8 @@
         "jlapenna/sparkstack-registry",
         "jlapenna/homegit",
         "jlapenna/repo-tools",
-        "jlapenna/ebayclaw"
+        "jlapenna/ebayclaw",
+        "jlapenna/wedding"
       ],
       "variables": {
         "AGENT_FLEET_LOGIN": {
