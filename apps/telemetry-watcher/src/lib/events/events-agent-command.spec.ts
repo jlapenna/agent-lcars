@@ -17,10 +17,11 @@ const HOME = '/home/u';
 describe('loadEventsAgentConfig', () => {
   it('uses the host key homegit installs and names the host subscription', () => {
     const loaded = loadEventsAgentConfig(
-      { HC: '/opt/hc' },
+      { HC: '/opt/hc', XDG_RUNTIME_DIR: '/run/user/1000' },
       HOME,
       (file) => file === `${HOME}/.config/agent-lcars/events-key.json`,
       () => 'pike.lan',
+      1000,
     );
     expect(loaded).toEqual({
       ok: true,
@@ -32,6 +33,9 @@ describe('loadEventsAgentConfig', () => {
         stateDirectory: `${HOME}/.local/state/agent-lcars`,
         metricsPort: 9478,
         hc: '/opt/hc',
+        socketPath: '/run/user/1000/agent-lcars/events.sock',
+        consoleOrigin: 'https://lcars.jlapenna.net',
+        audience: 'agent-lcars-work',
       },
     });
   });
@@ -44,12 +48,18 @@ describe('loadEventsAgentConfig', () => {
         LCARS_EVENTS_PROJECT_ID: 'other',
         LCARS_EVENTS_SUBSCRIPTION: 'custom',
         LCARS_EVENTS_METRICS_PORT: '9999',
+        LCARS_EVENTS_SOCKET: '/tmp/s.sock',
+        LCARS_CONSOLE_URL: 'https://lcars.test',
+        LCARS_AUDIENCE: 'aud',
         HC: 'hc',
       },
       HOME,
       () => true,
     );
     expect(loaded.ok && loaded.config).toMatchObject({
+      socketPath: '/tmp/s.sock',
+      consoleOrigin: 'https://lcars.test',
+      audience: 'aud',
       host: 'laforge',
       projectId: 'other',
       subscription: 'custom',
@@ -91,6 +101,8 @@ const CONFIG: EventsAgentConfig = {
   stateDirectory: '/s',
   metricsPort: 9478,
   hc: 'hc',
+  consoleOrigin: 'https://lcars.test',
+  audience: 'agent-lcars-work',
 };
 
 function fakeRuntime() {
@@ -217,20 +229,45 @@ describe('executeEventsAgentCommand', () => {
     const close = vi.fn();
     const serveMetrics = vi.fn(async () => ({ close }));
     const openSubscriber = vi.fn(() => ({ close: async () => undefined }));
+    const socketClose = vi.fn(async () => undefined);
+    const handlers: ((raw: unknown) => Promise<unknown>)[] = [];
+    const serveSocket = vi.fn(
+      async (_path: string, handle: (raw: unknown) => Promise<unknown>) => {
+        handlers.push(handle);
+        return { close: socketClose };
+      },
+    );
+    const forwarder = {
+      subscribe: vi.fn(),
+      list: vi.fn(async () => ({ ok: true as const, value: [] })),
+      unsubscribe: vi.fn(),
+    };
+    const createForwarder = vi.fn(() => forwarder);
     return {
       out,
       err,
       close,
       serveMetrics,
       openSubscriber,
+      serveSocket,
+      socketClose,
+      handlers,
+      forwarder,
+      createForwarder,
       value: {
-        env: { AGENT_TELEMETRY_HOST: 'pike', ...env },
+        env: {
+          AGENT_TELEMETRY_HOST: 'pike',
+          LCARS_EVENTS_SOCKET: '/run/test/agent-lcars/events.sock',
+          ...env,
+        },
         home: '/nonexistent-home',
         stdout: (text: string) => out.push(text),
         stderr: (text: string) => err.push(text),
         serveMetrics,
         stopSignal: async () => undefined,
         openSubscriber,
+        serveSocket: serveSocket as never,
+        createForwarder,
       },
     };
   }
@@ -273,6 +310,49 @@ describe('executeEventsAgentCommand', () => {
       'events agent stopping',
     ]);
     expect(p.close).toHaveBeenCalled();
+    expect(p.socketClose).toHaveBeenCalled();
+  });
+
+  it('answers local requests as not configured without a key', async () => {
+    const p = proc();
+    await executeEventsAgentCommand(['events', 'agent'], p.value);
+    expect(p.serveSocket).toHaveBeenCalledWith(
+      '/run/test/agent-lcars/events.sock',
+      expect.any(Function),
+      expect.any(Function),
+    );
+    expect(p.createForwarder).not.toHaveBeenCalled();
+    expect(
+      await p.handlers[0]({ version: 1, op: 'list', sessionId: 's1' }),
+    ).toMatchObject({ ok: false, error: 'not-configured' });
+  });
+
+  it('forwards local requests with the host key', async () => {
+    const p = proc({
+      HC: 'hc',
+      LCARS_EVENTS_CREDENTIALS_FILE: process.execPath,
+    });
+    await executeEventsAgentCommand(['events', 'agent'], p.value);
+    expect(p.createForwarder).toHaveBeenCalledWith(
+      expect.objectContaining({ credentialsFile: process.execPath }),
+    );
+    expect(
+      await p.handlers[0]({ version: 1, op: 'list', sessionId: 's1' }),
+    ).toEqual({ ok: true, subscriptions: [] });
+    expect(p.forwarder.list).toHaveBeenCalledWith('s1');
+    expect(p.out.join('')).toContain('"msg":"local request"');
+  });
+
+  it('exits 1 when the socket cannot be opened', async () => {
+    const p = proc();
+    p.serveSocket.mockRejectedValueOnce(
+      new Error('another events agent is listening'),
+    );
+    expect(await executeEventsAgentCommand(['events', 'agent'], p.value)).toBe(
+      1,
+    );
+    expect(p.close).toHaveBeenCalled();
+    expect(p.out.join('')).toContain('another events agent is listening');
   });
 
   it('pulls the host subscription when the host has a key', async () => {

@@ -10,6 +10,11 @@ import {
   defaultInvestigateCommandDeps,
   executeInvestigateCommand,
 } from './lib/investigate-command';
+import {
+  defaultSessionEventsCommandDeps,
+  executeSessionEventsCommand,
+  SESSION_EVENT_SUBCOMMANDS,
+} from './lib/session-events-command';
 import { executeSessionTitleAnnotationCommand } from './lib/session-title-annotation-command';
 import { defaultWorkCommandDeps, executeWorkCommand } from './lib/work-command';
 
@@ -29,6 +34,18 @@ void (async () => {
       },
     );
     process.exitCode = child.status === 0 ? 0 : 1;
+    return;
+  }
+  if (
+    argv[0] === 'session' &&
+    (SESSION_EVENT_SUBCOMMANDS as readonly string[]).includes(argv[1] ?? '')
+  ) {
+    // Talks to this host's events agent over its local socket; the agent
+    // holds the host's credential and forwards to LCARS.
+    process.exitCode = await executeSessionEventsCommand(
+      argv.slice(1),
+      defaultSessionEventsCommandDeps(process.env),
+    );
     return;
   }
   if (argv[0] === 'investigate') {

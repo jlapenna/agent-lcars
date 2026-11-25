@@ -62,6 +62,22 @@ describe('DeliveryMetrics', () => {
   });
 });
 
+describe('local request metrics', () => {
+  it('counts local requests by op and outcome', () => {
+    const metrics = new DeliveryMetrics();
+    metrics.countLocalRequest('subscribe', 'ok');
+    metrics.countLocalRequest('subscribe', 'ok');
+    metrics.countLocalRequest('list', 'not-configured');
+    const text = metrics.render();
+    expect(text).toContain(
+      'lcars_events_agent_local_requests_total{op="subscribe",outcome="ok"} 2',
+    );
+    expect(text).toContain(
+      'lcars_events_agent_local_requests_total{op="list",outcome="not-configured"} 1',
+    );
+  });
+});
+
 describe('serveMetrics', () => {
   let server: http.Server | undefined;
   afterEach(() => {

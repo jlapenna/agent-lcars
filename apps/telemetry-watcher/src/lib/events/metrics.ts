@@ -41,6 +41,9 @@ export class DeliveryMetrics {
   readonly undeliverable = new Map<UndeliverableReason, number>(
     UNDELIVERABLE_REASONS.map((reason) => [reason, 0]),
   );
+  /** Local subscribe, list and unsubscribe requests, by `op` and
+   * `outcome` (`ok` or the error code the CLI was given). */
+  readonly localRequests = new Map<string, number>();
   private readonly latencyBuckets = LATENCY_BUCKETS.map(() => 0);
   private latencyCount = 0;
   private latencySum = 0;
@@ -51,6 +54,11 @@ export class DeliveryMetrics {
 
   countUndeliverable(reason: UndeliverableReason): void {
     this.undeliverable.set(reason, (this.undeliverable.get(reason) ?? 0) + 1);
+  }
+
+  countLocalRequest(op: string, outcome: string): void {
+    const key = `${op}\u0000${outcome}`;
+    this.localRequests.set(key, (this.localRequests.get(key) ?? 0) + 1);
   }
 
   observeLatency(seconds: number): void {
@@ -107,6 +115,12 @@ export class DeliveryMetrics {
         ([reason, value]) =>
           `${PREFIX}_undeliverable_total{reason="${reason}"} ${value}`,
       ),
+      `# HELP ${PREFIX}_local_requests_total Subscribe, list and unsubscribe requests from sessions on this host, by outcome (ok or the error returned).`,
+      `# TYPE ${PREFIX}_local_requests_total counter`,
+      ...[...this.localRequests].map(([key, value]) => {
+        const [op, outcome] = key.split('\u0000');
+        return `${PREFIX}_local_requests_total{op="${op}",outcome="${outcome}"} ${value}`;
+      }),
       `# HELP ${PREFIX}_delivery_latency_seconds Seconds from publication to a started turn.`,
       `# TYPE ${PREFIX}_delivery_latency_seconds histogram`,
       ...LATENCY_BUCKETS.map(

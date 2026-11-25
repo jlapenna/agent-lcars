@@ -1929,7 +1929,7 @@ export const runsContract = {
     ),
 };
 
-const agentEventSubscriptionViewSchema = z.strictObject({
+export const agentEventSubscriptionViewSchema = z.strictObject({
   id: agentEventSubscriptionIdSchema,
   key: z.string(),
   source: z.enum(

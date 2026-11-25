@@ -27,7 +27,18 @@ import {
   herdrCoreSend,
   resolveHcBinary,
 } from './herdr-core-send';
+import { eventsSocketPath } from './local-protocol';
+import {
+  type EventsSocketServer,
+  handleLocalRequest,
+  serveEventsSocket,
+} from './local-socket-server';
 import { DeliveryMetrics } from './metrics';
+import {
+  serviceAccountIdTokens,
+  type SubscriptionForwarder,
+  workApiSubscriptionForwarder,
+} from './subscribe-forwarder';
 import { checkTerminalTarget } from './terminal-target';
 
 export const EVENTS_AGENT_USAGE = `Usage: lcars events agent
@@ -35,8 +46,11 @@ export const EVENTS_AGENT_USAGE = `Usage: lcars events agent
 Runs this host's event delivery agent (#3538): pulls the host's Pub/Sub
 subscription agent-events-<host>, waits until the subscribing session's
 herdr-core terminal still runs that session and is at its prompt, types the
-notice with \`hc send\`, confirms a turn started, then acks. A long-running
-user service; it serves Prometheus metrics on loopback.
+notice with \`hc send\`, confirms a turn started, then acks. It also
+serves \`lcars session subscribe|subscriptions|unsubscribe\` on a Unix socket
+only this user can open, forwarding each request to the LCARS Work API as
+this host's agent-events identity. A long-running user service; it serves
+Prometheus metrics on loopback.
 
 Environment:
   LCARS_EVENTS_CREDENTIALS_FILE  the host's agent-events service-account key
@@ -45,6 +59,10 @@ Environment:
   LCARS_EVENTS_PROJECT_ID        Google Cloud project (default agent-lcars)
   LCARS_EVENTS_SUBSCRIPTION      subscription (default agent-events-<host>)
   LCARS_EVENTS_METRICS_PORT      loopback metrics port (default 9478)
+  LCARS_EVENTS_SOCKET            local subscribe socket
+                                 (default $XDG_RUNTIME_DIR/agent-lcars/events.sock)
+  LCARS_CONSOLE_URL, LCARS_URL   the LCARS console (default https://lcars.jlapenna.net)
+  LCARS_AUDIENCE                 Work API ID-token audience (default agent-lcars-work)
   AGENT_TELEMETRY_HOST           host name, as the telemetry hook reports it
   HC                             the herdr-core client (default ~/.local/bin/hc)`;
 
@@ -55,6 +73,8 @@ export const EVENTS_KEY_FILE = path.join(
   'events-key.json',
 );
 export const DEFAULT_METRICS_PORT = 9478;
+export const DEFAULT_CONSOLE_ORIGIN = 'https://lcars.jlapenna.net';
+export const DEFAULT_WORK_AUDIENCE = 'agent-lcars-work';
 const EVENTS_STATE_SUBDIRECTORY = 'events-agent';
 
 export interface EventsAgentConfig {
@@ -67,6 +87,12 @@ export interface EventsAgentConfig {
   readonly stateDirectory: string;
   readonly metricsPort: number;
   readonly hc: string;
+  /** Absent: the user has no runtime directory, so no local socket. */
+  readonly socketPath?: string;
+  /** The console the Work API is served from. */
+  readonly consoleOrigin: string;
+  /** The Work API's Google ID-token audience. */
+  readonly audience: string;
 }
 
 export type EventsAgentConfigResult =
@@ -78,6 +104,7 @@ export function loadEventsAgentConfig(
   home: string,
   exists: (filePath: string) => boolean = (filePath) => fs.existsSync(filePath),
   hostname: () => string = os.hostname,
+  uid: number | null = process.getuid?.() ?? null,
 ): EventsAgentConfigResult {
   const host = loadHookClientConfig({
     env,
@@ -108,6 +135,7 @@ export function loadEventsAgentConfig(
     : exists(defaultKey)
       ? defaultKey
       : undefined;
+  const socketPath = eventsSocketPath(env, uid);
   return {
     ok: true,
     config: {
@@ -120,6 +148,12 @@ export function loadEventsAgentConfig(
       stateDirectory: path.join(home, SESSION_STATE_DIRECTORY),
       metricsPort,
       hc: resolveHcBinary(env, home),
+      ...(socketPath && { socketPath }),
+      consoleOrigin:
+        env['LCARS_CONSOLE_URL']?.trim() ||
+        env['LCARS_URL']?.trim() ||
+        DEFAULT_CONSOLE_ORIGIN,
+      audience: env['LCARS_AUDIENCE']?.trim() || DEFAULT_WORK_AUDIENCE,
     },
   };
 }
@@ -304,6 +338,56 @@ export interface EventsAgentProcess {
   /** Resolves when the process is asked to stop. */
   readonly stopSignal: () => Promise<void>;
   readonly openSubscriber?: OpenPullSubscriber;
+  readonly serveSocket?: typeof serveEventsSocket;
+  readonly createForwarder?: (
+    config: EventsAgentConfig & { readonly credentialsFile: string },
+  ) => SubscriptionForwarder;
+}
+
+export const workApiForwarderFor = (
+  config: EventsAgentConfig & { readonly credentialsFile: string },
+): SubscriptionForwarder =>
+  workApiSubscriptionForwarder({
+    origin: config.consoleOrigin,
+    fetch: globalThis.fetch,
+    idToken: serviceAccountIdTokens(config.credentialsFile, config.audience),
+  });
+
+/** Serves the local socket, counting and logging each request by outcome. */
+async function openLocalSocket(
+  config: EventsAgentConfig,
+  forwarder: SubscriptionForwarder | undefined,
+  serve: typeof serveEventsSocket,
+  metrics: DeliveryMetrics,
+  log: DeliveryLog,
+): Promise<EventsSocketServer | undefined> {
+  if (!config.socketPath) {
+    log({
+      level: 'warn',
+      msg: 'no runtime directory; lcars session subscribe is unavailable',
+    });
+    return undefined;
+  }
+  return serve(
+    config.socketPath,
+    async (raw) => {
+      const { request, response } = await handleLocalRequest(raw, forwarder);
+      const op = request?.op ?? 'invalid';
+      const outcome = response.ok ? 'ok' : response.error;
+      metrics.countLocalRequest(op, outcome);
+      log({
+        level: response.ok ? 'info' : 'warn',
+        msg: 'local request',
+        op,
+        outcome,
+        ...(request && 'sessionId' in request && request.sessionId
+          ? { sessionId: request.sessionId }
+          : {}),
+      });
+      return response;
+    },
+    log,
+  );
 }
 
 /** `lcars events agent`. Resolves an exit code once stopped. */
@@ -341,6 +425,32 @@ export async function executeEventsAgentCommand(
     configured: config.credentialsFile !== undefined,
     metricsPort: config.metricsPort,
   });
+
+  const { credentialsFile } = config;
+  const forwarder = credentialsFile
+    ? (proc.createForwarder ?? workApiForwarderFor)({
+        ...config,
+        credentialsFile,
+      })
+    : undefined;
+  let socket: EventsSocketServer | undefined;
+  try {
+    socket = await openLocalSocket(
+      config,
+      forwarder,
+      proc.serveSocket ?? serveEventsSocket,
+      metrics,
+      log,
+    );
+  } catch (error) {
+    log({
+      level: 'error',
+      msg: 'could not open the local subscribe socket',
+      error: error instanceof Error ? error.message : String(error),
+    });
+    server.close();
+    return 1;
+  }
 
   let stop: (() => Promise<void>) | undefined;
   if (config.credentialsFile) {
@@ -395,6 +505,7 @@ export async function executeEventsAgentCommand(
   await proc.stopSignal();
   log({ level: 'info', msg: 'events agent stopping' });
   await stop?.();
+  await socket?.close();
   server.close();
   return 0;
 }
