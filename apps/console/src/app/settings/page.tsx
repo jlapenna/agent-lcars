@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import { Suspense } from 'react';
 
 import { auth } from '@/auth';
 import { getWatchedRepos } from '@/lib/github-client';
@@ -8,6 +7,7 @@ import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { AccountIdentity } from '../console-frame-readouts';
 import { DetailWorkspace } from '../detail-workspace';
 import { InboxNotificationsToggle } from '../inbox-notifications';
+import { NavSuspense } from '../nav-suspense';
 import { OpsPanel } from '../ops-primitives';
 import { NavPageLoading } from '../page-loading';
 import { ThemeToggle } from '../theme-toggle';
@@ -78,7 +78,7 @@ async function AuthenticatedSettingsPage() {
 
 export default function SettingsPage() {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="settings"
@@ -88,6 +88,6 @@ export default function SettingsPage() {
       }
     >
       <AuthenticatedSettingsPage />
-    </Suspense>
+    </NavSuspense>
   );
 }

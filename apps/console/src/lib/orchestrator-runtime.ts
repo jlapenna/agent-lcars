@@ -8,8 +8,9 @@ import {
   Orchestrator,
   type ScheduleStore,
 } from '@agent-lcars/orchestrator';
-import { required } from '@agent-lcars/util-server';
+import { isE2eTesting, required } from '@agent-lcars/util-server';
 
+import { dispatchAutomergeReconcile } from '@/lib/automerge-dispatch';
 import { codexAuthStore } from '@/lib/codex-auth-store';
 import { recoverCodexCredentialOperations } from '@/lib/codex-credential-operations';
 import {
@@ -26,6 +27,12 @@ import { providerFallbackAuthority } from '@/lib/work-provider-fallback';
 import { reconcileFleetTriage } from './fleet-triage-work';
 import { executeSummaries } from './inbox-summary-work';
 import { observeJobCredentials } from './job-secrets-runtime';
+import {
+  reconcileMergedPullRequestConflicts,
+  reconcileOpenPullRequestRemediations,
+  reconcilePullRequestRemediation,
+} from './pr-remediation';
+import { labelStoreReads } from './read-accounting';
 import { observeRepositoryAgents } from './repository-agents-runtime';
 import { maintainRepositoryJobs } from './repository-jobs-runtime';
 
@@ -96,10 +103,13 @@ export function orchestratorGithubRuntimeDeps(
 export function createOrchestratorRuntime(): OrchestratorRouteDeps {
   if (cached !== undefined) return cached;
 
-  const store = new FirestoreStore({
-    projectId: required('PROJECT_ID'),
-    databaseId: required('DISPATCH_FIRESTORE_DATABASE_ID'),
-  });
+  // Reads are labelled by store method for read accounting (read-accounting.ts).
+  const store = labelStoreReads(
+    new FirestoreStore({
+      projectId: required('PROJECT_ID'),
+      databaseId: required('DISPATCH_FIRESTORE_DATABASE_ID'),
+    }),
+  );
   const orchestrator = new Orchestrator(
     store,
     utcClock,
@@ -111,6 +121,50 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
     orchestrator,
     reconcileIssueTriage: (anchor, deleted) =>
       reconcileFleetTriage({ store, orchestrator }, anchor, deleted),
+    ...(isE2eTesting()
+      ? {}
+      : {
+          reconcilePullRequestRemediation: (anchor, options) => {
+            const runtime = createOrchestratorRuntime();
+            const github = orchestratorGithubRuntimeDeps(process.env);
+            return reconcilePullRequestRemediation(
+              {
+                store,
+                orchestrator,
+                drain: runtime.drain,
+                ...github,
+              },
+              anchor,
+              options,
+            );
+          },
+          reconcileMergedPullRequestConflicts: (input) => {
+            const runtime = createOrchestratorRuntime();
+            const github = orchestratorGithubRuntimeDeps(process.env);
+            return reconcileMergedPullRequestConflicts(
+              {
+                store,
+                orchestrator,
+                drain: runtime.drain,
+                ...github,
+              },
+              input,
+            );
+          },
+          reconcileOpenPullRequestRemediations: (deadline) => {
+            const runtime = createOrchestratorRuntime();
+            const github = orchestratorGithubRuntimeDeps(process.env);
+            return reconcileOpenPullRequestRemediations(
+              {
+                store,
+                orchestrator,
+                drain: runtime.drain,
+                ...github,
+              },
+              deadline,
+            );
+          },
+        }),
     executeRepositoryJobs: async (deadline) => {
       await maintainRepositoryJobs(deadline, createOrchestratorRuntime());
     },
@@ -142,6 +196,18 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
           error,
         );
       }
+    },
+    reconcileAutomerge: async (repo: string, ref: string) => {
+      const outcome = await dispatchAutomergeReconcile(
+        orchestratorGithubRuntimeDeps(process.env),
+        repo,
+        ref,
+      );
+      logger.info(
+        'agent-lcars: auto-merge sweep %s for %s after an approval',
+        outcome,
+        repo,
+      );
     },
     drain: (limit?: number) => {
       const github = orchestratorGithubRuntimeDeps(process.env);

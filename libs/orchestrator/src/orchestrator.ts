@@ -33,6 +33,7 @@ import { advanceDelivery, type DeliveryObservation } from './delivery';
 import { usesCodexCredentials } from './model';
 import {
   type DeliveryBinding,
+  type GithubAnchorProjection,
   isLive,
   type OperationalIntervention,
   type ProviderFallbackRequest,
@@ -47,11 +48,9 @@ import {
   type WorkRevision,
   workRevisionSchema,
 } from './model';
+import { providerIsCoolingDown } from './provider-cooldown';
 import {
-  providerCooldownForRun,
-  providerIsCoolingDown,
-} from './provider-cooldown';
-import {
+  isFallbackFailure,
   reportResultWithFallback,
   rerouteQueuedRun,
   selectFallbackPipeline,
@@ -124,6 +123,10 @@ export interface RequestInput {
   /** Replace only this exact unclaimed queue attempt when changing provider.
    * Cancellation and admission share the request transaction and its claim fence. */
   replaceQueuedRunId?: string;
+  expectedParkedRunId?: string;
+  githubDecisionParams?: (
+    projection: GithubAnchorProjection,
+  ) => Record<string, string> | undefined;
   /** Server-validated label intent; only its trusted adapter grants provider change. */
   labelProviderRequest?: {
     requestedAt: string;
@@ -183,10 +186,12 @@ export class Orchestrator {
       requestId: input.requestId,
       requestSource,
       sourceRevision: input.sourceRevision,
+      readGithubProjection: input.githubDecisionParams !== undefined,
       ...(input.requestBinding === undefined
         ? {}
         : { requestBinding: input.requestBinding }),
       readProviderRouting:
+        input.expectedParkedRunId !== undefined ||
         input.labelProviderRequest !== undefined ||
         input.useEffectivePipeline === true,
       decide: ({
@@ -197,6 +202,7 @@ export class Orchestrator {
         requestId,
         latestRun,
         retainedClaims,
+        githubProjection,
       }) => {
         // This belongs inside transactRequest, not in a route-level pre-read:
         // two first admissions may otherwise both observe an absent Task, and
@@ -250,6 +256,23 @@ export class Orchestrator {
         if (previousRun !== undefined) {
           return refused('duplicate-request', previousRun);
         }
+        if (
+          input.expectedParkedRunId !== undefined &&
+          (task?.task.closedAt !== undefined ||
+            latestRun?.runId !== input.expectedParkedRunId ||
+            latestRun.result?.summary !== 'park')
+        ) {
+          return refused('stale-lease');
+        }
+        const decisionParams =
+          githubProjection === undefined
+            ? undefined
+            : input.githubDecisionParams?.(githubProjection);
+        if (
+          input.githubDecisionParams !== undefined &&
+          decisionParams === undefined
+        )
+          return refused('stale-lease');
         const providerFallback =
           input.providerFallbackForPipeline === undefined
             ? input.providerFallback
@@ -263,7 +286,9 @@ export class Orchestrator {
           priority:
             input.priority ??
             (input.replaceQueuedRunId ? activeRun?.priority : undefined),
-          ...(input.params === undefined ? {} : { params: input.params }),
+          ...(input.params === undefined && decisionParams === undefined
+            ? {}
+            : { params: { ...input.params, ...decisionParams } }),
           ...(input.intervention === undefined
             ? {}
             : { intervention: input.intervention }),
@@ -448,12 +473,12 @@ export class Orchestrator {
             task.task.activeRunId === run.runId &&
             (run.state === 'pending' || run.state === 'running') &&
             run.providerFallback !== undefined &&
-            providerCooldownForRun({
+            isFallbackFailure({
               ...run,
               state: 'finished',
               result,
               updatedAt: this.clock.now(),
-            }) !== undefined &&
+            }) &&
             selectFallbackPipeline(
               run,
               this.fallbackAuthority?.allowedPipelines(task.task, run) ?? [],
@@ -515,12 +540,12 @@ export class Orchestrator {
               run !== undefined &&
               task.task.activeRunId === run.runId &&
               run.credentialPendingResult !== undefined &&
-              providerCooldownForRun({
+              isFallbackFailure({
                 ...run,
                 state: 'finished',
                 result: run.credentialPendingResult.result,
                 updatedAt: input.now(),
-              }) !== undefined &&
+              }) &&
               selectFallbackPipeline(
                 run,
                 authority.allowedPipelines(task.task, run),

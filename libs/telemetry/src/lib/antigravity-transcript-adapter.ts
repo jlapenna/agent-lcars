@@ -103,6 +103,25 @@ function extractSessionIdFromPath(
   return undefined;
 }
 
+const SENDER_RE = /^\[Message\][^\n]*\bsender=([^\s]+)/m;
+
+/** The conversation that spawned this one. Antigravity opens a subagent's
+ * transcript with a SYSTEM_MESSAGE whose `[Message] … sender=<id>` header names
+ * the spawning conversation. Only step 0 counts: a root conversation later
+ * receives the same header on messages its subagents send back. */
+function spawningConversation(
+  stepIndex: number,
+  source: string,
+  stepType: string,
+  content: string,
+): string | undefined {
+  if (stepIndex !== 0 || source !== 'SYSTEM' || stepType !== 'SYSTEM_MESSAGE') {
+    return undefined;
+  }
+  const sender = content.match(SENDER_RE)?.[1];
+  return sender && isSafeIdentifier(sender) ? sender : undefined;
+}
+
 function isSuccessfulShellOutput(
   status: string | undefined,
   content: string,
@@ -140,6 +159,7 @@ export const antigravityAdapter: TranscriptAdapter = {
     let startedAt: string | undefined;
     let lastActivityAt: string | undefined;
     let title: string | undefined;
+    let parentSessionId: string | undefined;
     let turns = 0;
     const tokens = emptyTokens();
     let lastToolCall: SessionSummary['lastToolCall'];
@@ -202,6 +222,12 @@ export const antigravityAdapter: TranscriptAdapter = {
       }
 
       const content = asString(raw['content']) ?? '';
+      parentSessionId ??= spawningConversation(
+        stepIndex,
+        source,
+        stepType,
+        content,
+      );
       if (!sessionId && content) {
         const inlineMatch = content.match(BRAIN_INLINE_ID_RE);
         if (inlineMatch && isSafeIdentifier(inlineMatch[1])) {
@@ -279,6 +305,8 @@ export const antigravityAdapter: TranscriptAdapter = {
         sessionId: resolvedSessionId,
         source: 'cli',
         agent: 'antigravity',
+        ...(parentSessionId &&
+          parentSessionId !== resolvedSessionId && { parentSessionId }),
         ...(cwd && { cwd }),
         ...(model && { model }),
         startedAt: startedAt ?? '',

@@ -80,6 +80,7 @@ const nextConfig = {
   // one copy, traced into the standalone output like @google-cloud/tasks.
   serverExternalPackages: [
     '@google-cloud/tasks',
+    '@google-cloud/pubsub',
     '@google-cloud/firestore',
     '@google-cloud/storage',
     'google-auth-library',

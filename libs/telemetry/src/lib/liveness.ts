@@ -1,4 +1,4 @@
-import type { SessionLiveness } from './types';
+import type { CliSessionDoc, SessionLiveness } from './types';
 
 /** Read-side windows for displayLiveness: a stored session doc is only as fresh
  * as its last hook/finalize write, so the display window absorbs brief gaps
@@ -34,4 +34,20 @@ export function displayLiveness(
   }
   if (stored === 'ended' || stored === 'stale') return stored;
   return ageMs <= DISPLAY_IDLE_THRESHOLD_MS ? 'idle' : 'ended';
+}
+
+/**
+ * The herdr terminal a stored CLI session can still be watched in, or
+ * `undefined` once the session has recorded its end.
+ *
+ * {@link displayLiveness} shows a session as `live` for a few minutes after
+ * its last activity even when it has ended, so the display value alone would
+ * keep offering a terminal the session has already left.
+ */
+export function watchableHerdrPaneId(
+  doc: Pick<CliSessionDoc, 'liveness' | 'herdrPaneId'>,
+): string | undefined {
+  return doc.liveness === 'ended' || doc.liveness === 'stale'
+    ? undefined
+    : doc.herdrPaneId;
 }

@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import { Suspense } from 'react';
 
 import { auth } from '@/auth';
 import { controlPlaneRepositories } from '@/lib/deployment';
@@ -8,6 +7,7 @@ import { resolvePrincipal } from '@/lib/work-grants';
 
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { ConsoleMessage } from '../console-message';
+import { NavSuspense } from '../nav-suspense';
 import { NavPageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { JobsPanel } from './jobs-panel';
@@ -72,7 +72,7 @@ async function AuthenticatedJobsPage() {
 
 export default function JobsPage() {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="jobs"
@@ -82,6 +82,6 @@ export default function JobsPage() {
       }
     >
       <AuthenticatedJobsPage />
-    </Suspense>
+    </NavSuspense>
   );
 }

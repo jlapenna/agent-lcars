@@ -17,4 +17,8 @@ export * from './lib/tokens';
 export * from './lib/transcript-adapter';
 export * from './lib/transcript-timeline';
 export * from './lib/types';
-export { isSafeIdentifier, truncateTitle } from './lib/unknown-value';
+export {
+  isHerdrPaneId,
+  isSafeIdentifier,
+  truncateTitle,
+} from './lib/unknown-value';

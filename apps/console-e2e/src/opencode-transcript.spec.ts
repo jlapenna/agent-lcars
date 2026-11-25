@@ -86,6 +86,25 @@ test('renders an archived Antigravity detail with user, assistant, and tool disc
   ).toBeVisible();
 });
 
+test('loads multi-page JSONL transcripts incrementally with mobile-safe touch target', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/sessions/e2e-claude-paginated');
+  const timeline = page.getByTestId('transcript-timeline');
+  await expect(timeline.getByText('First page prompt.')).toBeVisible();
+  await expect(timeline.getByText('Second page terminal turn.')).toHaveCount(0);
+
+  const loadMore = page.getByTestId('transcript-load-more');
+  await expect(loadMore).toBeVisible();
+  const box = await loadMore.boundingBox();
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+
+  await loadMore.click();
+  await expect(timeline.getByText('Second page terminal turn.')).toBeVisible();
+  await expect(loadMore).toHaveCount(0);
+});
+
 test('distinguishes a valid empty OpenCode archive', async ({ page }) => {
   await page.goto('/sessions/e2e-opencode-empty');
   await expect(page.getByTestId('session-header')).toBeVisible();

@@ -2,7 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { type SessionEventKind } from '@agent-lcars/telemetry';
+import { isHerdrPaneId, type SessionEventKind } from '@agent-lcars/telemetry';
 
 /**
  * Per-session client state under `~/.local/state/agent-lcars/hook-sessions/`
@@ -25,6 +25,14 @@ export interface HookSessionState {
    * reverts to host-scoped: a later event from a workspace root is skipped
    * so it cannot clear the repository evidence the stored doc holds. */
   readonly repoScoped?: true;
+  /** The herdr-core terminal this session was last found in
+   * (`herdr-pane.ts`). */
+  readonly herdrPaneId?: string;
+  /** Set once the terminal lookup gave a definite answer, found or not, so
+   * later events reuse it instead of asking herdr-core again. */
+  readonly herdrPaneResolved?: true;
+  /** When herdr-core last failed to answer, ISO, so retries back off. */
+  readonly herdrPaneCheckedAt?: string;
   readonly updatedAt: string;
 }
 
@@ -71,6 +79,9 @@ export function readHookSessionState(
     const lastDeliveredAt = record['lastDeliveredAt'];
     const lastKind = record['lastKind'];
     const repoScoped = record['repoScoped'] === true;
+    const herdrPaneId = record['herdrPaneId'];
+    const herdrPaneResolved = record['herdrPaneResolved'] === true;
+    const herdrPaneCheckedAt = record['herdrPaneCheckedAt'];
     return {
       version: 1,
       sessionId,
@@ -82,6 +93,10 @@ export function readHookSessionState(
         lastKind: lastKind as SessionEventKind,
       }),
       ...(repoScoped && { repoScoped }),
+      ...(typeof herdrPaneId === 'string' &&
+        isHerdrPaneId(herdrPaneId) && { herdrPaneId }),
+      ...(herdrPaneResolved && { herdrPaneResolved }),
+      ...(typeof herdrPaneCheckedAt === 'string' && { herdrPaneCheckedAt }),
     };
   } catch {
     return undefined;

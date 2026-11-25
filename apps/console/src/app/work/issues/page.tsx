@@ -1,7 +1,6 @@
 import { isDispatchPipeline } from '@agent-lcars/dispatch-contracts';
 import { Anchor, Group, Stack, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
-import { Suspense } from 'react';
 
 import { auth } from '@/auth';
 import { getWatchedRepos } from '@/lib/github-client';
@@ -10,6 +9,7 @@ import { resolvePrincipal, workGrants } from '@/lib/work-grants';
 
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
 import { ConsoleToolbar, ToolbarSelect } from '../../console-toolbar';
+import { NavSuspense } from '../../nav-suspense';
 import { OpsPanel } from '../../ops-primitives';
 import { NavPageLoading } from '../../page-loading';
 import { withConsolePageShell } from '../../with-console-page-shell';
@@ -190,7 +190,7 @@ export default async function IssuesPage({
   searchParams: Promise<Query>;
 }) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="work"
@@ -201,6 +201,6 @@ export default async function IssuesPage({
       }
     >
       <IssuesView query={await searchParams} />
-    </Suspense>
+    </NavSuspense>
   );
 }

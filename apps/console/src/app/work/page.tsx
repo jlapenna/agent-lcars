@@ -1,7 +1,7 @@
 import { PIPELINES } from '@agent-lcars/work';
 import { Anchor, Group, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
-import { cache, Suspense } from 'react';
+import { cache } from 'react';
 
 import { auth } from '@/auth';
 import { getWatchedRepos } from '@/lib/github-client';
@@ -14,6 +14,7 @@ import {
   ToolbarSelect,
   ToolbarWindow,
 } from '../console-toolbar';
+import { NavSuspense } from '../nav-suspense';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { QuickTaskButton } from '../quick-task-button';
 import { withConsolePageShell } from '../with-console-page-shell';
@@ -296,12 +297,12 @@ function WorkViewContent({
         )
       }
     >
-      <Suspense
+      <NavSuspense
         key={JSON.stringify(query)}
         fallback={<PageLoading rows={4} header={false} />}
       >
         <WorkBody query={query} />
-      </Suspense>
+      </NavSuspense>
     </WorkWorkspace>
   );
 }
@@ -383,7 +384,7 @@ export default function WorkPage({
   searchParams: Promise<WorkListParams>;
 }) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="work"
@@ -394,6 +395,6 @@ export default function WorkPage({
       }
     >
       <WorkPageShell searchParams={searchParams} />
-    </Suspense>
+    </NavSuspense>
   );
 }

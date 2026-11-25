@@ -456,7 +456,7 @@ describe('QueueWorkspace', () => {
     const menu = await screen.findByRole('menu');
     expect(
       within(menu).getAllByRole('menuitem', { hidden: true }),
-    ).toHaveLength(12);
+    ).toHaveLength(11);
     expect(
       within(menu).getByRole('menuitem', {
         name: 'Pending decisions',

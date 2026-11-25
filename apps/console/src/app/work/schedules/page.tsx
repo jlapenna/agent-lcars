@@ -1,7 +1,7 @@
 import { PIPELINES } from '@agent-lcars/work';
 import { Stack, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
-import { cache, Suspense } from 'react';
+import { cache } from 'react';
 
 import { auth } from '@/auth';
 import { controlPlaneRepository } from '@/lib/deployment';
@@ -9,6 +9,7 @@ import { getWatchedRepos } from '@/lib/github-client';
 import { resolvePrincipal, workGrants } from '@/lib/work-grants';
 
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
+import { NavSuspense } from '../../nav-suspense';
 import { OpsPanel } from '../../ops-primitives';
 import { NavPageLoading, PageLoading } from '../../page-loading';
 import { withConsolePageShell } from '../../with-console-page-shell';
@@ -80,9 +81,9 @@ function SchedulesViewContent() {
         />
       }
     >
-      <Suspense fallback={<PageLoading rows={4} header={false} />}>
+      <NavSuspense fallback={<PageLoading rows={4} header={false} />}>
         <SchedulesBody />
-      </Suspense>
+      </NavSuspense>
     </WorkWorkspace>
   );
 }
@@ -140,7 +141,7 @@ async function SchedulesPageShell() {
 
 export default function SchedulesPage() {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="work"
@@ -151,6 +152,6 @@ export default function SchedulesPage() {
       }
     >
       <SchedulesPageShell />
-    </Suspense>
+    </NavSuspense>
   );
 }

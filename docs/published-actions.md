@@ -17,7 +17,6 @@ their operating constraints.
 
 | Action                  | Purpose                                                                 |
 | ----------------------- | ----------------------------------------------------------------------- |
-| `publish-lcars-review`  | Publish the LCARS App check for the current GitHub test merge commit.   |
 | `setup-repo-checks`     | Install pinned native gitleaks or actionlint without Docker.            |
 | `mint-agent-token`      | Mint a scoped Agent LCARS App installation token.                       |
 | `assert-repo-vars`      | Report all missing required repository variables.                       |
@@ -37,48 +36,67 @@ unsupported installation grants fail at the native mint. Leaving both target
 inputs empty still scopes to the workflow repository; explicitly setting an
 owner without repositories intentionally selects that owner's installation.
 
-Call `publish-lcars-review` only from trusted default-branch workflow code.
-Run the permissionless `LCARS review event` PR/review notifier on GitHub’s
-`ubuntu-slim` runner. Subscribe it to PR opening, reopening, synchronization, editing and closure, and to review submission, editing and dismissal. Reconcile on its completion,
-default-branch pushes, manual dispatch, and an hourly backstop. The publisher
-needs `contents: read`, `pull-requests: read`, and `checks: read` on the
-workflow token. Pass the App client ID and private key through its declared
-inputs. All triggers for the trusted publisher must use one repository-wide
-concurrency group with `cancel-in-progress: false`. Use the repository’s
-runner and credential environment for that trusted job. Require
-`LCARS review (merge candidate)` from Agent LCARS App 4457090 and require
-review-thread resolution in the target repository. The shared agent protocol
-owns reviewer behavior. Enabling this check also needs a working LCARS
-review dispatch path for that repository. Stage the workflow first and verify
-that a deployed reviewer produced a review and the App published a successful check.
-Before switching enforcement or replacing its publisher, verify each affected
-open PR has a successful check from App 4457090 on its current GitHub test merge commit. The publisher accepts
-the deployed reviewer’s existing attempt and verdict markers. A maintainer can request a fresh review with `/review`. In member
-repositories, request review again after pushes and reopenings, and request it
-explicitly for Renovate and Dependabot PRs. After changing the target branch,
-request a review with `/review` if none is running. Wait for the controller’s completion comment linking a review submitted after the switch, then request the next review with `/review`. The publisher checks the controller’s completion comment and the later attempt number on this PR. That later run starts after the old comparison’s review has finished. For fleet-managed auto-merge callers,
-include `--ci-workflow lcars-review-event.yml` alongside the existing CI workflow
-inputs on every scaffold refresh. Before adding the App-bound check, remove
-the `fleet-onboard: managed` marker from the repository’s Terraform ruleset
-so later scaffold refreshes preserve the check and its integration ID.
+## The review gate
 
-The publisher reads the current reviews again before writing each check. GitHub
-processes review changes and check writes separately. A dismissal after that
-read takes effect on the next reconciliation. GitHub also evaluates head checks
-when the test merge commit has no results. A commit-scoped check alone cannot
-guarantee a fresh approval for each PR in that case.
+The review gate is GitHub's own review requirement, the same in every
+review-gated repository: `Protect main` sets
+`required_approving_review_count = 1` with `dismiss_stale_reviews_on_push`,
+and requires review-thread resolution. Nothing in a repository publishes a
+review check, and no workflow, secret or marker carries a verdict.
+
+LCARS reviews as an ordinary reviewer. It submits `APPROVE` or
+`REQUEST_CHANGES` on the reviewed commit; a `COMMENT` is not a verdict. Every
+repository gets the same triggers: a review is dispatched when a non-draft PR
+opens, becomes ready, receives a push or is reopened, and a maintainer can
+request a fresh one on any PR with `/review`. GitHub dismisses an approval
+when the head moves and when the base changes, so no rule here tracks either.
+
+Non-draft Renovate and Dependabot PRs whose commits are all authored by the
+bot and signed by GitHub (excluding LCARS's qualification-gated
+`renovate/runner-cli-runtimes`, `renovate/major-runner-cli-runtimes`,
+`renovate/anthropic-review-workflow`, and
+`renovate/major-anthropic-review-workflow` branches) get an approving review
+from the control plane, as `agent-lcars[bot]`, without a review run. It does
+not approve a head that carries `status:needs-human` or `status:blocked`, a
+change request, an open trusted review thread, or a dismissed LCARS review.
+A commit from anyone else ends the exemption and the PR is reviewed normally.
+
+Two limits follow from using GitHub's rule. Any identity with write access
+can approve, so `can_approve_pull_request_reviews` stays off for the Actions
+token in every gated repository. And no account can approve its own pull
+request: a PR opened by the LCARS App itself merges after a maintainer
+approves it. LCARS still reviews it, as a `COMMENT` carrying
+`<!-- lcars-review:pass -->` or `<!-- lcars-review:block -->`; once it passes
+with nothing else against the head, the control plane requests the
+maintainer's review, and `agent-automerge-reusable.yml` leaves that request
+in place.
+
+Enabling the gate in a repository is one change to its ruleset root
+(`infra/github-ruleset`), applied by Homelab's executor. Before adding it,
+remove the `fleet-onboard: managed` marker from that root so later scaffold
+refreshes preserve the rule.
 
 ## Published reusable workflows
 
-| Workflow                       | Purpose                                        |
-| ------------------------------ | ---------------------------------------------- |
-| `renovate-auto-approve.yml`    | Approve a Renovate PR with a minted App token. |
-| `agent-automerge-reusable.yml` | Arm and reconcile agent PR auto-merge.         |
-| `repo-validation.yml`          | Run actionlint, runner-label, schedule checks. |
-| `codeql-reusable.yml`          | Run the caller-configured CodeQL analysis job. |
+| Workflow                       | Purpose                                             |
+| ------------------------------ | --------------------------------------------------- |
+| `agent-automerge-reusable.yml` | Arm and reconcile agent and approved PR auto-merge. |
+| `repo-validation.yml`          | Run actionlint, runner-label, schedule checks.      |
+| `codeql-reusable.yml`          | Run the caller-configured CodeQL analysis job.      |
 
 Hosted provider workflows are retired; providers execute through the Console
 QueueExecutor instead.
+
+`reconcile-automerge` arms squash auto-merge on every open, non-draft,
+non-parked PR that is either agent-authored (`bot-logins`) or a
+same-repository PR whose `reviewDecision` is `APPROVED`, whoever opened it.
+Approval is the gate, and most maintainer-login PRs are agent-written
+(jlapenna/homelab#3800 sat approved and unarmed). Fork PRs and Renovate or
+Dependabot PRs are never armed this way. Adding `status:needs-human` disarms any PR
+the sweep could have armed, whoever opened it. The console starts each repository's `agent-automerge.yml` through
+`workflow_dispatch` when it receives an approving review of a same-repository,
+non-draft PR, so the sweep arms it within minutes. A push to the base branch, a
+successful PR CI run and the daily schedule remain the backstop.
 
 `agent-automerge-reusable.yml`'s `reconcile-automerge` job also updates a
 BEHIND branch on any open, non-draft, non-parked PR that already has
@@ -147,9 +165,8 @@ and their inputs are retired: `restore-runs-on`, `ci-workflow`,
 An App-enabled caller reconciles on events instead of a short poll: `push` to
 main (when an armed PR falls behind) and `workflow_run` `completed` for every
 workflow that posts checks on a PR head (when an armed PR turns green; the
-reusable admits successful same-repository `pull_request` runs). Subscribe
-to the exact workflow name `LCARS review event` as well. Its successful
-same-repository `pull_request_review` runs trigger the same reconciliation.
+reusable admits successful same-repository `pull_request` runs). An approving
+review needs no trigger: GitHub's own auto-merge acts on it.
 The sweep waits for all checks to pass. App merges and App-pushed PR heads
 emit both events. A late thread resolution, a late arm, mergeability still
 `UNKNOWN` after the sweep's bounded re-reads, or a transiently failed sweep

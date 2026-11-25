@@ -18,6 +18,8 @@ it('explicitly deletes missing bridge and checkout fields from a merged Firestor
     claudeSessionId: FieldValue.delete(),
     publicationCheckouts: FieldValue.delete(),
   });
+  // Readers fetch only the sessions written since their last read.
+  expect(payload['writtenAt']).toEqual(FieldValue.serverTimestamp());
 });
 
 describe('isTransientFirestoreError', () => {

@@ -92,6 +92,46 @@ describe('antigravityAdapter', () => {
     ]);
   });
 
+  const PARENT_ID = 'fec649a1-d4fa-44ca-9a62-fbd35027927f';
+  const senderMessage = (stepIndex: number, sender: string) =>
+    JSON.stringify({
+      step_index: stepIndex,
+      source: 'SYSTEM',
+      type: 'SYSTEM_MESSAGE',
+      status: 'DONE',
+      created_at: '2026-11-24T14:44:52Z',
+      content: `The following is a <SYSTEM_MESSAGE> not actually sent by the user.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-24T14:44:51Z sender=${sender} priority=MESSAGE_PRIORITY_HIGH\nReview the diff.\n</SYSTEM_MESSAGE>`,
+    });
+
+  it('links a subagent to the conversation that sent its opening message', () => {
+    const [summary] = antigravityAdapter.reduce(
+      [senderMessage(0, PARENT_ID)],
+      BRAIN_PATH,
+    );
+    expect(summary).toMatchObject({
+      sessionId: SESSION_ID,
+      parentSessionId: PARENT_ID,
+    });
+  });
+
+  it('does not treat messages a root receives from its subagents as a parent', () => {
+    const [summary] = antigravityAdapter.reduce(
+      [...FIXTURE_LINES, senderMessage(4, PARENT_ID)],
+      BRAIN_PATH,
+    );
+    expect(summary).not.toHaveProperty('parentSessionId');
+  });
+
+  it('ignores an unsafe or self-referencing sender', () => {
+    for (const sender of ['../../etc', SESSION_ID]) {
+      const [summary] = antigravityAdapter.reduce(
+        [senderMessage(0, sender)],
+        BRAIN_PATH,
+      );
+      expect(summary).not.toHaveProperty('parentSessionId');
+    }
+  });
+
   it('skips transcript_full.jsonl and chunks/*.jsonl during recursive directory discovery to prevent duplicate session summaries', () => {
     const fullPath = BRAIN_PATH.replace(
       'transcript.jsonl',

@@ -134,7 +134,7 @@ export function changeCredentialOperation(input: {
   if (
     change.kind === 'finish' &&
     op.kind === 'cleanup' &&
-    next.pipeline === 'goose' &&
+    (next.pipeline === 'goose' || Boolean(next.params?.['jobOccurrence'])) &&
     !isLive(next.state) &&
     next.events.at(-1)?.by === 'executor' &&
     (next.state === 'lost' ||

@@ -3,17 +3,20 @@ import type { SessionDoc } from '@agent-lcars/telemetry';
 
 import { sessionPRCandidates, spendPRKey } from './session-spend';
 
-/** Stored evidence only. Every referenced PR is read, with eight outstanding
- * reads and a shared five-second deadline. Late reads cannot mutate the
- * returned snapshot; identities unread by the deadline or unavailable stay
+/** Stored evidence only. Every referenced PR is read in batched point
+ * lookups (`batchSize` anchors per read, eight reads outstanding) under a
+ * shared five-second deadline. One read per PR made a busy window wait on
+ * hundreds of sequential round trips. Late reads cannot mutate the returned
+ * snapshot; identities unread by the deadline or in a failed batch stay
  * unknown and mark the snapshot incomplete. */
 export async function loadSpendProjections(
   docs: SessionDoc[],
-  read: (
-    anchor: GithubAnchorProjection['anchor'],
-  ) => Promise<GithubAnchorProjection | undefined>,
+  readMany: (
+    anchors: GithubAnchorProjection['anchor'][],
+  ) => Promise<(GithubAnchorProjection | undefined)[]>,
   timeoutMs = 5000,
   canonicalRepositories: readonly { owner: string; name: string }[] = [],
+  batchSize = 100,
 ) {
   const anchors = new Map<string, GithubAnchorProjection['anchor']>();
   const canonical = new Map(
@@ -30,36 +33,41 @@ export async function loadSpendProjections(
         issue: pr.number,
       });
     }
-  const selected = [...anchors.keys()];
+  const selected = [...anchors.entries()];
+  const batches: (typeof selected)[] = [];
+  for (let offset = 0; offset < selected.length; offset += batchSize)
+    batches.push(selected.slice(offset, offset + batchSize));
   const projections = new Map<string, GithubAnchorProjection>();
   let incomplete = false;
   let cursor = 0;
   const deadline = performance.now() + timeoutMs;
   await Promise.all(
-    Array.from({ length: Math.min(8, selected.length) }, async () => {
-      while (cursor < selected.length) {
+    Array.from({ length: Math.min(8, batches.length) }, async () => {
+      while (cursor < batches.length) {
         const remaining = deadline - performance.now();
         if (remaining <= 0) {
           incomplete = true;
           return;
         }
-        const key = selected[cursor++];
-        if (key === undefined) return;
-        const anchor = anchors.get(key);
-        if (anchor === undefined) {
-          incomplete = true;
-          continue;
-        }
+        const batch = batches[cursor++];
+        if (batch === undefined) return;
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-          const projection = await Promise.race([
-            read(anchor),
+          const read = await Promise.race([
+            readMany(batch.map(([, anchor]) => anchor)),
             new Promise<undefined>((resolve) => {
               timer = setTimeout(() => resolve(undefined), remaining);
             }),
           ]);
-          if (projection === undefined) incomplete = true;
-          else projections.set(key, projection);
+          if (read === undefined) {
+            incomplete = true;
+            continue;
+          }
+          batch.forEach(([key], index) => {
+            const projection = read[index];
+            if (projection === undefined) incomplete = true;
+            else projections.set(key, projection);
+          });
         } catch {
           incomplete = true;
         } finally {

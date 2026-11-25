@@ -6,7 +6,12 @@ import { mockWhere } from 'firestore-jest-mock/mocks/firestore';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CliSessionDoc, IssueAgentSessionDoc } from '../lib/types';
-import { getSessionDoc, listSessionDocs, SESSIONS_COLLECTION } from './store';
+import {
+  getSessionDoc,
+  listSessionDocs,
+  listSessionDocsByRunIds,
+  SESSIONS_COLLECTION,
+} from './store';
 
 const cliSession: CliSessionDoc = {
   sessionId: 'cli-session-1',
@@ -75,6 +80,40 @@ function streamingFirestore(
   };
   return { collection: () => query } as unknown as Firestore;
 }
+
+describe('listSessionDocsByRunIds', () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it('reads only the named runs, in chunks of 30 distinct ids', async () => {
+    const firestore = streamingFirestore({
+      [SESSIONS_COLLECTION]: [{ ...issueAgentSession, runId: 'r1' }],
+    });
+    const runIds = Array.from({ length: 31 }, (_, i) => `r${i}`);
+
+    const docs = await listSessionDocsByRunIds(firestore, [...runIds, 'r0']);
+
+    expect(mockWhere).toHaveBeenCalledTimes(2);
+    expect(mockWhere).toHaveBeenNthCalledWith(
+      1,
+      'runId',
+      'in',
+      runIds.slice(0, 30),
+    );
+    expect(mockWhere).toHaveBeenNthCalledWith(2, 'runId', 'in', ['r30']);
+    // The double returns its records for each chunk's stream.
+    expect(docs.map((doc) => doc.sessionId)).toEqual([
+      'runner-session-1',
+      'runner-session-1',
+    ]);
+  });
+
+  it('issues no query when there are no runs', async () => {
+    const firestore = streamingFirestore({ [SESSIONS_COLLECTION]: [] });
+
+    expect(await listSessionDocsByRunIds(firestore, [])).toEqual([]);
+    expect(mockWhere).not.toHaveBeenCalled();
+  });
+});
 
 describe('listSessionDocs', () => {
   afterEach(() => vi.clearAllMocks());

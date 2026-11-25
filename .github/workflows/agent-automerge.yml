@@ -38,7 +38,7 @@ on:
   # PR head: the sweep's green gate waits on all of them, not just required
   # checks.
   workflow_run:
-    workflows: [LCARS review event, CI, CodeQL]
+    workflows: [CI, CodeQL]
     types: [completed]
   # Daily backstop, not a poll. Some ways a PR becomes eligible emit no event
   # this workflow can subscribe to: a review thread resolved after checks

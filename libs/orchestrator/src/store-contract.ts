@@ -211,6 +211,152 @@ export function runOrchestratorStoreContract(
       },
     );
 
+    it('preserves a longer active provider cooldown across concurrent Codex completions', async () => {
+      const store = await makeStore();
+      const clock = new TestClock(T0);
+      const orchestrator = new Orchestrator(store, clock);
+      await store.recordCredentialWindow({
+        pipeline: 'codex',
+        refreshDueAt: new Date(
+          Date.parse(T0) + 8 * 24 * 60 * 60_000,
+        ).toISOString(),
+        observedAt: T0,
+      });
+      const enqueueCodex = async (workId: string) => {
+        const requested = await orchestrator.request({
+          taskId: { workId },
+          requestId: workId,
+          pipeline: 'codex',
+          work: TASK_WORK,
+        });
+        if (isRefusal(requested)) throw new Error(requested.reason);
+        const run = decidedRun(requested);
+        await store.enqueueRun({ runId: run.runId, now: clock.now() });
+        await orchestrator.confirmDispatch(run.runId);
+        return run;
+      };
+      const first = await enqueueCodex('01J5Z3K9QX8F0N2B4V6C8D1E5A');
+      const second = await enqueueCodex('01J5Z3K9QX8F0N2B4V6C8D1E5B');
+      const third = await enqueueCodex('01J5Z3K9QX8F0N2B4V6C8D1E5C');
+      for (const [expected, hash] of [
+        [first.runId, 'a'],
+        [second.runId, 'b'],
+      ] as const) {
+        const claimed = await store.claimQueuedRun({
+          pipelines: ['codex'],
+          now: clock.now(),
+          claimedBy: `runner-${hash}`,
+          claimedBySubject: 'executor@example.com',
+          tokenHash: hash.repeat(64),
+        });
+        expect(claimed?.runId).toBe(expected);
+      }
+
+      // First in-flight run completes with a 3-day Codex CLI UTC reset.
+      const reportedReset = '2026-08-18T12:00:00.000Z';
+      const doneFirst = await orchestrator.report(
+        first.runId,
+        {
+          ok: false,
+          summary: 'provider-limit',
+          message:
+            'Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: ' +
+            "You've hit your usage limit. Try again at Aug 18th, 2026 12:00 PM (UTC).",
+        },
+        'a'.repeat(64),
+      );
+      if (isRefusal(doneFirst)) throw new Error(doneFirst.reason);
+
+      // Second in-flight run completes 1 minute later with a capacity stop
+      // (15-minute probe); it must not shorten the active 3-day hold.
+      clock.advanceMinutes(1);
+      const doneSecond = await orchestrator.report(
+        second.runId,
+        {
+          ok: false,
+          summary: 'provider-capacity',
+          message: 'Selected model is at capacity.',
+        },
+        'b'.repeat(64),
+      );
+      if (isRefusal(doneSecond)) throw new Error(doneSecond.reason);
+
+      const statusAfterShort = await store.readQueueAdmissionStatus({
+        pipelines: ['codex'],
+        now: '2026-08-15T12:20:00.000Z',
+      });
+      expect(statusAfterShort.providers[0]?.cooldown).toEqual({
+        pipeline: 'codex',
+        runId: first.runId,
+        observedAt: T0,
+        expiresAt: reportedReset,
+      });
+      expect(
+        await store.claimQueuedRun({
+          pipelines: ['codex'],
+          now: '2026-08-18T11:59:59.000Z',
+          claimedBy: 'runner-c',
+          claimedBySubject: 'executor@example.com',
+          tokenHash: 'c'.repeat(64),
+        }),
+      ).toBeUndefined();
+
+      // Once the 3-day reset expires, admission reopens, a new shorter probe
+      // replaces the expired hold, and a later reset extends an active probe.
+      clock.advanceMinutes(3 * 24 * 60 - 1);
+      expect(clock.now()).toBe(reportedReset);
+      const fourth = await enqueueCodex('01J5Z3K9QX8F0N2B4V6C8D1E5D');
+      const claimedThird = await store.claimQueuedRun({
+        pipelines: ['codex'],
+        now: clock.now(),
+        claimedBy: 'runner-c',
+        claimedBySubject: 'executor@example.com',
+        tokenHash: 'c'.repeat(64),
+      });
+      expect(claimedThird?.runId).toBe(third.runId);
+      const claimedFourth = await store.claimQueuedRun({
+        pipelines: ['codex'],
+        now: clock.now(),
+        claimedBy: 'runner-d',
+        claimedBySubject: 'executor@example.com',
+        tokenHash: 'd'.repeat(64),
+      });
+      expect(claimedFourth?.runId).toBe(fourth.runId);
+
+      await orchestrator.report(
+        third.runId,
+        { ok: false, summary: 'provider-capacity' },
+        'c'.repeat(64),
+      );
+      const statusProbe = await store.readQueueAdmissionStatus({
+        pipelines: ['codex'],
+        now: clock.now(),
+      });
+      expect(statusProbe.providers[0]?.cooldown?.expiresAt).toBe(
+        '2026-08-18T12:15:00.000Z',
+      );
+
+      clock.advanceMinutes(1);
+      await orchestrator.report(
+        fourth.runId,
+        {
+          ok: false,
+          summary: 'provider-limit',
+          message:
+            'Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: ' +
+            "You've hit your usage limit. Try again at Aug 19th, 2026 6:30 AM (UTC).",
+        },
+        'd'.repeat(64),
+      );
+      const statusExtended = await store.readQueueAdmissionStatus({
+        pipelines: ['codex'],
+        now: clock.now(),
+      });
+      expect(statusExtended.providers[0]?.cooldown?.expiresAt).toBe(
+        '2026-08-19T06:30:00.000Z',
+      );
+    });
+
     it('keeps the newest credential window observation', async () => {
       const store = await makeStore();
       const window = (observedAt: string, refreshDueAt: string) => ({
@@ -1720,6 +1866,13 @@ export function runOrchestratorStoreContract(
           ).map((entry) => entry.task.task),
         ).toEqual([run.task]);
         expect(
+          (
+            await store.readWaitingDeliveryTasks({
+              repo: 'octo/example',
+            })
+          ).map((entry) => entry.task.task),
+        ).toEqual([run.task]);
+        expect(
           await store.readWaitingDeliveryTasks({
             repo: 'octo/example',
             number: 13,
@@ -1750,6 +1903,11 @@ export function runOrchestratorStoreContract(
           await store.readWaitingDeliveryTasks({
             repo: 'octo/example',
             number: 12,
+          }),
+        ).toEqual([]);
+        expect(
+          await store.readWaitingDeliveryTasks({
+            repo: 'octo/example',
           }),
         ).toEqual([]);
       });

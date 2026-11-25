@@ -246,4 +246,25 @@ describe('IssueGroupedSessions', () => {
     expect(disclosure).toHaveAttribute('data-expanded', 'true');
     expect(toggle).toHaveTextContent('Show fewer issue groups');
   });
+
+  it("shows a group's newest sessions and counts the older ones it holds back", () => {
+    const sessions = Array.from({ length: 4 }, (_, i) =>
+      makeRow({ sessionId: `s${i}`, issueNumber: 7 }),
+    );
+    render(
+      <MantineProvider>
+        <IssueGroupedSessions
+          groups={[{ issueNumber: 7, sessions }]}
+          rowLimit={3}
+        />
+      </MantineProvider>,
+    );
+    // The heading still counts every session in the issue.
+    expect(screen.getByText('4 sessions')).toBeTruthy();
+    expect(screen.queryByTestId('session-card-s2')).toBeTruthy();
+    expect(screen.queryByTestId('session-card-s3')).toBeNull();
+    expect(screen.getByTestId('issue-group-older').textContent).toBe(
+      '1 older session not shown',
+    );
+  });
 });

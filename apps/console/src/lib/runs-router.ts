@@ -12,6 +12,7 @@ import {
   type DeliveryBinding,
   deliveryWaiting,
   externalizeRunMessage,
+  type GithubAnchor,
   isLive,
   isRefusal,
   isWorkAnchor,
@@ -122,6 +123,12 @@ export interface RunsContext {
     anchor: IssueReference,
     repository?: string,
   ) => Promise<GithubAnchorLifecycle | undefined>;
+  /** Post-settlement PR follow-up (automatic remediation after blocking review,
+   * or cross-model re-review after a remediation push held the PR lock). */
+  reconcilePullRequestRemediation?: (
+    anchor: GithubAnchor,
+    options?: { afterRun?: Run },
+  ) => Promise<unknown>;
   /** Injected clock: every timestamp this router stamps (`requireRunToken`'s
    *  lease-expiry check, `claim`'s `claimedAt`, `checkoutToken`'s
    *  `expiresAt`) must be deterministic under test, not tied to wall-clock
@@ -589,6 +596,9 @@ export const runsRouter = os.router({
         runId: claimed.runId,
         ...('workId' in claimed.task ? { workId: claimed.task.workId } : {}),
         pipeline: claimed.pipeline,
+        ...(typeof claimed.params?.['mode'] === 'string'
+          ? { mode: claimed.params['mode'] }
+          : {}),
         ...(claimed.pipeline === 'goose' &&
         (claimed.params?.['providerAuth'] === 'claude' ||
           claimed.params?.['providerAuth'] === 'agy')
@@ -751,6 +761,13 @@ export const runsRouter = os.router({
         message: 'run has corrupted generation',
       });
     }
+    const parsedTimeout = Number(run.params?.['timeoutMinutes']);
+    const timeoutMinutes =
+      Number.isInteger(parsedTimeout) &&
+      parsedTimeout >= 1 &&
+      parsedTimeout <= 80
+        ? parsedTimeout
+        : undefined;
     const shared = {
       ...(run.issue === undefined ? {} : { issue: run.issue }),
       pipeline: run.pipeline,
@@ -759,6 +776,7 @@ export const runsRouter = os.router({
       generation,
       intentId: run.runId,
       ...(resume === undefined ? {} : { resume }),
+      ...(timeoutMinutes === undefined ? {} : { timeoutMinutes }),
     };
 
     if (!isWorkAnchor(run.task)) {
@@ -1147,19 +1165,21 @@ export const runsRouter = os.router({
           'A delivery correction must publish its freshly marked PR or explicitly park',
       });
     let delivery: DeliveryBinding | undefined;
+    const reference = result.ref?.match(/\/pull\/(\d+)$/u);
+    const samePullRequestAnchor =
+      reference !== undefined &&
+      reference !== null &&
+      !isWorkAnchor(run.task) &&
+      run.task.issue === Number(reference[1]);
     if (
       result.ok &&
-      result.ref?.match(/\/pull\/\d+$/u) &&
+      reference !== undefined &&
+      reference !== null &&
+      !samePullRequestAnchor &&
       result.summary !== 'park' &&
       run.params?.mode !== 'review'
     ) {
-      const reference = result.ref?.match(/\/pull\/(\d+)$/u);
-      if (
-        task === undefined ||
-        target === undefined ||
-        reference === undefined ||
-        reference === null
-      )
+      if (task === undefined || target === undefined)
         throw new ORPCError('CONFLICT', {
           message: 'Ready delivery evidence missing',
         });
@@ -1265,6 +1285,29 @@ export const runsRouter = os.router({
           await releaseCodexCredentialLease(context, run);
         }
       }
+      if (
+        !isRefusal(settled) &&
+        !isWorkAnchor(run.task) &&
+        context.reconcilePullRequestRemediation !== undefined
+      ) {
+        const taskAnchor = run.task;
+        await context.store
+          .readGithubAnchorProjection(taskAnchor)
+          .then((projection) =>
+            projection?.kind === 'issue'
+              ? undefined
+              : context.reconcilePullRequestRemediation?.(taskAnchor, {
+                  afterRun: settled.run ?? run,
+                }),
+          )
+          .catch((error: unknown) => {
+            logger.warn(
+              'agent-lcars: post-completion PR remediation check failed for %s:',
+              run.runId,
+              error,
+            );
+          });
+      }
     }
     return {
       runId: run.runId,
@@ -1285,7 +1328,7 @@ export const runsRouter = os.router({
     const target = anchorTarget(run, task);
 
     let profile: JobProfile | undefined;
-    if (run.pipeline === 'goose') {
+    if (run.pipeline === 'goose' || Boolean(run.params?.['jobOccurrence'])) {
       const jobs = repositoryJobs({
         store: context.store,
         orchestrator: context.orchestrator,

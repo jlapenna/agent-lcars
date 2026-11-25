@@ -1,3 +1,4 @@
+import { isClaudeSubagentSessionId } from '@agent-lcars/telemetry';
 import type { ItemView } from '@agent-lcars/work/derive';
 import { Anchor, Badge, Code, Group, Stack, Text } from '@mantine/core';
 
@@ -128,7 +129,10 @@ export function Conversation({
           (isFirstRound && run.reply === undefined)
             ? item.origin.channel
             : (run.replyChannel ?? 'unknown');
-        const session = item.sessions.find((s) => s.runId === run.runId);
+        const session = item.sessions.find(
+          (s) =>
+            s.runId === run.runId && !isClaudeSubagentSessionId(s.sessionId),
+        );
         return (
           <Stack key={run.runId} gap="xs">
             {run.issue ? <IssueSourceLink issue={run.issue} /> : null}

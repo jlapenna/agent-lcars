@@ -14,6 +14,8 @@ import {
   isAdminGithubLogin,
   isControlPlaneRepository,
   maintainerLogin,
+  ovisUrlByHost,
+  sessionLiveViewUrl,
   shareArtifactUrl,
   validateDeploymentIdentity,
 } from './deployment';
@@ -29,6 +31,7 @@ const VARS = [
   'AGENT_LCARS_CONSOLE_URL',
   'AGENT_LCARS_CONSOLE_DESCRIPTION',
   'AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT',
+  'AGENT_LCARS_OVIS_URL_BY_HOST',
 ] as const;
 
 afterEach(() => {
@@ -286,5 +289,72 @@ describe('deployment config', () => {
     expect(maintainerLogin()).toBe('jlapenna');
     expect(agentFleetLogin()).toBe('agent-lcars-bot');
     expect(agentSessionResumeScript()).toBe('fleet-claude-agent-session');
+  });
+});
+
+describe('session live view', () => {
+  const OVIS = 'AGENT_LCARS_OVIS_URL_BY_HOST';
+  const live = { liveness: 'live', host: 'pike', herdrPaneId: 't36' } as const;
+
+  it('links a live session to its own pane in its host Ovis', () => {
+    process.env[OVIS] = '{"pike":"https://herdr.example.test"}';
+    expect(sessionLiveViewUrl(live)).toBe(
+      'https://herdr.example.test/?pane=t36&view=chat',
+    );
+    expect(sessionLiveViewUrl({ ...live, liveness: 'idle' })).toBe(
+      'https://herdr.example.test/?pane=t36&view=chat',
+    );
+  });
+
+  it('keeps a base path', () => {
+    process.env[OVIS] = '{"pike":"https://lan.example.test/ovis/"}';
+    expect(sessionLiveViewUrl({ ...live, herdrPaneId: 't1b' })).toBe(
+      'https://lan.example.test/ovis/?pane=t1b&view=chat',
+    );
+  });
+
+  it('gives no link when there is nothing live to open', () => {
+    process.env[OVIS] = '{"pike":"https://herdr.example.test"}';
+    for (const session of [
+      { ...live, liveness: 'ended' },
+      { ...live, liveness: 'stale' },
+      { ...live, host: 'laptop' },
+      { ...live, host: undefined },
+      { ...live, herdrPaneId: undefined },
+      { ...live, herdrPaneId: 'laptop/t7' },
+      { ...live, herdrPaneId: 'w1:p1' },
+    ] as const) {
+      expect(sessionLiveViewUrl(session)).toBeUndefined();
+    }
+  });
+
+  it('gives no link, and no error, when no Ovis is configured', () => {
+    expect(ovisUrlByHost().size).toBe(0);
+    expect(sessionLiveViewUrl(live)).toBeUndefined();
+  });
+
+  it('refuses a malformed setting by naming the variable', () => {
+    for (const value of [
+      'not json',
+      '["https://herdr.example.test"]',
+      '{"pike":"http://herdr.example.test"}',
+      '{"pike":"https://herdr.example.test/?pane=t1"}',
+      '{"pike":42}',
+    ]) {
+      process.env[OVIS] = value;
+      expect(() => ovisUrlByHost()).toThrow(OVIS);
+    }
+  });
+
+  it('fails startup validation on a malformed setting, and passes without one', () => {
+    process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'] = 'someone';
+    process.env['AGENT_LCARS_CONSOLE_URL'] = 'https://console.example.test';
+    process.env['AGENT_LCARS_ARTIFACT_SHARE_BASE_URL'] =
+      'https://share.example.test';
+    process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORY'] = 'someone/console';
+    process.env['AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT'] = 'someone/auth.json';
+    expect(() => validateDeploymentIdentity()).not.toThrow();
+    process.env[OVIS] = '{"pike":"herdr.example.test"}';
+    expect(() => validateDeploymentIdentity()).toThrow(OVIS);
   });
 });

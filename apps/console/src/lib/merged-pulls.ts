@@ -11,11 +11,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** GitHub reads may run 15s; the readouts route gives up at 8s. A slow merge
  * count must cost only its own figure, not every readout. */
 const MERGES_DEADLINE_MS = 5_000;
-/** A day's merge count does not need the dashboard's 30s freshness. The
- * dashboard's 60s expiry left each instance refilling cold, a fill that
- * mints a token per repository and outlasts the deadline, so most page
- * loads showed the figure unavailable. Refresh in the background every five
- * minutes; refill cold only after an hour without readers. */
+/** A cold fill mints a token per repository and outlasts the deadline, so a
+ * 60s expiry left most page loads showing the figure unavailable. Refresh in
+ * the background every five minutes; refill cold only after an hour without
+ * readers. */
 const MERGES_CACHE_LIFE = { stale: 300, revalidate: 300, expire: 3600 };
 
 /** One page per repository. Merged PRs ordered by last update reach the

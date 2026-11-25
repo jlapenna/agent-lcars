@@ -38,36 +38,30 @@ const QUEUE_REASONS: Record<ActionType, QueueReason> = {
     color: 'red',
     rank: 3,
   },
-  'merge-blocked': {
-    type: 'merge-blocked',
-    label: 'Merge blocked',
-    color: 'yellow',
-    rank: 4,
-  },
   'silent-error': {
     type: 'silent-error',
     label: 'Silent error',
     color: 'orange',
-    rank: 5,
+    rank: 4,
   },
   'post-deploy-action': {
     type: 'post-deploy-action',
     label: 'Awaiting deploy',
     color: 'gray',
-    rank: 6,
+    rank: 5,
   },
   blocked: {
     type: 'blocked',
     label: 'Blocked',
     color: 'gray',
-    rank: 7,
+    rank: 6,
   },
   // Below every decision: a report is read, never answered.
   'report-ready': {
     type: 'report-ready',
     label: 'Report ready',
     color: 'teal',
-    rank: 6,
+    rank: 5,
   },
 };
 
@@ -114,14 +108,10 @@ export function queueDisclosureLabels(item: ActionItem): string[] {
 }
 
 /**
- * A more specific reason than the generic "Merge blocked" label, when
- * `action-items.ts` attributed the block to unresolved review threads
- * (#538). `item.unresolvedReviewThreadCount` is only ever set when that is
- * the operative blocker (see its own doc comment on `ActionItem`), so
- * there's nothing else to branch on here - undefined means either the
- * item isn't merge-blocked at all, or it is for the other existing reason
- * (mergeableState 'behind', already covered by its own "Base branch has
- * moved" callout).
+ * Diagnostic thread-count badge shown on pull request cards that carry
+ * unresolved review threads (#538). Unresolved threads no longer queue a PR
+ * into the Decision Inbox on their own, so this renders only when the PR is
+ * queued for an actual human decision.
  */
 export function mergeBlockedReason(item: ActionItem): string | undefined {
   const count = item.unresolvedReviewThreadCount;

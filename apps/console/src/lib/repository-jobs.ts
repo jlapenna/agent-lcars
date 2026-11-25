@@ -1,21 +1,26 @@
+import { parseRunGeneration } from '@agent-lcars/dispatch-contracts';
 import {
+  deliveryWaiting,
   isLive,
   isRefusal,
+  readFullRunMessage,
   type Run,
   RUN_LEASE_MS,
   RUN_PLACEMENT_WAIT_MAX_MS,
 } from '@agent-lcars/orchestrator';
-import { slotItemId } from '@agent-lcars/work';
+import { deriveItemState, slotItemId } from '@agent-lcars/work';
 
 import type { JobSecrets } from './job-secrets';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import {
   authorizeJob,
+  isHarnessJobExecution,
   type JobDefinition,
   jobDigest,
   jobDueAt,
   jobKey,
   type JobProfile,
+  renderHarnessJobPrompt,
   resolveJobParameters,
 } from './repository-job-definition';
 import type {
@@ -33,7 +38,11 @@ export interface RepositoryJobsDeps {
   store: JobStore;
   runtime: OrchestratorRouteDeps;
   profiles: () => JobProfile[];
-  granted: (principal: string, repository: string) => boolean;
+  granted: (
+    principal: string,
+    repository: string,
+    pipeline?: string,
+  ) => boolean;
   /** The principal automatic activation is attributed to; undefined
    * disables automatic activation. Schedule admission re-checks its grant. */
   automationPrincipal?: () => string | undefined;
@@ -53,6 +62,9 @@ function occurrenceComparison(
     definition.job.inputs,
     definition.job.result,
     parameters,
+    ...(isHarnessJobExecution(definition.job.execution)
+      ? [definition.job.execution.harness]
+      : []),
     ...(profile.providerAuth ? [profile.providerAuth] : []),
     ...(profile.providerModel ? [profile.providerModel] : []),
     ...(profile.credentialSet || profile.gitIdentity
@@ -89,9 +101,12 @@ export class RepositoryJobs {
     principal: string,
     profileName = definition.job.execution.profile,
   ): JobProfile {
-    if (!this.deps.granted(principal, definition.repository))
+    const pipeline = isHarnessJobExecution(definition.job.execution)
+      ? definition.job.execution.harness
+      : 'goose';
+    if (!this.deps.granted(principal, definition.repository, pipeline))
       throw new Error('Goose operator grant required');
-    return authorizeJob(
+    const profile = authorizeJob(
       definition,
       // The reviewed repository definition supplies fixed inputs, while the
       // existing Work grant supplies authority. This built-in lane never grants
@@ -104,10 +119,18 @@ export class RepositoryJobs {
             allocation: { cpu: 2, memory: '6Gi', storage: '24Gi' },
             inputSets: [definition.job.inputs],
           }
-        : this.deps.profiles().find((profile) => profile.name === profileName),
+        : this.deps.profiles().find((entry) => entry.name === profileName),
       principal,
       profileName,
     );
+    if (
+      isHarnessJobExecution(definition.job.execution) &&
+      (profile.providerAuth !== undefined ||
+        profile.resultFile !== undefined ||
+        profile.credentialSet !== undefined)
+    )
+      throw new Error('Harness jobs cannot use recipe-only profile options');
+    return profile;
   }
   /** Whether `principal` may enable `definition` under its own profile. */
   authorizes(definition: JobDefinition, principal: string): boolean {
@@ -223,9 +246,16 @@ export class RepositoryJobs {
         if (!job?.definition) throw new Error('Job not found');
         const profile = this.authorize(job.definition, principal, profileName);
         const parameters = resolveJobParameters(job.definition, values);
+        if (isHarnessJobExecution(job.definition.job.execution)) {
+          renderHarnessJobPrompt(job.definition, parameters, null);
+        }
         const requestDigest = requestDigestFor(parameters);
+        const manualOnlyReady =
+          trigger === 'manual' &&
+          !job.definition.job.triggers.schedule &&
+          !job.vetoedBy;
         if (
-          !job.enabled ||
+          (!job.enabled && !manualOnlyReady) ||
           job.error ||
           job.definition.digest !== digest ||
           at.getTime() - Date.parse(job.refreshedAt) > 600000
@@ -334,6 +364,71 @@ export class RepositoryJobs {
     // Authorization may be revoked after reservation. Keep it durable and
     // visible; do not launch until the current grant permits it again.
     const profile = this.authorizeOccurrence(occurrence);
+    const execution = occurrence.definition.job.execution;
+    if (isHarnessJobExecution(execution)) {
+      const previous =
+        occurrence.baselineOccurrence === undefined
+          ? undefined
+          : await this.deps.store.readOccurrence(occurrence.baselineOccurrence);
+      const description = renderHarnessJobPrompt(
+        occurrence.definition,
+        occurrence.parameters,
+        previous?.artifact?.baseline ?? null,
+      );
+      const allowedPipelines = execution.fallbackHarnesses?.filter(
+        (candidate) =>
+          candidate !== execution.harness &&
+          this.deps.granted(
+            occurrence.principal,
+            occurrence.definition.repository,
+            candidate,
+          ),
+      );
+      const result = await this.deps.runtime.orchestrator.request({
+        taskId: { workId: occurrence.workId },
+        requestId: occurrence.id,
+        pipeline: execution.harness,
+        priority: 'background',
+        ...(allowedPipelines && allowedPipelines.length > 0
+          ? {
+              providerFallback: {
+                principal: occurrence.principal,
+                allowedPipelines,
+              },
+            }
+          : {}),
+        params: {
+          mode: 'implement',
+          jobOccurrence: occurrence.id,
+          maxAttempts: String(execution.maxAttempts),
+          timeoutMinutes: String(parseInt(execution.timeout, 10)),
+          ...(profile.crossRepo === true ? { crossRepo: 'true' } : {}),
+        },
+        work: {
+          origin: {
+            principal: occurrence.principal,
+            channel: occurrence.trigger === 'schedule' ? 'cron' : 'api',
+          },
+          spec: {
+            title: `${occurrence.definition.name} · ${occurrence.definition.repository}`,
+            description,
+            pipeline: execution.harness,
+            priority: 'background',
+            ...(execution.fallbackHarnesses?.length
+              ? { fallbackPipelines: execution.fallbackHarnesses }
+              : {}),
+            ...(occurrence.definition.job.result.contract === 'report-v1'
+              ? { deliverable: 'report' }
+              : {}),
+            target: { repo: occurrence.definition.repository },
+          },
+        },
+      });
+      if (isRefusal(result) && result.reason !== 'duplicate-request')
+        throw new Error(`Work admission: ${result.reason}`);
+      await this.deps.runtime.drain();
+      return;
+    }
     const result = await this.deps.runtime.orchestrator.request({
       taskId: { workId: occurrence.workId },
       requestId: occurrence.id,
@@ -342,6 +437,7 @@ export class RepositoryJobs {
       params: {
         mode: 'recipe',
         jobOccurrence: occurrence.id,
+        maxAttempts: String(execution.maxAttempts),
         ...(profile.providerAuth ? { providerAuth: profile.providerAuth } : {}),
         ...(profile.crossRepo === true ? { crossRepo: 'true' } : {}),
       },
@@ -384,34 +480,95 @@ export class RepositoryJobs {
     const occurrence = await this.deps.store.readOccurrence(job.active);
     if (!occurrence) throw new Error('Active occurrence missing');
     await this.mint(occurrence);
-    const runs = await this.deps.runtime.store.listRuns({
+    const storedTask = await this.deps.runtime.store.readTask({
       workId: occurrence.workId,
     });
-    if (runs.length !== 1 || isLive(runs[0]!.state)) return;
-    const run = runs[0]!;
-    // Native terminal state alone is not evidence the worker has stopped:
-    // a claimed run waits for its executor's exit report to retire it. When
-    // that report can never arrive (an executor restart lost track of a
+    const runs = [
+      ...(await this.deps.runtime.store.listRuns({
+        workId: occurrence.workId,
+      })),
+    ].sort(
+      (left, right) =>
+        (parseRunGeneration(left.runId) ?? 0) -
+        (parseRunGeneration(right.runId) ?? 0),
+    );
+    if (runs.length === 0 || runs.some((candidate) => isLive(candidate.state)))
+      return;
+    if (
+      storedTask &&
+      storedTask.task.closedAt === undefined &&
+      deliveryWaiting(storedTask.task) &&
+      deriveItemState(storedTask.task, runs) === 'running'
+    )
+      return;
+    // Native terminal state alone is not evidence a worker has stopped:
+    // every claimed attempt waits for its executor's exit report to retire it,
+    // including an earlier lost attempt replaced by a maxAttempts=2 retry.
+    // When that report can never arrive (an executor restart lost track of a
     // deleted Job, or a Job was never created), the backstop still holds: a
     // worker placed after settlement cannot fetch its recipe (run-token
     // routes refuse a settled run), and one started before settlement ends
     // within its Pod runtime limit, which never exceeds the run lease.
+    const nowMs = this.deps.now().getTime();
     if (
-      run.queue?.claimedAt &&
-      run.queue.state !== 'retired' &&
-      this.deps.now().getTime() - Date.parse(run.updatedAt) <
-        RETIREMENT_BACKSTOP_MS
+      runs.some(
+        (candidate) =>
+          candidate.queue?.claimedAt &&
+          candidate.queue.state !== 'retired' &&
+          nowMs - Date.parse(candidate.updatedAt) < RETIREMENT_BACKSTOP_MS,
+      )
     )
       return;
+    const run = runs.at(-1)!;
+    const isHarness = isHarnessJobExecution(
+      occurrence.definition.job.execution,
+    );
+    let harnessArtifact: JobArtifact | undefined;
+    if (isHarness) {
+      const message = await readFullRunMessage(this.deps.runtime.store, run);
+      const taskOpen =
+        storedTask !== undefined && storedTask.task.closedAt === undefined;
+      const deliverySatisfied =
+        storedTask?.task.delivery === undefined ||
+        storedTask.task.delivery.state === 'complete';
+      const harnessSuccess =
+        taskOpen &&
+        (occurrence.definition.job.result.contract === 'report-v1'
+          ? run.state === 'finished' &&
+            run.result?.ok === true &&
+            run.result.summary === 'report' &&
+            Boolean(message?.trim())
+          : deliverySatisfied &&
+            run.state === 'finished' &&
+            run.result?.ok === true &&
+            run.result.summary !== 'park');
+      const reportText = message?.trim()
+        ? message
+        : run.result?.ref
+          ? `${run.result.summary ?? 'completed'}: ${run.result.ref}`
+          : (run.result?.summary ?? run.state);
+      const artifacts = {
+        'report.md': reportText,
+        ...(run.result?.ref ? { ref: run.result.ref } : {}),
+      };
+      harnessArtifact = {
+        digest: jobDigest([harnessSuccess, artifacts]),
+        successful: harnessSuccess,
+        artifacts,
+        baseline: reportText,
+      };
+    }
     const fallback = await this.reserveFallback(job, occurrence, run);
     await this.deps.store.mutate(job.id, occurrence.id, (current, saved) => {
       if (!current || !saved || current.active !== occurrence.id) return {};
       const { active: _active, ...rest } = current;
-      const success =
-        run.state === 'finished' &&
-        run.result?.ok &&
-        saved.artifact?.successful &&
-        run.result.ref === `job-result:${saved.artifact.digest}`;
+      const artifact = saved.artifact ?? harnessArtifact;
+      const success = isHarness
+        ? Boolean(artifact?.successful)
+        : run.state === 'finished' &&
+          run.result?.ok &&
+          artifact?.successful &&
+          run.result.ref === `job-result:${artifact.digest}`;
       if (!success && fallback) {
         // Settle this occurrence and hand the job to its already-reserved
         // fallback in one write, so no tick can admit another slot between.
@@ -419,6 +576,7 @@ export class RepositoryJobs {
           job: { ...rest, active: fallback, latest: fallback },
           occurrence: {
             ...saved,
+            ...(artifact ? { artifact } : {}),
             successful: false,
             reconciledAt: this.deps.now().toISOString(),
           },
@@ -438,6 +596,7 @@ export class RepositoryJobs {
         },
         occurrence: {
           ...saved,
+          ...(artifact ? { artifact } : {}),
           successful: Boolean(success),
           reconciledAt: this.deps.now().toISOString(),
         },
@@ -482,8 +641,12 @@ export class RepositoryJobs {
           // Same gates as admission: an operator disable/veto, a source error,
           // a changed definition or a stale catalog stops the fallback, and
           // the original then settles as an ordinary failure.
+          const manualOnlyReady =
+            occurrence.trigger === 'manual' &&
+            !occurrence.definition.job.triggers.schedule &&
+            !current.vetoedBy;
           if (
-            !current.enabled ||
+            (!current.enabled && !manualOnlyReady) ||
             current.error ||
             current.definition?.digest !== occurrence.definition.digest ||
             this.deps.now().getTime() - Date.parse(current.refreshedAt) > 600000

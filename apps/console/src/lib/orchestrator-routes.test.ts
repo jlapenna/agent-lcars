@@ -403,7 +403,7 @@ describe('handleWebhookDelivery', () => {
         check_run: { pull_requests: [{ number: 99 }] },
       },
     });
-    expect(drain).toHaveBeenCalledWith(1);
+    expect(drain).toHaveBeenCalledWith(10);
     const woken = (await claimable()).filter(
       (entry) => entry.kind === 'monitor-delivery',
     );
@@ -629,29 +629,6 @@ describe('handleWebhookDelivery', () => {
     },
   );
 
-  it('invalidates the queue only after a webhook projection refresh completes', async () => {
-    const { deps } = fixture();
-    const calls: string[] = [];
-    deps.refreshGithubAnchorProjection = vi.fn(async () => {
-      calls.push('refresh');
-    });
-    deps.invalidateAuthoritativeQueue = () => {
-      calls.push('invalidate');
-    };
-
-    await expect(
-      handleWebhookDelivery(deps, {
-        event: 'issues',
-        deliveryId: 'queue-cache-after-projection',
-        payload: completeIssuePayload(),
-      }),
-    ).resolves.toEqual({
-      status: 200,
-      body: { ignored: 'no-trigger-label' },
-    });
-    expect(calls).toEqual(['refresh', 'invalidate']);
-  });
-
   it('uses a complete unassigned delivery as an exact projection refresh signal', async () => {
     const { deps } = fixture();
     const refresh = vi.fn().mockResolvedValue(undefined);
@@ -691,6 +668,106 @@ describe('handleWebhookDelivery', () => {
       body: { ignored: 'unhandled-event' },
     });
     expect(refresh).toHaveBeenCalledWith(ISSUE);
+  });
+
+  describe('auto-merge sweep on approval', () => {
+    const review = (
+      state: string,
+      {
+        pr = {},
+        action = 'submitted',
+        reviewer = { login: 'jlapenna', association: 'OWNER' },
+        repo = REPO,
+      }: {
+        pr?: Record<string, unknown>;
+        action?: string;
+        reviewer?: { login: string; association: string };
+        repo?: string;
+      } = {},
+    ) => ({
+      action,
+      repository: { full_name: repo, default_branch: 'main' },
+      review: {
+        id: 7,
+        state,
+        author_association: reviewer.association,
+        user: { login: reviewer.login },
+      },
+      pull_request: {
+        state: 'open',
+        number: 3800,
+        draft: false,
+        head: { repo: { full_name: repo } },
+        ...pr,
+      },
+    });
+
+    async function deliver(payload: unknown) {
+      const { deps } = fixture();
+      const reconcileAutomerge = vi.fn().mockResolvedValue(undefined);
+      deps.reconcileAutomerge = reconcileAutomerge;
+      const result = await handleWebhookDelivery(deps, {
+        event: 'pull_request_review',
+        deliveryId: 'approval',
+        payload,
+      });
+      return { result, reconcileAutomerge };
+    }
+
+    it.each([
+      ['the maintainer', { login: 'jlapenna', association: 'OWNER' }],
+      ['a collaborator', { login: 'someone', association: 'COLLABORATOR' }],
+      // App reviews arrive with no association.
+      ['the fleet App', { login: 'agent-lcars[bot]', association: 'NONE' }],
+    ])('runs the sweep once for an approval by %s', async (_, reviewer) => {
+      const { reconcileAutomerge } = await deliver(
+        review('approved', { reviewer }),
+      );
+      expect(reconcileAutomerge).toHaveBeenCalledExactlyOnceWith(REPO, 'main');
+    });
+
+    it.each([
+      ['a comment review', review('commented')],
+      ['a change request', review('changes_requested')],
+      ['a dismissed approval', review('approved', { action: 'dismissed' })],
+      ['a draft', review('approved', { pr: { draft: true } })],
+      ['a closed PR', review('approved', { pr: { state: 'closed' } })],
+      [
+        'a fork',
+        review('approved', {
+          pr: { head: { repo: { full_name: 'someone/agent-lcars' } } },
+        }),
+      ],
+      ['a deleted fork', review('approved', { pr: { head: { repo: null } } })],
+      [
+        'an outside reviewer',
+        review('approved', {
+          reviewer: { login: 'drive-by', association: 'NONE' },
+        }),
+      ],
+      [
+        'a repository outside the control plane',
+        review('approved', { repo: 'someone/elsewhere' }),
+      ],
+    ])('leaves the sweep alone for %s', async (_, payload) => {
+      const { reconcileAutomerge } = await deliver(payload);
+      expect(reconcileAutomerge).not.toHaveBeenCalled();
+    });
+
+    it('acknowledges the delivery when the dispatch fails', async () => {
+      const { deps } = fixture();
+      deps.reconcileAutomerge = vi
+        .fn()
+        .mockRejectedValue(new Error('403 Resource not accessible'));
+
+      const result = await handleWebhookDelivery(deps, {
+        event: 'pull_request_review',
+        deliveryId: 'approval-dispatch-fails',
+        payload: review('approved'),
+      });
+
+      expect(result.status).toBe(200);
+    });
   });
 
   it('ignores a delivery with no trigger label', async () => {
@@ -1822,6 +1899,52 @@ describe('handleWebhookDelivery cross-model PR review and quota fallback', () =>
           }),
         }),
       ],
+    });
+  });
+
+  it('moves a review off a provider already in cooldown at admission, not at the next maintenance pass', async () => {
+    const { deps, store } = fixture(
+      (s, clock) => new Orchestrator(s, clock, providerFallbackAuthority),
+    );
+    const opened = (issue: number, deliveryId: string) =>
+      handleWebhookDelivery(deps, {
+        event: 'pull_request',
+        deliveryId,
+        payload: {
+          action: 'opened',
+          repository: { full_name: REPO },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: issue,
+            title: 'feat: codex change',
+            body: 'Implemented by Codex.',
+            user: { login: 'agent-lcars[bot]', type: 'Bot' },
+            head: { ref: `codex/issue-${issue}`, sha: 'b'.repeat(40) },
+            labels: [],
+          },
+          sender: { login: 'agent-lcars[bot]' },
+        },
+      });
+
+    // Claude reports a quota stop, which opens its provider cooldown.
+    await opened(93, 'codex-pr-93');
+    await deps.orchestrator.report(`${REPO}#93/r1`, {
+      ok: false,
+      summary: 'provider-limit',
+    });
+
+    // The next Codex PR's review would pick Claude first; admission moves it
+    // to Antigravity immediately instead of leaving it queued on Claude.
+    await opened(94, 'codex-pr-94');
+    expect(await store.readRun(`${REPO}#94/r1`)).toMatchObject({
+      pipeline: 'claude',
+      state: 'canceled',
+    });
+    expect(await store.readRun(`${REPO}#94/r2`)).toMatchObject({
+      pipeline: 'agy',
+      params: { mode: 'review' },
+      queue: { state: 'queued' },
     });
   });
 

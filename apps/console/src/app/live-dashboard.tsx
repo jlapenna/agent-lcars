@@ -38,8 +38,8 @@ export function LiveDashboard() {
         lastRefresh.current = Date.now();
         startTransition(async () => {
           try {
-            // updateTag expires synchronously; revalidatePath returns the new
-            // RSC tree in this same action without a second navigation/fetch.
+            // revalidatePath returns the new RSC tree in this same action
+            // without a second navigation/fetch.
             await refreshDashboard(pathname);
             setRefreshFailed(false);
             setSyncedAt(Date.now());

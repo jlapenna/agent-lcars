@@ -2,20 +2,36 @@ import type {
   CliSessionDoc,
   IssueAgentSessionDoc,
 } from '@agent-lcars/telemetry';
-import { getSessionDoc } from '@agent-lcars/telemetry/server';
+import {
+  getSessionDoc,
+  MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
+  MAX_TRANSCRIPT_SINGLE_LINE_BYTES,
+} from '@agent-lcars/telemetry/server';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getSessionDetail } from './session-detail';
 import { getSessionTranscript } from './session-transcript';
 
-vi.mock('@agent-lcars/telemetry/server', () => ({
-  getAgentTelemetryReaderFirestore: vi.fn(),
-  getSessionDoc: vi.fn(),
-}));
+vi.mock('@agent-lcars/telemetry/server', async () => {
+  const actual = await vi.importActual<
+    typeof import('@agent-lcars/telemetry/server')
+  >('@agent-lcars/telemetry/server');
+  return {
+    ...actual,
+    getAgentTelemetryReaderFirestore: vi.fn(),
+    getSessionDoc: vi.fn(),
+  };
+});
 
-vi.mock('./session-transcript', () => ({
-  getSessionTranscript: vi.fn(),
-}));
+vi.mock('./session-transcript', async () => {
+  const actual = await vi.importActual<typeof import('./session-transcript')>(
+    './session-transcript',
+  );
+  return {
+    ...actual,
+    getSessionTranscript: vi.fn(),
+  };
+});
 
 function cliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
   return {
@@ -119,18 +135,16 @@ describe('getSessionDetail', () => {
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://bucket/runs/1/a.jsonl',
       'claude-code',
+      {
+        snapshotId: expect.any(String),
+        maxSingleLineBytes: MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
+      },
     );
     expect(result.status).toBe('ok');
     expect(result).toMatchObject({ transcript: { events: [] } });
   });
 
   it('reads doc.renderable rather than re-deriving it from agent (#645 Bug 3)', async () => {
-    // A synthetic case that would be impossible from buildSessionDoc today
-    // (renderable is always false for a non-claude-code agent - see
-    // session-doc.spec.ts), but it proves the gate is actually reading the
-    // field rather than re-deriving it from the agent here. Re-derivation against a
-    // registry (TRANSCRIPT_ADAPTERS) that already disagreed with it, was
-    // exactly Bug 3.
     (getSessionDoc as Mock).mockResolvedValue(
       agentDoc({
         agent: 'codex',
@@ -145,6 +159,10 @@ describe('getSessionDetail', () => {
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://bucket/runs/1/codex/a.jsonl',
       'codex',
+      {
+        snapshotId: expect.any(String),
+        maxSingleLineBytes: MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
+      },
     );
     expect(result.status).toBe('ok');
     expect(result).toMatchObject({ transcript: { events: [] } });
@@ -170,6 +188,10 @@ describe('getSessionDetail', () => {
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://bucket/ses.export.json',
       'opencode',
+      {
+        snapshotId: expect.any(String),
+        maxSingleLineBytes: MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
+      },
     );
     expect(doc.renderable).toBe(false);
   });
@@ -205,8 +227,6 @@ describe('getSessionDetail', () => {
     expect(getSessionTranscript).not.toHaveBeenCalled();
     expect(result.status).toBe('ok');
     expect(result).not.toHaveProperty('transcript');
-    // The doc itself (and its transcriptGcsUri) still comes through for
-    // the page to render its own archive-note fallback from.
     expect(result).toMatchObject({
       doc: {
         agent: 'opencode',
@@ -219,7 +239,7 @@ describe('getSessionDetail', () => {
 
 describe('CLI session transcript detail', () => {
   afterEach(() => vi.resetAllMocks());
-  it('reads a consented CLI archive with the provider adapter and size bound', async () => {
+  it('reads page 1 of a consented CLI archive through the shared paginated loader', async () => {
     (getSessionDoc as Mock).mockResolvedValue(
       cliDoc({
         agent: 'codex',
@@ -233,16 +253,20 @@ describe('CLI session transcript detail', () => {
     );
     (getSessionTranscript as Mock).mockResolvedValue({
       events: [],
-      warning: 'Transcript unavailable (failed to fetch from storage).',
+      nextCursor: 'cursor-2',
+      hasMore: true,
     });
     expect(await getSessionDetail('cli-1')).toMatchObject({
       status: 'ok',
-      transcript: { warning: expect.stringContaining('unavailable') },
+      transcript: { events: [], nextCursor: 'cursor-2', hasMore: true },
     });
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://cli-archives/cli/host/codex/a.jsonl',
       'codex',
-      { maxBytes: 5 * 1024 * 1024 },
+      {
+        snapshotId: expect.any(String),
+        maxSingleLineBytes: MAX_TRANSCRIPT_SINGLE_LINE_BYTES,
+      },
     );
   });
   it('never reads an expired CLI archive', async () => {

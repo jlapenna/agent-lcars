@@ -313,11 +313,12 @@ async function handleMonitorDelivery(
   });
 }
 
-/** A PR webhook makes every waiting monitor bound to that PR due now. Returns
- * the entries woken; the caller drains so the observation follows at once. */
+/** A PR webhook makes every waiting monitor bound to that PR (or repository on
+ * a base-branch merge) due now. Returns the entries woken; the caller drains so
+ * the observation follows at once. */
 export async function wakeDeliveryMonitor(
   deps: Pick<DispatchDeps, 'store' | 'now'>,
-  binding: { repo: string; number: number },
+  binding: { repo: string; number?: number },
 ): Promise<string[]> {
   const woken: string[] = [];
   const at = deps.now?.() ?? new Date().toISOString();
@@ -1204,7 +1205,7 @@ export function outcomeCommentBody(
         );
       } else if (fallbackSuccessor !== undefined) {
         lines.push(
-          `A fresh fallback attempt ${fallbackSuccessor.runId} on ${fallbackSuccessor.pipeline} was created after this provider limit. Original intent: ${fallbackSuccessor.providerFallback?.originalRunId}.`,
+          `A fresh fallback attempt ${fallbackSuccessor.runId} on ${fallbackSuccessor.pipeline} was created after this ${fallbackSuccessor.providerFallback?.trigger?.reason === 'agent-timeout' ? 'timeout' : 'provider limit'}. Original intent: ${fallbackSuccessor.providerFallback?.originalRunId}.`,
         );
       } else if (
         run.result?.ok === false &&

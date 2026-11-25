@@ -162,7 +162,11 @@ export const itemRunViewSchema = z.strictObject({
       fromRunId: z.string().optional(),
       trigger: z
         .strictObject({
-          reason: z.enum(['provider-limit', 'provider-cooldown']),
+          reason: z.enum([
+            'provider-limit',
+            'provider-cooldown',
+            'agent-timeout',
+          ]),
           failureRunId: z.string(),
           limitedPipeline: z.string(),
         })
@@ -785,6 +789,14 @@ export const itemsContract = {
         /** Retries with this key return the original admitted round. Scoped
          * to the item and authenticated principal; changed input conflicts. */
         requestId: workReplyRequestIdSchema.optional(),
+        expectedParkedRunId: z
+          .string()
+          .min(1)
+          .max(256)
+          .optional()
+          .describe(
+            'Only admit a new reply if this park still owns the decision.',
+          ),
         /** Defaults to true. False starts a fresh session that still
          *  carries the reply text. */
         resume: z.boolean().optional(),
@@ -1198,6 +1210,9 @@ export const runClaimResponseSchema = z.strictObject({
   /** Present for native Work anchors only. */
   workId: workIdSchema.optional(),
   pipeline: z.string(),
+  /** The run's Work mode. The executor launches `review` runs with its
+   * smaller review shape when one is configured. */
+  mode: z.string().min(1).max(64).optional(),
   /** A goose recipe whose admitted profile runs its tools on Claude or
    * Antigravity; the executor projects that credential only into that worker. */
   providerAuth: z.enum(['claude', 'agy']).optional(),
@@ -1234,6 +1249,9 @@ const runBriefSharedSchema = {
    *  cover every watched repository's owner, not just the anchor's own.
    *  Never present as `false`; absent means the option was not requested. */
   crossRepo: z.boolean().optional(),
+  /** Optional run-level execution timeout override (1..80 minutes) for
+   *  repository harness jobs (`execution.timeout`). */
+  timeoutMinutes: z.number().int().min(1).max(80).optional(),
 };
 
 /** Native Work preserves its existing top-level `id`/`spec` fields so an

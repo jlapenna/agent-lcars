@@ -811,7 +811,8 @@
                                       "type": "string",
                                       "enum": [
                                         "provider-limit",
-                                        "provider-cooldown"
+                                        "provider-cooldown",
+                                        "agent-timeout"
                                       ]
                                     },
                                     "failureRunId": {
@@ -2869,7 +2870,8 @@
                                       "type": "string",
                                       "enum": [
                                         "provider-limit",
-                                        "provider-cooldown"
+                                        "provider-cooldown",
+                                        "agent-timeout"
                                       ]
                                     },
                                     "failureRunId": {
@@ -4732,7 +4734,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -6066,7 +6069,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -7404,7 +7408,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -8783,7 +8788,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -10202,7 +10208,8 @@
                                           "type": "string",
                                           "enum": [
                                             "provider-limit",
-                                            "provider-cooldown"
+                                            "provider-cooldown",
+                                            "agent-timeout"
                                           ]
                                         },
                                         "failureRunId": {
@@ -11532,7 +11539,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -12908,7 +12916,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -13338,6 +13347,12 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 128
+                  },
+                  "expectedParkedRunId": {
+                    "description": "Only admit a new reply if this park still owns the decision.",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
                   },
                   "resume": {
                     "type": "boolean"
@@ -14314,7 +14329,8 @@
                                     "type": "string",
                                     "enum": [
                                       "provider-limit",
-                                      "provider-cooldown"
+                                      "provider-cooldown",
+                                      "agent-timeout"
                                     ]
                                   },
                                   "failureRunId": {
@@ -17598,6 +17614,11 @@
                     "pipeline": {
                       "type": "string"
                     },
+                    "mode": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
                     "providerAuth": {
                       "type": "string",
                       "enum": ["claude", "agy"]
@@ -18302,6 +18323,11 @@
                         },
                         "crossRepo": {
                           "type": "boolean"
+                        },
+                        "timeoutMinutes": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 80
                         }
                       },
                       "required": [
@@ -18627,6 +18653,11 @@
                         },
                         "crossRepo": {
                           "type": "boolean"
+                        },
+                        "timeoutMinutes": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 80
                         }
                       },
                       "required": [
@@ -18930,6 +18961,11 @@
                         },
                         "crossRepo": {
                           "type": "boolean"
+                        },
+                        "timeoutMinutes": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 80
                         },
                         "claw": {
                           "anyOf": [

@@ -569,6 +569,25 @@ describe('run introspection', () => {
   });
 });
 
+describe('claim mode', () => {
+  it('returns the claimed run mode so the executor can size its Job', async () => {
+    const f = fixture();
+    await seedQueuedRun(f.store, f.orchestrator, {
+      workId: wid('review-mode'),
+      now: NOW,
+      params: { mode: 'review' },
+    });
+    const claimed = await call(
+      { ...f, ...context, principal: executorPrincipal() },
+      'POST',
+      '/runs/claim',
+      { runner: 'executor', placementAware: true },
+    );
+    expect(claimed.status).toBe(200);
+    expect(claimed.json).toMatchObject({ mode: 'review' });
+  });
+});
+
 describe('placement observations', () => {
   it('negotiates durable waiting, authenticates the executor and keeps Pending past startup expiry', async () => {
     const f = fixture();

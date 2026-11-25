@@ -2,11 +2,16 @@ import crypto from 'node:crypto';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { enqueueGitHubWebhook } = vi.hoisted(() => ({
+const { enqueueGitHubWebhook, publishActionsEvent } = vi.hoisted(() => ({
   enqueueGitHubWebhook: vi.fn(),
+  publishActionsEvent: vi.fn(),
 }));
 
 vi.mock('@/lib/hosted-webhook-queue', () => ({ enqueueGitHubWebhook }));
+vi.mock('@/lib/github-actions-events', () => ({
+  GITHUB_ACTIONS_EVENTS: new Set(['workflow_job', 'workflow_run']),
+  publishActionsEvent,
+}));
 
 import { GITHUB_WEBHOOK_MAX_BYTES, POST } from './route';
 
@@ -207,5 +212,63 @@ describe('POST /api/control-plane/webhook body bound', () => {
     );
     expect(response.status).not.toBe(413);
     expect(enqueueGitHubWebhook).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('POST /api/control-plane/webhook GitHub Actions events', () => {
+  beforeEach(() => {
+    publishActionsEvent.mockImplementation(
+      async ({ deliveryId }: { deliveryId: string }) => ({
+        deliveryId,
+        outcome: 'published',
+        messageId: 'm-1',
+      }),
+    );
+  });
+
+  it.each(['workflow_job', 'workflow_run'])(
+    'publishes %s for any installed repository without admission',
+    async (eventName) => {
+      const response = await POST(
+        webhookRequest('jlapenna/not-a-control-plane-repo', {
+          'x-github-event': eventName,
+        }),
+      );
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({ outcome: 'published' });
+      expect(publishActionsEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventName,
+          repository: 'jlapenna/not-a-control-plane-repo',
+          deliveryId: 'e29e8f0a-7530-11f0-9f9d-8f1bc3e88820',
+        }),
+      );
+      expect(enqueueGitHubWebhook).not.toHaveBeenCalled();
+    },
+  );
+
+  it('answers 503 when publishing fails so GitHub can redeliver', async () => {
+    publishActionsEvent.mockRejectedValue(new Error('pubsub unavailable'));
+    const response = await POST(
+      webhookRequest(HOME_REPO, { 'x-github-event': 'workflow_job' }),
+    );
+    expect(response.status).toBe(503);
+  });
+
+  it('still rejects an unsigned Actions event', async () => {
+    const response = await POST(
+      webhookRequest(HOME_REPO, {
+        'x-github-event': 'workflow_job',
+        'x-hub-signature-256': 'sha256=bad',
+      }),
+    );
+    expect(response.status).toBe(401);
+    expect(publishActionsEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not publish work events', async () => {
+    await POST(webhookRequest(HOME_REPO));
+    expect(publishActionsEvent).not.toHaveBeenCalled();
+    expect(enqueueGitHubWebhook).toHaveBeenCalled();
   });
 });

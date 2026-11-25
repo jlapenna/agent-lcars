@@ -15,8 +15,19 @@ Keep this file short. It is re-sent on every request.
 For review dispatches, follow the trusted Anthropic procedure at
 `$AGENT_REVIEW_PATH`. Delegation is enabled for that mode only: run one fresh
 reviewer or validator at a time and synchronously wait for it before starting
-another. Child agents return evidence to the coordinating reviewer; only that
-coordinator publishes the review. Do not recursively delegate from children.
+another. Use the lcars-review subagent for each independent pass and validation. Start with
+the integration bug pass so it can trace changed configuration through its
+consumers and inherited defaults. Supply any recorded external inputs alongside
+the diff. Run all four distinct passes before validation.
+
+Aim to finish each child task within twelve model steps. In the task prompt, identify the
+specific role, source paths and deadline. Batch related reads and return
+concrete evidence or identify what could not be checked within the limit.
+The coordinator validates candidates through fresh agents. When publishing,
+copy the packaged upstream revision from the adapter used to run this review.
+The gitlink in the reviewed source identifies a separate input and can differ.
+Review children never delegate, edit the checkout, commit or push. The worktree
+and delivery instructions below apply to implementation work.
 
 For other modes, work directly in this session. Delegated exploration is
 disabled for this serial inference runner: waiting on a child consumed an

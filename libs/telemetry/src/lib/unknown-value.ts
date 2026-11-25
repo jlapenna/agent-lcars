@@ -34,6 +34,18 @@ export function isSafeIdentifier(value: string): boolean {
   return SAFE_IDENTIFIER_RE.test(value);
 }
 
+const HERDR_PANE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/**
+ * True for the address herdr-core gives one of its own terminals (`t36`),
+ * which is also the pane ID Ovis opens it by. Another machine's terminal
+ * (`laptop/t7`) is deliberately refused: it is not a terminal of the host
+ * that reported it, so that host's Ovis cannot open it.
+ */
+export function isHerdrPaneId(value: string): boolean {
+  return HERDR_PANE_ID_RE.test(value);
+}
+
 export const TITLE_MAX_LENGTH = 80;
 
 /** Collapses whitespace and truncates to `TITLE_MAX_LENGTH`, ellipsizing

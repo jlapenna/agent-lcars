@@ -93,54 +93,6 @@ async function githubHttpError(
 }
 
 describe('read-only onboarding audit', () => {
-  it.each([
-    ['pass', 'pass', '2026-11-19T12:00:00Z', 'pass'],
-    ['pass', 'unverifiable', '2026-11-19T12:00:00Z', 'bypass'],
-    ['fail', 'fail', '2026-11-19T12:00:00Z', 'bypass'],
-    ['pass', 'unverifiable', '2026-11-20T16:00:36.429Z', 'pass'],
-  ])(
-    'audits candidate checks using the protected push evaluation (%s)',
-    async (result, expected, updated_at, suiteResult) => {
-      const checks = [
-        { context: 'LCARS review (merge candidate)', integration_id: 4457090 },
-      ];
-      const rule = {
-        type: 'required_status_checks',
-        ruleset_id: 42,
-        ruleset_source_type: 'Repository',
-        parameters: { required_status_checks: checks },
-      };
-      const prefix = `/repos/${repo}/rulesets`;
-      const { api } = fixture({
-        [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: [rule],
-        [`${prefix}/rule-suites?ref=refs%2Fheads%2Fmain&time_period=month&rule_suite_result=all&per_page=100&page=1`]:
-          [
-            {
-              id: 7,
-              after_sha: 'abc123',
-              ref: 'refs/heads/main',
-              result: suiteResult,
-              pushed_at: '2026-11-20T16:00:36Z',
-            },
-          ],
-        [`${prefix}/rule-suites/7`]: {
-          rule_evaluations: [
-            {
-              enforcement: 'active',
-              rule_type: 'required_status_checks',
-              rule_source: { type: 'ruleset', id: 42 },
-              result,
-            },
-          ],
-        },
-        [`${prefix}/42`]: { updated_at, enforcement: 'active', rules: [rule] },
-      });
-      expect(
-        (await audit(api)).find(({ fact }) => fact === 'required-checks')
-          ?.status,
-      ).toBe(expected);
-    },
-  );
   it('falls back to the fleet token for an unset workflow secret', async () => {
     const base = fixture();
     const tokens: string[] = [];
@@ -398,6 +350,20 @@ describe('read-only onboarding audit', () => {
         .filter(({ path }) => /variables|rules|commits/.test(path))
         .every(({ token }) => token === 'audit-token'),
     ).toBe(true);
+  });
+
+  it('fails when a required check is absent after default-branch CI completes', async () => {
+    const { api } = fixture({
+      [`/repos/${repo}/commits/abc123/check-runs?filter=all&per_page=100&page=1`]:
+        { check_runs: [] },
+      [`/repos/${repo}/actions/runs?head_sha=abc123&per_page=100`]: {
+        workflow_runs: [{ status: 'completed' }],
+      },
+    });
+    expect((await audit(api))[3]).toMatchObject({
+      status: 'fail',
+      detail: expect.stringContaining('Verify'),
+    });
   });
 
   it('does not call unfinished default-branch CI a configuration mismatch', async () => {

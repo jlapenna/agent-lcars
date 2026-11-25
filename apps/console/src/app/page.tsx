@@ -5,7 +5,6 @@ import { PIPELINES } from '@agent-lcars/work';
 import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor } from '@mantine/core';
 import { redirect } from 'next/navigation';
-import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
 import { consoleLandingPath } from '@/lib/console-access';
@@ -35,6 +34,7 @@ import {
 import { getNativeInboxEvidence } from '../lib/native-inbox';
 import { derivePrimaryAction } from '../lib/primary-action';
 import { buildQueueView } from '../lib/queue-view';
+import { readTimings } from '../lib/read-timings';
 import { indexSessionsByRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import {
@@ -88,6 +88,7 @@ import { formatRelativeTime } from './format';
 import { inboxCardAgent, inboxCardMetadata } from './inbox-card';
 import { LiveDashboard } from './live-dashboard';
 import { MergedLastDay } from './merged-last-day';
+import { NavSuspense } from './nav-suspense';
 import {
   ActiveDispatchesPanel,
   CliSessionsPanel,
@@ -232,6 +233,8 @@ async function IndexBody({
   stoppedCursor?: string;
   multiRepo: boolean;
 }) {
+  const timings = readTimings('bridge');
+  const activityRead = timings.time('activity', getCachedAgentActivity());
   const [
     {
       data: { items: rawItems },
@@ -253,27 +256,42 @@ async function IndexBody({
     spendArchive,
     tokenRateSnapshot,
   ] = await Promise.all([
-    getCachedQueueItems(),
-    getCachedAgentActivity(),
-    getCliSessions({ exhaustive: true }),
-    getRunnerSessionsByRunId(),
-    getParkedWork(repoFilterKey, stoppedCursor, view),
-    getNativeInboxEvidence(async () => {
-      const context = await workContext();
-      return { store: context.runtime.store, principal: context.principal };
-    }),
-    getAutoscalerStatuses(),
-    getSessionArchive(
-      parseSessionArchiveQuery({ days: '1', repo: repoFilterKey }),
-      {
-        includeSpend: true,
-      },
-    ).catch((error: unknown) => {
-      logger.error('agent-lcars: Bridge spend readout unavailable:', error);
-      return undefined;
-    }),
-    getTokenRateSnapshot(),
+    timings.time('queue', getCachedQueueItems()),
+    activityRead,
+    timings.time('cliSessions', getCliSessions({ exhaustive: true })),
+    activityRead.then(({ data }) =>
+      timings.time(
+        'runnerSessions',
+        getRunnerSessionsByRunId([...data.liveRuns, ...data.recentRuns]),
+      ),
+    ),
+    timings.time(
+      'stoppedWork',
+      getParkedWork(repoFilterKey, stoppedCursor, view),
+    ),
+    timings.time(
+      'nativeInbox',
+      getNativeInboxEvidence(async () => {
+        const context = await workContext();
+        return { store: context.runtime.store, principal: context.principal };
+      }),
+    ),
+    timings.time('autoscaler', getAutoscalerStatuses()),
+    timings.time(
+      'spend',
+      getSessionArchive(
+        parseSessionArchiveQuery({ days: '1', repo: repoFilterKey }),
+        {
+          includeSpend: true,
+        },
+      ).catch((error: unknown) => {
+        logger.error('agent-lcars: Bridge spend readout unavailable:', error);
+        return undefined;
+      }),
+    ),
+    timings.time('tokenRate', getTokenRateSnapshot()),
   ]);
+  timings.log();
   // Deduped: independent authoritative reads can fail independently, and
   // each unique problem only needs saying once.
   const warnings = Array.from(
@@ -645,7 +663,7 @@ function IndexViewContent({
   return (
     <>
       <LiveDashboard />
-      <Suspense
+      <NavSuspense
         key={`${repoFilterKey ?? ''}:${view.agent ?? ''}:${view.window ?? ''}:${view.q ?? ''}:${stoppedCursor ?? ''}`}
         fallback={<PageLoading rows={6} header={false} />}
       >
@@ -657,7 +675,7 @@ function IndexViewContent({
           stoppedCursor={stoppedCursor}
           multiRepo={multiRepo}
         />
-      </Suspense>
+      </NavSuspense>
     </>
   );
 }
@@ -745,7 +763,7 @@ async function IndexShell({ searchParams }: PageProps) {
 // separately, so the header never waits on those (see #160).
 export default function Index({ searchParams }: PageProps) {
   return (
-    <Suspense
+    <NavSuspense
       fallback={
         <NavPageLoading
           current="deck"
@@ -756,6 +774,6 @@ export default function Index({ searchParams }: PageProps) {
       }
     >
       <IndexShell searchParams={searchParams} />
-    </Suspense>
+    </NavSuspense>
   );
 }
