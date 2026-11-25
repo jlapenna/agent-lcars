@@ -3544,6 +3544,42 @@ export function runOrchestratorStoreContract(
       });
     });
 
+    describe('tasks by stored sort key', () => {
+      it('lists only stopped tasks, newest first, and pages them by cursor', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        const begin = async (issue: number) => {
+          const outcome = await orchestrator.request({
+            taskId: { repo: 'octo/example', issue },
+            requestId: `sort-${issue}`,
+            pipeline: 'claude',
+            work: TASK_WORK,
+          });
+          if (isRefusal(outcome)) throw new Error(outcome.reason);
+          return decidedRun(outcome);
+        };
+        const parked = await begin(1);
+        const failed = await begin(2);
+        await begin(3); // stays running
+        await orchestrator.report(parked.runId, { ok: true, summary: 'park' });
+        clock.advanceMinutes(1);
+        await orchestrator.report(failed.runId, { ok: false });
+
+        const stopped = await store.listTasksBySortKey('stoppedAt');
+        expect(stopped.map((entry) => entry.task.task)).toEqual([
+          failed.task,
+          parked.task,
+        ]);
+        expect(await store.listTasksBySortKey('eventAt')).toEqual([]);
+
+        const [first] = await store.listTasksBySortKey('stoppedAt', 1);
+        const rest = await store.listTasksBySortKey('stoppedAt', 1, {
+          updatedAt: first!.derived!.stoppedAt!,
+          taskKey: taskKey(first!.task.task),
+        });
+        expect(rest.map((entry) => entry.task.task)).toEqual([parked.task]);
+      });
+    });
+
     describe('runs by reported summary', () => {
       it('lists the task and update time of every run that reported a summary', async () => {
         const { store, orchestrator } = await fixture();

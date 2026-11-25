@@ -4,6 +4,7 @@ import {
   type OrchestratorStore,
   taskKey,
   type TaskListCursor,
+  type TaskSortKey,
 } from '@agent-lcars/orchestrator';
 import {
   type ItemState,
@@ -22,6 +23,9 @@ export interface ListWorkSummariesInput {
   limit: number;
   cursor?: TaskListCursor;
   state?: ItemState;
+  /** Read only tasks carrying this stored sort key, newest first, instead of
+   * every task by update time (#3566). The cursor then holds the key's value. */
+  sortKey?: TaskSortKey;
 }
 
 function cursorFor(task: Parameters<typeof taskKey>[0], updatedAt: string) {
@@ -43,7 +47,14 @@ export async function listWorkSummaries(
   store: OrchestratorStore,
   input: ListWorkSummariesInput,
 ): Promise<WorkSummaryPage> {
-  const tasks = await store.listTasks(input.limit, input.cursor);
+  const tasks =
+    input.sortKey === undefined
+      ? await store.listTasks(input.limit, input.cursor)
+      : await store.listTasksBySortKey(
+          input.sortKey,
+          input.limit,
+          input.cursor,
+        );
   // One bounded read of every task's run history instead of one query per
   // task: at this page's limit the per-task read was ~200 datastore round
   // trips for a panel that renders a screenful.
@@ -64,7 +75,14 @@ export async function listWorkSummaries(
         ? items
         : items.filter((item) => item.state === input.state),
     ...(tasks.length === input.limit && last !== undefined
-      ? { nextCursor: cursorFor(last.task.task, last.task.updatedAt) }
+      ? {
+          nextCursor: cursorFor(
+            last.task.task,
+            (input.sortKey === undefined
+              ? undefined
+              : last.derived?.[input.sortKey]) ?? last.task.updatedAt,
+          ),
+        }
       : {}),
   };
 }

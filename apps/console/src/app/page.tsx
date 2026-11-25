@@ -126,6 +126,10 @@ function toCard(item: ActionItem): BoardCard {
  * `resolveBridgeDetail` - a "Stopped work" row's `?sel=` must resolve to the
  * *same* item the list renders, matching every other Bridge row kind.
  */
+/** Stopped tasks per Bridge page, and event tasks read for activity. */
+const STOPPED_WORK_PAGE = 50;
+const EVENT_WORK_READ = 50;
+
 async function getParkedWork(
   repo?: string,
   rawCursor?: string,
@@ -133,7 +137,7 @@ async function getParkedWork(
 ): Promise<{
   items: WorkSummary[];
   eventItems: WorkSummary[];
-  /** Tasks read to find `eventItems`, and whether older ones exist. */
+  /** Event tasks read to find `eventItems`, and whether older ones exist. */
   eventWindow?: { size: number; windowed: boolean };
   hasMoreTasks: boolean;
   nextCursor?: TaskListCursor;
@@ -144,13 +148,20 @@ async function getParkedWork(
     if (!work.principal?.scopes.has('work.operator')) {
       return { items: [], eventItems: [], hasMoreTasks: false };
     }
-    const page = await listWorkSummaries(work.runtime.store, {
-      limit: 200,
-      cursor: parseStoppedWorkCursor(rawCursor),
-    });
-    const recent = rawCursor
-      ? await listWorkSummaries(work.runtime.store, { limit: 200 })
-      : page;
+    // Each read takes only tasks carrying the stored sort key (#3566): the
+    // newest stopped tasks and the newest event tasks, instead of the newest
+    // 200 tasks of every state filtered here.
+    const [page, recent] = await Promise.all([
+      listWorkSummaries(work.runtime.store, {
+        limit: STOPPED_WORK_PAGE,
+        cursor: parseStoppedWorkCursor(rawCursor),
+        sortKey: 'stoppedAt',
+      }),
+      listWorkSummaries(work.runtime.store, {
+        limit: EVENT_WORK_READ,
+        sortKey: 'eventAt',
+      }),
+    ]);
     const eventItems = recent.items
       .filter(
         (item) =>

@@ -58,7 +58,7 @@ describe('source activity', () => {
       14,
     );
     expect(panel).toHaveTextContent(
-      'Matches among the 200 most recently updated tasks.',
+      'Matches among the 200 most recent event tasks.',
     );
   });
 
