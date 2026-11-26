@@ -1,7 +1,7 @@
 diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/dist/src/tasks-runner/cache.js
 --- a/node_modules/nx/dist/src/tasks-runner/cache.js
 +++ b/node_modules/nx/dist/src/tasks-runner/cache.js
-@@ -106,7 +106,19 @@ class DbCache {
+@@ -136,7 +136,19 @@
          if (this.remoteCache) {
              // didn't find it locally but we have a remote cache
              // attempt remote cache
@@ -19,13 +19,13 @@ diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/di
 +                logger_1.logger.warn(`NX   Failed to read remote cache entry for ${task.id}, continuing without it: ${e}`);
 +                return null;
 +            }
-             if (res && this.applyRemoteCacheResults(task, res)) {
-                 return {
-                     ...res,
-@@ -157,7 +169,17 @@ class DbCache {
-         //    Promise.all over individual retrieve() calls.
+             const terminalOutput = res
+                 ? this.applyRemoteCacheResults(task, res)
+                 : null;
+@@ -186,7 +198,17 @@
+         // cannot open one connection per task.
          if (remoteMisses.length > 0) {
-             await Promise.all(remoteMisses.map(async (task) => {
+             await mapWithConcurrency(remoteMisses, remoteCacheRetrieveConcurrency(this.options.parallel), async (task) => {
 -                const res = await this.remoteCache.retrieve(task.hash, this.cache.cacheDirectory);
 +                // See the matching comment in get() above: a remote-cache
 +                // read failure degrades to a local miss, it must not crash
@@ -38,10 +38,10 @@ diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/di
 +                    logger_1.logger.warn(`NX   Failed to read remote cache entry for ${task.id}, continuing without it: ${e}`);
 +                    return;
 +                }
-                 if (res && this.applyRemoteCacheResults(task, res)) {
-                     results.set(task.hash, {
-                         ...res,
-@@ -199,7 +221,15 @@ class DbCache {
+                 const terminalOutput = res
+                     ? this.applyRemoteCacheResults(task, res)
+                     : null;
+@@ -227,7 +249,15 @@
                  });
              }
              else if (this.remoteCache) {
@@ -58,7 +58,7 @@ diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/di
              }
              return files;
          });
-@@ -401,7 +431,17 @@ class Cache {
+@@ -431,7 +461,17 @@
          else if (this.options.remoteCache && !this.options.skipRemoteCache) {
              // didn't find it locally but we have a remote cache
              // attempt remote cache
@@ -77,7 +77,7 @@ diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/di
              // try again from local cache
              const res2 = await this.getFromLocalDir(task);
              return res2 ? { ...res2, remote: true } : null;
-@@ -449,7 +489,15 @@ class Cache {
+@@ -479,7 +519,15 @@
              await (0, promises_1.writeFile)((0, path_1.join)(td, 'source'), await (0, machine_id_cache_1.getCurrentMachineId)());
              await (0, promises_1.writeFile)(tdCommit, 'true');
              if (this.options.remoteCache && !this.options.skipRemoteCache) {
