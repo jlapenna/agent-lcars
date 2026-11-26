@@ -30,7 +30,6 @@ cat "$FIXTURE_DIR/$name.json"
 FAKE
 chmod +x "$fixture_dir/bin/gh"
 export PATH="$fixture_dir/bin:$PATH" FIXTURE_DIR="$fixture_dir"
-export EXPECTED_REVIEW_LOGIN='agent-lcars-reviewer[bot]'
 export AGENT=Codex REPO=octo/example NUM=42 MODE=reply ATTEMPT_ID=g7:octo/example#42/r7
 export VERIFIED_OUTCOME_FILE="$fixture_dir/verified.json" RUNTIME_ENV="$fixture_dir/env"
 marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
@@ -73,7 +72,7 @@ assert_json '.outcome == "park" and .outcomeReference.number == 12 and .outcomeR
 # Matching reviews are accepted only in review mode.
 reset_fixture
 review_fixture() {
-  jq -cn --arg marker "$marker" --arg state "$1" '[[{id:100,state:$state,user:{type:"Bot",login:"agent-lcars-reviewer[bot]"},body:$marker,html_url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}]]' > "$fixture_dir/reviews.json"
+  jq -cn --arg marker "$marker" --arg state "$1" '[[{id:100,state:$state,user:{type:"Bot",login:"agent-lcars[bot]"},body:$marker,html_url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}]]' > "$fixture_dir/reviews.json"
 }
 review_fixture APPROVED
 if verify; then echo 'accepted review in reply mode' >&2; exit 1; fi
@@ -87,12 +86,6 @@ for state in APPROVED CHANGES_REQUESTED DISMISSED; do
   verify
   assert_json '.outcome == "review" and .outcomeReference.url == "https://github.com/octo/example/pull/42#pullrequestreview-100"'
 done
-# A marker-stamped verdict from an implementation identity is not this review.
-reset_fixture
-MODE=review
-review_fixture APPROVED
-sed -i 's/agent-lcars-reviewer/agent-lcars/' "$fixture_dir/reviews.json"
-if verify; then echo 'accepted implementation identity as reviewer' >&2; exit 1; fi
 # A COMMENT is not a verdict, whatever its body says.
 reset_fixture
 MODE=review
@@ -105,7 +98,7 @@ grep -Fq 'event is APPROVE or REQUEST_CHANGES' "$fixture_dir/output"
 reset_fixture
 MODE=review
 review_fixture COMMENTED
-echo 'agent-lcars-reviewer[bot]' > "$fixture_dir/author"
+echo 'agent-lcars[bot]' > "$fixture_dir/author"
 verify
 assert_json '.outcome == "review"'
 # A failed author lookup is a failed lookup, never a verdict or a missing one.

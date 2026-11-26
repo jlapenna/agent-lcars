@@ -158,7 +158,7 @@ redact_runner_secrets() {
   local text secret file
   local -a secrets=("${LCARS_RUN_TOKEN:-}" "${CHECKOUT_TOKEN:-}" "${GITHUB_TOKEN:-}" "${GH_TOKEN:-}"
     "${OPENCODE_LLM_API_KEY:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}" "${HINDSIGHT_API_TOKEN:-}")
-  for file in "${CHECKOUT_TOKEN_FILE:-}" "${CHECKOUT_OWNERS_DIR:-/nonexistent}"/*/token \
+  for file in "${CHECKOUT_TOKEN_FILE:-}" "${CHECKOUT_OWNERS_DIR:-/nonexistent}"/*/token "${PR_AUTHOR_TOKEN_FILE:-}" \
     "${OPENCODE_TOKEN_FILE:-}" "${CLAUDE_TOKEN_FILE:-}" "${AGY_TOKEN_FILE:-}" \
     "${HINDSIGHT_TOKEN_FILE:-/run/hindsight/hindsight-api-token}"; do
     if [ -n "$file" ] && [ -r "$file" ]; then secrets+=("$(cat "$file")"); fi
@@ -305,6 +305,12 @@ CHECKOUT_EXPIRY_FILE="$CHECKOUT_CREDENTIAL_DIR/expires-at"
 # this directory empty and behaves exactly as before.
 CHECKOUT_OWNERS_DIR="$CHECKOUT_CREDENTIAL_DIR/owners"
 mkdir -m 700 "$CHECKOUT_OWNERS_DIR"
+# The pull-request author App's token for the anchor repository, present only
+# when checkout-token returns `pullRequestAuthor`. The gh wrapper opens pull
+# requests with it so their author is never agent-lcars[bot], the identity
+# whose approval GitHub would refuse as a self-approval (#3522).
+PR_AUTHOR_TOKEN_FILE="$CHECKOUT_CREDENTIAL_DIR/pr-author-token"
+CHECKOUT_REPOSITORY_FILE="$CHECKOUT_CREDENTIAL_DIR/repository"
 
 refresh_checkout_token() {
   checkout_response="$CHECKOUT_CREDENTIAL_DIR/response.$$"
@@ -316,14 +322,6 @@ CURLCFG
   then
     rm -f -- "$checkout_response"
     return 1
-  fi
-  if [ "$MODE" = review ]; then
-    if ! jq -er '.reviewerLogin | select(length > 0)' "$checkout_response" > "$CHECKOUT_CREDENTIAL_DIR/reviewer-login.$$"; then
-      rm -f -- "$checkout_response" "$CHECKOUT_CREDENTIAL_DIR/reviewer-login.$$"
-      echo 'Reviewer identity missing from checkout credential' >&2
-      return 1
-    fi
-    mv -f -- "$CHECKOUT_CREDENTIAL_DIR/reviewer-login.$$" "$CHECKOUT_CREDENTIAL_DIR/reviewer-login"
   fi
   token="$(jq -er '.token | select(length > 0)' "$checkout_response")" || { rm -f -- "$checkout_response"; return 1; }
   expires_text="$(jq -er '.refreshAt // .expiresAt | select(length > 0)' "$checkout_response")" || { rm -f -- "$checkout_response"; return 1; }
@@ -365,6 +363,14 @@ CURLCFG
     mv -f -- "$owner_expiry_tmp" "$owner_dir/expires-at"
     mv -f -- "$owner_repos_tmp" "$owner_dir/repositories"
   done < <(jq -r '.grants // [] | .[] | [.owner, .token, .expiresAt, (.repositories // [] | join(","))] | @tsv' "$checkout_response")
+  if pr_author_token="$(jq -er '.pullRequestAuthor.token | select(length > 0)' "$checkout_response")"; then
+    (umask 077; printf '%s' "$pr_author_token" >"$PR_AUTHOR_TOKEN_FILE.$$")
+    mv -f -- "$PR_AUTHOR_TOKEN_FILE.$$" "$PR_AUTHOR_TOKEN_FILE"
+  else
+    rm -f -- "$PR_AUTHOR_TOKEN_FILE"
+  fi
+  jq -r '.repository' "$checkout_response" > "$CHECKOUT_REPOSITORY_FILE.$$"
+  mv -f -- "$CHECKOUT_REPOSITORY_FILE.$$" "$CHECKOUT_REPOSITORY_FILE"
   # Only metadata reaches these files; token values remain in the private files above.
   jq -r 'if .identity then "user" else "app" end' "$checkout_response" > "$CHECKOUT_CREDENTIAL_DIR/scope.$$"
   mv -f -- "$CHECKOUT_CREDENTIAL_DIR/scope.$$" "$CHECKOUT_CREDENTIAL_DIR/scope"
@@ -391,12 +397,8 @@ until refresh_checkout_token; do
   checkout_retry_seconds=$((checkout_retry_seconds * 2))
 done
 CHECKOUT_TOKEN="$(cat "$CHECKOUT_TOKEN_FILE")"
-if [ "$MODE" = review ]; then
-  EXPECTED_REVIEW_LOGIN="$(cat "$CHECKOUT_CREDENTIAL_DIR/reviewer-login")"
-  export EXPECTED_REVIEW_LOGIN
-fi
 # Ruling (design spec, "Direct runner mode"): direct mode uses this ONE
-# role-selected installation token, minted by checkout-token, for BOTH
+# agent-lcars[bot] installation token, minted by checkout-token, for BOTH
 # checkout and the agent's own push -- the codex/opencode lane's pattern,
 # not claude's. The claude lane's own claude[bot]-push boundary (#645)
 # exists because the claude-code-action vends its own separate push
@@ -446,13 +448,14 @@ set -euo pipefail
 # no grant on disk (no cross-repo label, or an owner outside the grant set)
 # falls back to the anchor token -- GitHub 403s/404s it same as today.
 owner=''
+repo_arg="\${GH_REPO:-}"
 prev=''
 for arg in "\$@"; do
   case "\$prev" in
-    -R | --repo) owner="\${arg%%/*}" ;;
+    -R | --repo) owner="\${arg%%/*}"; repo_arg="\$arg" ;;
   esac
   case "\$arg" in
-    --repo=*) owner="\${arg#--repo=}"; owner="\${owner%%/*}" ;;
+    --repo=*) repo_arg="\${arg#--repo=}"; owner="\${repo_arg%%/*}" ;;
   esac
   prev="\$arg"
 done
@@ -481,6 +484,14 @@ esac
 token_file='$CHECKOUT_TOKEN_FILE'
 if [ -n "\$owner" ] && [ -f "$CHECKOUT_OWNERS_DIR/\$owner/token" ]; then
   token_file="$CHECKOUT_OWNERS_DIR/\$owner/token"
+fi
+# \`gh pr create\` against the anchor repository opens the pull request as the
+# pull-request author App when its token is on disk (#3522).
+if [ "\${1:-}" = pr ] && [ "\${2:-}" = create ] && [ -f '$PR_AUTHOR_TOKEN_FILE' ]; then
+  anchor_repository="\$(cat '$CHECKOUT_REPOSITORY_FILE')"
+  if [ -z "\$repo_arg" ] || [ "\${repo_arg,,}" = "\${anchor_repository,,}" ]; then
+    token_file='$PR_AUTHOR_TOKEN_FILE'
+  fi
 fi
 token="\$(cat "\$token_file")"
 unset GITHUB_TOKEN
