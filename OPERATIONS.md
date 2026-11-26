@@ -22,7 +22,7 @@ are examples of the grants operators most often meet, not the full list.
 | ----------------------------------------------------------- | ------------------------- | --------------------------------------------------- |
 | `jlapenna`                                                  | `user:jlapenna`           | `work.operator`, `secrets.admin`, `work.claw.admit` |
 | `agent-lcars-production-verifier`                           | `svc:production-verifier` | `work.operator`                                     |
-| Google SA `work-reader@agent-lcars.iam.gserviceaccount.com` | `svc:work-reader`         | `work.reader`, `costs.reader`                       |
+| Google SA `work-reader@agent-lcars.iam.gserviceaccount.com` | `svc:work-reader`         | `work.reader`, `costs.reader`, `work.operator`      |
 
 The production-verifier grant applies to sessions with that login, including
 existing unexpired sessions. It is an identity grant, not a grant limited to
@@ -31,21 +31,24 @@ redispatch, replies, and schedule management across the configured pipelines.
 The shared verification credential therefore carries operational authority;
 its holders must act only within the requested task.
 
-`work.reader` authorizes only the read-only issue-owner query,
+`work.reader` alone authorizes only the read-only issue-owner query,
 `GET /anchors/github/owner` (`lcars work owner <owner/repo>#<n>`). It cannot
 list or read items, mutate, or manage schedules. `costs.reader` separately
 authorizes the read-only spend readout `GET /costs/budget`, which requires
 an explicit `days` selection (for example `?days=1h`; a bare request returns
 400; see [cost ledger](docs/cost-ledger.md)). Interactive Claude and Codex
-sessions use it through `LCARS_SERVICE_ACCOUNT=work-reader@agent-lcars.iam.gserviceaccount.com`;
-only the maintainer's Google account may impersonate that identity.
+sessions use `LCARS_SERVICE_ACCOUNT=work-reader@agent-lcars.iam.gserviceaccount.com`.
+Despite its historical name, that identity also holds `work.operator` for
+`claude`, `codex`, `opencode` and `agy`, enabling issue inspection, dispatch,
+item reads and Work management. Only the maintainer's Google account may
+impersonate it. Operations still require authorization within the user's task.
 
 Grant changes go through a PR, required checks, merge, and the normal
 [Deploy console workflow](.github/workflows/deploy-console.yml). The server
 caches grants, so editing source alone does not change live authorization.
 After rollout, verify the session login at `GET /api/auth/session`, then verify
-Work access with `GET /api/work/v1/items?limit=1` (a `work.reader` identity
-instead with the owner query, and expect `items` to be refused). Admin status
+Work access with `GET /api/work/v1/items?limit=1` (an identity holding only
+`work.reader` instead with the owner query, and expect `items` to be refused). Admin status
 alone is not proof. Removing the grant through the same deployment path revokes Work access
 for that identity without having to wait for its sessions to expire.
 
@@ -82,8 +85,9 @@ grant revalidation and platform-specific execution/profile validation in place.
   `LCARS_TOKEN`, or `LCARS_SERVICE_ACCOUNT` plus optional `LCARS_AUDIENCE`
   (default `agent-lcars-work`). Google impersonation requires IAM permission
   as well as an application Work grant. Interactive sessions on the
-  maintainer's hosts use `work-reader` for the owner query; they do not
-  impersonate `codex-agent`, whose grant carries `work.operator`.
+  maintainer's hosts use `work-reader` for ownership queries and authorized
+  coding-work operations. Its grant includes `work.operator`; impersonating
+  the workflow's `codex-agent` identity is unnecessary.
 
 A failed bearer token does not fall back to session cookies. Use one valid
 method. If a session expires, follow the saved-session capture or maintainer

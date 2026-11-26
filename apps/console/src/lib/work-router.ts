@@ -15,6 +15,7 @@ import {
   isSourceManagedWork,
   itemsContract,
   type MaintenanceTickOutput,
+  readStoredWorkSpec,
   recipeWorkSpecSchema,
   storedClawWorkSpec,
   storedWorkPayloadSchema,
@@ -128,7 +129,7 @@ const reader = os.use(async ({ context, next }) => {
 });
 
 /** The issue-owner query alone also accepts `work.reader` (#2502): the
- *  read-only interactive-session identity, which no other gate admits.
+ *  an ownership-only scope that grants no other Work operation.
  *  Deliberately not `work.reaper` -- that caller needs item reads for
  *  session expiry, never CLI session telemetry. */
 const ownerReader = os.use(async ({ context, next }) => {
@@ -508,6 +509,20 @@ export const workRouter = os.router({
         });
     }
     const runs = await context.runtime.store.listRuns({ workId: input.id });
+    const live = runs.find((run) => isLive(run.state));
+    if (principal.scopes.has('work.operator')) {
+      const pipeline =
+        live?.pipeline ?? readStoredWorkSpec(task.task.work['spec'])?.pipeline;
+      if (pipeline === undefined || !principal.pipelines.includes(pipeline))
+        throw errors.FORBIDDEN();
+      // Harness-backed jobs record their occurrence on the run, including
+      // after it settles. Canceling them also requires Jobs authority.
+      if (
+        !principal.pipelines.includes('goose') &&
+        runs.some((run) => Boolean(run.params?.['jobOccurrence']))
+      )
+        throw errors.FORBIDDEN();
+    }
     const state = deriveItemState(task.task, runs);
     if (state === 'done' || state === 'canceled') {
       throw errors.CONFLICT({
@@ -518,7 +533,6 @@ export const workRouter = os.router({
     // A live run holds the task's lock, so cancelling it is what settles
     // the item. With no live run there is nothing to stop -- the item is
     // parked -- and closing the task is what makes "canceled" stick.
-    const live = runs.find((run) => isLive(run.state));
     const outcome =
       live === undefined
         ? await context.runtime.orchestrator.close({ workId: input.id })

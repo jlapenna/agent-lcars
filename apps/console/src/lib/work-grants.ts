@@ -13,8 +13,8 @@ const workScopeSchema = z.enum([
   'work.operator',
   /** Read-only: the GitHub anchor-owner query (`anchorOwner`) and nothing
    *  else. Not `list`/`get` -- item reads are `work.operator`/`work.reaper`
-   *  -- and nothing that mutates. Interactive sessions use it through the
-   *  `svc:work-reader` grant (#2502). */
+   *  -- and nothing that mutates. The interactive `svc:work-reader` grant
+   *  (#2502) also carries work.operator for coding-work operations. */
   'work.reader',
   'work.executor',
   'work.cron',

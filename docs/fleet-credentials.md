@@ -25,7 +25,7 @@ history — move values with pipes, `read -rs`, or files created under
 | Autoscaler App key        | runner registration (homelab autoscaler)                                                        | homelab vault `github_autoscaler_lcars_app_private_key`                                  | maintainer (App settings UI)       |
 | Actions exporter key      | github-actions-exporter (homelab) Pub/Sub subscriber                                            | homelab vault `github_actions_exporter_key_json`                                         | maintainer (`gcloud` keys create)  |
 | Agent event delivery keys | `lcars events agent` on pike and laforge: Pub/Sub subscriber and `events.deliver` Work grant    | homelab vault `agent_events_<host>_key_json`                                             | maintainer (`gcloud` keys create)  |
-| `work-reader` ID token    | interactive sessions' `lcars work owner` (Console Work API)                                     | none stored; minted per call by Google impersonation                                     | `user:jlapenna@gmail.com` only     |
+| `work-reader` ID token    | interactive sessions' authorized Work CLI operations (Console Work API)                         | none stored; minted per call by Google impersonation                                     | `user:jlapenna@gmail.com` only     |
 | `claw-operator` ID token  | interactive claw admission (`POST /api/work/v1/claw/agents/{owner}/{repo}/{name}/runs`, cancel) | none stored; minted per call by Google impersonation                                     | `user:jlapenna@gmail.com` only     |
 
 Three GitHub Apps serve separate roles:
@@ -203,13 +203,16 @@ Interactive Claude and Codex sessions ask Console who owns an issue before
 starting work (#2502) with `lcars work owner <owner/repo>#<n>`. They
 authenticate as `work-reader@agent-lcars.iam.gserviceaccount.com`, a dedicated
 identity with no stored key and no project role. Its Console Work grant,
-`svc:work-reader`, carries `work.reader`, which authorizes the owner
-query and nothing that lists, reads items, or mutates.
+`svc:work-reader`, carries `work.reader`, `costs.reader` and `work.operator`
+for `claude`, `codex`, `opencode` and `agy`. Despite its historical name,
+it permits issue inspection, dispatch, item reads and Work management for
+authorized interactive tasks. It does not grant secret administration,
+executor claims or schedule ticks.
 
 Only `user:jlapenna@gmail.com`, the Google account interactive hosts sign in
 as, holds `roles/iam.serviceAccountTokenCreator` on it. Do not instead grant
-impersonation of `codex-agent`: that identity's grant carries `work.operator`
-(create, cancel, redispatch, reply, schedules). Terraform declares both the
+impersonation of the workflow identity `codex-agent`: the interactive identity
+already carries the required Work authority. Terraform declares both the
 account and the binding in `infra/terraform/main.tf`; the binding is modelled
 in [`tools/iam-contract/model.json`](../tools/iam-contract/model.json).
 
