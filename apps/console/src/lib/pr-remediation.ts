@@ -141,6 +141,7 @@ const pullRequestSnapshotSchema = z.object({
     .optional(),
   mergeable: z.string(),
   mergeStateStatus: z.string(),
+  reviewDecision: z.string().nullable(),
   author: graphqlActorSchema.nullable(),
   labels: z.object({
     nodes: z.array(z.object({ name: z.string() }).nullable()),
@@ -171,6 +172,7 @@ const pullRequestSnapshotSchema = z.object({
           state: z.string(),
           body: z.string().nullable().optional(),
           authorAssociation: z.string().nullable().optional(),
+          authorCanPushToRepository: z.boolean(),
           author: graphqlActorSchema.nullable(),
           commit: z.object({ oid: sha }).nullable(),
         })
@@ -467,6 +469,7 @@ const PR_SNAPSHOT_QUERY = `
         }
         mergeable
         mergeStateStatus
+        reviewDecision
         author { __typename login }
         labels(first: 100) { nodes { name } }
         assignees(first: 20) { nodes { login } }
@@ -475,7 +478,7 @@ const PR_SNAPSHOT_QUERY = `
         }
         reviews(last: 100) {
           pageInfo { hasPreviousPage }
-          nodes { databaseId state body authorAssociation author { __typename login } commit { oid } }
+          nodes { databaseId state body authorAssociation authorCanPushToRepository author { __typename login } commit { oid } }
         }
         commits(first: 100) {
           totalCount
@@ -608,6 +611,7 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
   lcarsPassedCurrentHead: boolean;
   /** Lower-cased logins of trusted reviewers who approved this head. */
   approvedBy: string[];
+  hasIneffectiveLcarsApproval: boolean;
 } {
   const head = snapshot.headRefOid;
   const pullRequestAuthor = normalizeGraphqlActorLogin(
@@ -620,6 +624,7 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
   let hasCurrentHeadLcarsReview = false;
   let hasDismissedCurrentHeadLcarsReview = false;
   const approvedBy = new Set<string>();
+  const ineffectiveLcarsApprovals = new Set<string>();
 
   for (const review of snapshot.reviews.nodes) {
     if (review === null || review.author === null || review.commit === null) {
@@ -662,6 +667,11 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
 
     if (review.state === 'APPROVED') {
       approvedBy.add(authorKey);
+      if (isLcarsBot && !review.authorCanPushToRepository) {
+        ineffectiveLcarsApprovals.add(authorKey);
+      } else {
+        ineffectiveLcarsApprovals.delete(authorKey);
+      }
       if (
         authorKey === REVIEWER_BOT_LOGIN &&
         latestByAuthor.get('agent-lcars[bot]')?.verdict ===
@@ -669,6 +679,9 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
       ) {
         latestByAuthor.delete('agent-lcars[bot]');
       }
+    }
+    if (review.state === 'CHANGES_REQUESTED' || review.state === 'DISMISSED') {
+      ineffectiveLcarsApprovals.delete(authorKey);
     }
     if (review.state === 'CHANGES_REQUESTED') {
       approvedBy.delete(authorKey);
@@ -705,6 +718,9 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
         (login) => latestByAuthor.get(login)?.verdict === 'clear',
       ),
     approvedBy: [...approvedBy].sort(),
+    hasIneffectiveLcarsApproval:
+      snapshot.reviewDecision === 'REVIEW_REQUIRED' &&
+      ineffectiveLcarsApprovals.size > 0,
   };
 }
 
@@ -1238,6 +1254,7 @@ async function reconcilePullRequestRemediationOnce(
     !labels.includes('status:blocked') &&
     !snapshot.reviews.pageInfo.hasPreviousPage &&
     !snapshot.reviewThreads.pageInfo.hasNextPage &&
+    snapshot.reviewDecision !== 'APPROVED' &&
     !headReviews.hasCurrentHeadLcarsReview &&
     !headReviews.hasDismissedCurrentHeadLcarsReview &&
     headReviews.blockingReviewKeys.length === 0 &&
@@ -1265,6 +1282,9 @@ async function reconcilePullRequestRemediationOnce(
       );
       return { action: 'ignored', reason: 'head-moved' };
     }
+    if (evaluateCurrentHeadReviews(after).hasIneffectiveLcarsApproval) {
+      return { action: 'ignored', reason: 'dependency-review-ineffective' };
+    }
     return { action: 'approved-dependency-update', head };
   }
   if (!author) {
@@ -1283,9 +1303,18 @@ async function reconcilePullRequestRemediationOnce(
   ]);
   // A dependency bot's PR stays the bot's until the fleet qualified it; after
   // that the fleet's commits are on the branch and the bot no longer rebases.
-  const fleetQualified = runs.some(isDependencyQualificationRun);
+  const fleetQualified = runsForApproval.some(isDependencyQualificationRun);
+  const ineffectiveDependencyApproval =
+    dependencyBotAuthor &&
+    !snapshot.reviews.pageInfo.hasPreviousPage &&
+    headReviews.hasIneffectiveLcarsApproval;
   if (isAutomatedReviewExcludedAuthor(author) && !fleetQualified) {
-    return { action: 'ignored', reason: 'excluded-author' };
+    return {
+      action: 'ignored',
+      reason: ineffectiveDependencyApproval
+        ? 'dependency-review-ineffective'
+        : 'excluded-author',
+    };
   }
   if (labels.includes('bot:renovate') && !fleetQualified) {
     return { action: 'ignored', reason: 'parked-or-excluded-label' };
@@ -1452,17 +1481,30 @@ async function reconcilePullRequestRemediationOnce(
     return { action: 'remediated', outcome };
   }
 
+  // Keep the existing verdict as a same-head fence. Repeating the review
+  // cannot grant the reviewer permission, and Renovate owns its merge.
+  if (ineffectiveDependencyApproval) {
+    return { action: 'ignored', reason: 'dependency-review-ineffective' };
+  }
+
   // A `synchronize` push during a live run on this PR anchor is refused as
   // `task-busy` and dropped, whatever the run was doing: fixing the PR,
   // replying, or reviewing an earlier head. When that run finishes cleanly and
   // the current head has no LCARS review, admit the missing one now that the
   // PR lock is released. The request is keyed by the head, so a head is
   // reviewed once however many runs settle while it is current.
+  const recoveringMissingDependencyReview =
+    options?.trigger === 'open-sweep' &&
+    snapshot.reviewDecision === 'REVIEW_REQUIRED' &&
+    runsForApproval.some(
+      (run) => isDependencyQualificationRun(run) && run.result?.ok === true,
+    );
   if (
-    options?.afterRun !== undefined &&
-    options.afterRun.result?.ok === true &&
-    options.afterRun.result.summary !== 'park' &&
-    !hasCurrentHeadLcarsReview
+    (recoveringMissingDependencyReview ||
+      (options?.afterRun?.result?.ok === true &&
+        options.afterRun.result.summary !== 'park')) &&
+    !hasCurrentHeadLcarsReview &&
+    !headReviews.hasDismissedCurrentHeadLcarsReview
   ) {
     const requestedPipeline = labels
       .map((name) => REVIEW_LABELS.get(name))
@@ -1680,9 +1722,8 @@ export async function reconcileOpenPullRequestRemediations(
     ) {
       return false;
     }
-    // A dependency bot's draft is qualification work; a dependency bot's
-    // ready PR is inspected only for a concrete signal, and remediation then
-    // acts only if the fleet already qualified it.
+    // Inspect ready dependency PRs with a missing effective approval even
+    // when the event that should have routed the review was lost.
     const dependencyBot = isDependencyBotLogin(projection.author);
     if (projection.draft === true && !dependencyBot) return false;
     if (projection.labels.includes('bot:renovate') && !dependencyBot) {
@@ -1703,7 +1744,8 @@ export async function reconcileOpenPullRequestRemediations(
     if (dependencyBot) {
       return (
         isDependencyDraft(projection) ||
-        hasConcreteRemediationSignal(projection)
+        hasConcreteRemediationSignal(projection) ||
+        projection.reviewRequirement === 'required'
       );
     }
     if (isAutomatedReviewExcludedAuthor(projection.author)) return false;

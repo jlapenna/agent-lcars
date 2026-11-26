@@ -54,6 +54,7 @@ interface MockPrSnapshot {
   threadsTruncated?: boolean;
   mergeable?: string;
   mergeStateStatus?: string;
+  reviewDecision?: string | null;
   author?: { __typename?: string | null; login: string } | null;
   labels?: string[];
   assignees?: string[];
@@ -66,6 +67,7 @@ interface MockPrSnapshot {
     state: string;
     body?: string | null;
     authorAssociation?: string | null;
+    authorCanPushToRepository?: boolean;
     author: { __typename?: string | null; login: string } | null;
     commit: { oid: string } | null;
   }[];
@@ -106,6 +108,7 @@ function makeGraphqlPr(overrides: MockPrSnapshot = {}) {
     },
     mergeable: overrides.mergeable ?? 'MERGEABLE',
     mergeStateStatus: overrides.mergeStateStatus ?? 'BLOCKED',
+    reviewDecision: overrides.reviewDecision ?? null,
     author:
       overrides.author === undefined
         ? { __typename: 'User', login: 'jlapenna' }
@@ -169,6 +172,7 @@ function makeGraphqlPr(overrides: MockPrSnapshot = {}) {
       pageInfo: { hasPreviousPage: false },
       nodes: (overrides.reviews ?? []).map((review) => ({
         ...review,
+        authorCanPushToRepository: review.authorCanPushToRepository ?? true,
         authorAssociation:
           review.authorAssociation === undefined
             ? 'OWNER'
@@ -919,6 +923,42 @@ describe('automatic pull-request review & conflict remediation', () => {
     });
 
     it.each([
+      ['REVIEW_REQUIRED', 'dependency-review-ineffective'],
+      ['APPROVED', 'excluded-author'],
+    ])(
+      'leaves both recorded approvals alone when GitHub reports %s',
+      async (reviewDecision, reason) => {
+        const f = createFixture();
+        f.setPr(REPO, 4030, {
+          author: RENOVATE,
+          headRefName: 'renovate/vitest',
+          labels: ['bot:renovate'],
+          reviewDecision,
+          commits: [
+            { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+          ],
+          reviews: [951, 952].map((databaseId) => ({
+            databaseId,
+            state: 'APPROVED',
+            author: { __typename: 'Bot', login: 'agent-lcars-reviewer' },
+            authorCanPushToRepository: false,
+            commit: { oid: HEAD_1 },
+          })),
+        });
+
+        for (let pass = 0; pass < 2; pass += 1) {
+          expect(
+            await reconcilePullRequestRemediation(f.remediationDeps, anchor, {
+              trigger: 'open-sweep',
+            }),
+          ).toEqual({ action: 'ignored', reason });
+        }
+        expect(reviewPosts(f)).toEqual([]);
+        expect(await f.store.listRuns(anchor)).toEqual([]);
+      },
+    );
+
+    it.each([
       [
         'someone else pushed a commit',
         {
@@ -1152,6 +1192,61 @@ describe('automatic pull-request review & conflict remediation', () => {
               init?.method === 'POST',
           ),
       ).toEqual([]);
+    });
+
+    it('recovers a missed independent review once per qualified head during the sweep', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4040, draft());
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
+      await f.orchestrator.report(`${REPO}#4040/r1`, { ok: true });
+      f.setPr(
+        REPO,
+        4040,
+        draft({
+          isDraft: false,
+          headRefOid: HEAD_2,
+          reviewDecision: 'REVIEW_REQUIRED',
+        }),
+      );
+      const generation =
+        await f.store.beginGithubAnchorProjectionRefresh(anchor);
+      await f.store.applyGithubAnchorProjectionRefresh({
+        anchor,
+        generation,
+        projection: {
+          anchor,
+          kind: 'pr',
+          state: 'open',
+          draft: false,
+          mergedAt: null,
+          title: 'Ready dependency update',
+          body: '',
+          url: `https://github.com/${REPO}/pull/4040`,
+          author: 'renovate[bot]',
+          labels: ['bot:renovate'],
+          assigneeLogins: [],
+          sourceUpdatedAt: T0,
+          observedAt: T0,
+          reviewRequirement: 'required',
+        },
+      });
+
+      await reconcileOpenPullRequestRemediations(
+        f.remediationDeps,
+        Date.now() + 60_000,
+      );
+      const review = await f.store.readActiveRun(anchor);
+      expect(review).toMatchObject({
+        requestId: `pr-rereview:4040:${HEAD_2.slice(0, 16)}`,
+        params: { mode: 'review' },
+      });
+      await f.orchestrator.report(review!.runId, { ok: true });
+      await reconcileOpenPullRequestRemediations(
+        f.remediationDeps,
+        Date.now() + 60_000,
+      );
+
+      expect(await f.store.listRuns(anchor)).toHaveLength(2);
     });
 
     it('qualifies a ready dependency update whose finished checks fail', async () => {
