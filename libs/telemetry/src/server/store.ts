@@ -11,8 +11,8 @@ import {
 } from '@google-cloud/firestore';
 import { App, getApps, initializeApp } from 'firebase-admin/app';
 import {
-  FieldValue as AdminFieldValue,
   FieldPath as AdminFieldPath,
+  FieldValue as AdminFieldValue,
   Firestore as AdminFirestore,
   getFirestore as getAdminFirestore,
   Timestamp as AdminTimestamp,
@@ -22,8 +22,8 @@ import { parseSessionDoc, SESSION_WRITTEN_AT_FIELD } from '../lib/session-doc';
 import {
   sessionSpendForWrite,
   sessionSpendFromStored,
-  storedTokenUsage,
   type StoredSessionSpendInputs,
+  storedTokenUsage,
 } from '../lib/session-spend';
 import {
   SessionDoc,
