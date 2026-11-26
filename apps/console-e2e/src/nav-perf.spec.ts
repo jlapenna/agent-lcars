@@ -250,6 +250,43 @@ test('@navperf the clicked pill signals a slow navigation', async ({
   await expect(page.locator('.lcars-nav-pending')).toHaveCount(0);
 });
 
+test('@navperf Bridge summaries wrap and signal a slow navigation on phones', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setExtraHTTPHeaders(E2E_ADMIN_HEADERS);
+  const release = await holdRsc(page, '/agents');
+  await page.goto('/');
+  const summaries = page.getByRole('region', { name: 'Destination summaries' });
+  const agents = summaries.getByRole('link', { name: /^Agents/ });
+  await expect(agents).toBeVisible();
+
+  const details = summaries.locator('.lcars-readout__detail');
+  await expect(details).toHaveCount(3);
+  expect(
+    await details.evaluateAll((elements) =>
+      elements
+        .filter((element) => element.scrollWidth > element.clientWidth)
+        .map((element) => element.textContent),
+    ),
+  ).toEqual([]);
+
+  const label = agents.locator('.lcars-readout__label');
+  const background = () =>
+    label.evaluate((element) => getComputedStyle(element).backgroundColor);
+  const resting = await background();
+  await agents.click();
+  await expect(agents.locator('.lcars-nav-pending')).toHaveCount(1);
+  await expect(summaries.locator('.lcars-nav-pending')).toHaveCount(1);
+  await expect.poll(background).not.toBe(resting);
+  release();
+  await page.waitForURL('/agents');
+  await expect(
+    page.getByRole('heading', { name: 'Agents', level: 1 }),
+  ).toBeVisible();
+  await expect(page.locator('.lcars-nav-pending')).toHaveCount(0);
+});
+
 test('@navperf the phone menu trigger signals a slow navigation', async ({
   page,
 }) => {
