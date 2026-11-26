@@ -20,7 +20,7 @@ piped input, a non-TTY, and provider session IDs do not establish a dispatch.
 Interactive work needs no fleet assignment, takeover comment, dispatch marker,
 parking label, provider handoff or LCARS status cadence. A direct request from
 the owning maintainer is a handoff; do not require them to repeat it in GitHub
-metadata. Check current ownership before implementation in either mode.
+metadata. For interactive work, check current ownership before implementation.
 
 Only an explicitly LCARS-dispatched worker follows the canonical
 [agent protocol](https://github.com/jlapenna/agent-lcars/blob/main/agents/shared/skills/agent-protocol/reference/agent-protocol.md)
@@ -31,8 +31,13 @@ when dispatched; this usage skill does not replace or duplicate it.
 
 ## Check issue ownership before implementation
 
-For a repository enrolled in the LCARS control plane, query its authoritative
-owner before starting or taking over issue work:
+For an explicitly dispatched worker, the Console claim on the exact anchor in
+the authenticated run brief satisfies the ownership check. Continue on that
+anchor with the run credential even when the worker has no Work reader or
+local gcloud installation. A related issue requires its own ownership check.
+
+For interactive work in an enrolled repository, query the authoritative owner
+before starting or taking over an issue:
 
 ```bash
 lcars work owner '<owner/repo>#<number>'

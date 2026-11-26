@@ -14,12 +14,13 @@
     },
     {
       "id": 2,
-      "prompt": "Use lcars-usage to plan an explicitly LCARS-dispatched fixture task for example-org/widget#71. The console already established its anchor claim. Read the canonical protocol and describe next actions; call no services.",
+      "prompt": "Use lcars-usage to plan an explicitly LCARS-dispatched fixture task for example-org/widget#71. The console already established its anchor claim. The runner has no Work reader or gcloud installation. Read the canonical protocol and describe next actions; call no services.",
       "expected_output": "Uses the canonical dispatched-worker protocol and preserves the console's existing anchor claim.",
       "files": [],
       "assertions": [
         "Reads the canonical agent protocol",
         "Does not post a duplicate takeover or claim",
+        "Continues on the claimed anchor without parking for a second owner lookup or broader credentials",
         "Identifies missing execution evidence without fabricating it"
       ]
     },
