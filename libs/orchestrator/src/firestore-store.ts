@@ -1464,6 +1464,7 @@ export class FirestoreStore implements OrchestratorStore {
     claimedBySubject: string;
     tokenHash: string;
     placementAware?: boolean;
+    reviewOnly?: boolean;
   }): Promise<Run | undefined> {
     return this.#firestore.runTransaction(async (tx) => {
       // One query per candidate pipeline for queued work and each live state.
@@ -1557,6 +1558,7 @@ export class FirestoreStore implements OrchestratorStore {
             windowSnapshots[index]?.data(),
           ]),
         ),
+        input.reviewOnly,
       );
       const first = queued.find(({ run }) => run.runId === selected?.runId);
       if (first === undefined) return undefined;

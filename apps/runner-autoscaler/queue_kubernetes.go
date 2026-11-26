@@ -522,10 +522,10 @@ func (q *kubernetesQueue) tolerations() []core.Toleration {
 // inventory with free-room accounting. Admission (reserve) uses nodesFit
 // without it: the scheduler owns free-room placement there.
 func (q *kubernetesQueue) readyNodes(ctx context.Context) (bool, error) {
-	return q.nodesFit(ctx, true)
+	return q.nodesFit(ctx, true, q.config.admissionShape(), nil)
 }
 
-func (q *kubernetesQueue) nodesFit(ctx context.Context, requireFree bool) (bool, error) {
+func (q *kubernetesQueue) nodesFit(ctx context.Context, requireFree bool, shape, waiting core.ResourceList) (bool, error) {
 	nodes, err := q.client.CoreV1().Nodes().List(ctx, meta.ListOptions{LabelSelector: labels.Set(q.config.NodeSelector).String()})
 	if err != nil {
 		return false, err
@@ -534,6 +534,7 @@ func (q *kubernetesQueue) nodesFit(ctx context.Context, requireFree bool) (bool,
 	if err != nil {
 		return false, err
 	}
+	fits := false
 	for _, node := range nodes.Items {
 		if node.Spec.Unschedulable || node.DeletionTimestamp != nil {
 			continue
@@ -582,33 +583,44 @@ func (q *kubernetesQueue) nodesFit(ctx context.Context, requireFree bool) (bool,
 			remaining.Sub(resource.MustParse("1"))
 			available[core.ResourcePods] = remaining
 		}
-		for name, requested := range q.config.admissionShape() {
-			remaining := available[name]
-			if remaining.Cmp(requested) < 0 {
-				allowed = false
-			}
-		}
 		remainingPods := available[core.ResourcePods]
-		if remainingPods.Cmp(resource.MustParse("1")) < 0 {
-			allowed = false
+		if !allowed || remainingPods.Cmp(resource.MustParse("1")) < 0 {
+			continue
 		}
-		if allowed {
-			return true, nil
+		// If the original Pod can now place anywhere, let it schedule first.
+		if waiting != nil && resourcesFit(available, waiting) {
+			return false, nil
+		}
+		if resourcesFit(available, shape) {
+			if waiting == nil {
+				return true, nil
+			}
+			fits = true
 		}
 	}
-	return false, nil
+	return fits, nil
 }
 
-// Keep at most one real claim waiting for scheduler placement. A Job whose
-// Pod has not appeared yet counts too; API errors never grant admission.
-func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (bool, error) {
+func resourcesFit(available, requests core.ResourceList) bool {
+	for name, requested := range requests {
+		remaining := available[name]
+		if remaining.Cmp(requested) < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// Inspect the original waiting Pod before allowing a smaller review to use
+// capacity it cannot occupy. A missing Pod or uncertain inventory blocks claims.
+func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (bool, core.ResourceList, error) {
 	jobs, err := q.client.BatchV1().Jobs(q.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: queueJobLabel + "=true"})
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	pods, err := q.client.CoreV1().Pods(q.config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	// Foreground retirement must drain owned Pods before another claim can
 	// enter. Also fail closed if a removed Job still has an orphaned Pod.
@@ -616,7 +628,7 @@ func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (bool, error) {
 	for _, job := range jobs.Items {
 		known[string(job.UID)] = true
 		if job.DeletionTimestamp != nil {
-			return true, nil
+			return true, nil, nil
 		}
 	}
 	for _, pod := range pods.Items {
@@ -630,31 +642,37 @@ func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (bool, error) {
 		}
 		for _, owner := range pod.OwnerReferences {
 			if owner.Kind == "Job" && owner.Controller != nil && *owner.Controller && strings.HasPrefix(owner.Name, "lcars-work-") && !known[string(owner.UID)] {
-				return true, nil
+				return true, nil, nil
 			}
 		}
 	}
+	var waiting core.ResourceList
 	for _, job := range jobs.Items {
 		if queueJobTerminal(job) {
 			continue
 		}
 		runID := job.Annotations[queueRunAnnotation]
 		if job.UID == "" || runID == "" || job.Name != queueJobName(runID) {
-			return false, fmt.Errorf("queue Job identity conflict during placement admission")
+			return false, nil, fmt.Errorf("queue Job identity conflict during placement admission")
 		}
-		placed := false
+		placement := placementForJob(job, pods.Items, nil, time.Now())
+		if placement.Reason == "scheduled" {
+			continue
+		}
+		if waiting != nil || placement.Reason != "unschedulable" || len(q.config.ReviewResources) == 0 || q.config.RuntimesOnly || len(q.config.Runtimes) != 0 {
+			return true, nil, nil
+		}
 		for _, pod := range pods.Items {
-			for _, owner := range pod.OwnerReferences {
-				if owner.UID == job.UID && owner.Kind == "Job" && owner.Controller != nil && *owner.Controller && pod.Spec.NodeName != "" && pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed {
-					placed = true
-				}
+			if meta.IsControlledBy(&pod, &job) && pod.DeletionTimestamp == nil && pod.Status.Phase == core.PodPending && pod.Spec.NodeName == "" {
+				waiting = podresource.PodRequests(&pod, podresource.PodResourcesOptions{})
+				break
 			}
 		}
-		if !placed {
-			return true, nil
+		if len(waiting) == 0 {
+			return true, nil, nil
 		}
 	}
-	return false, nil
+	return waiting != nil, waiting, nil
 }
 
 func (q *kubernetesQueue) reserve(ctx context.Context) (*directRunnerReservation, error) {
@@ -670,11 +688,11 @@ func (q *kubernetesQueue) reserve(ctx context.Context) (*directRunnerReservation
 	if q.held > 0 {
 		return nil, nil
 	}
-	pending, err := q.pendingPlacement(ctx)
+	pending, waiting, err := q.pendingPlacement(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if pending {
+	if pending && waiting == nil {
 		return nil, nil
 	}
 	// Compete with ARC through the native scheduler instead of racing its
@@ -683,7 +701,11 @@ func (q *kubernetesQueue) reserve(ctx context.Context) (*directRunnerReservation
 	// a node with free room satisfies that too, so this is the whole predicate.
 	// The claimed pipeline is unknown until after the claim, so the shape is
 	// the largest of every served shape (queueKubernetesConfig.admissionShape).
-	fits, err := q.nodesFit(ctx, false)
+	shape := q.config.admissionShape()
+	if pending {
+		shape = queueResources(q.config.ReviewResources)
+	}
+	fits, err := q.nodesFit(ctx, pending, shape, waiting)
 	if err != nil {
 		return nil, err
 	}
@@ -692,7 +714,7 @@ func (q *kubernetesQueue) reserve(ctx context.Context) (*directRunnerReservation
 	}
 	q.held++
 	var once sync.Once
-	return &directRunnerReservation{release: func() { once.Do(func() { q.mu.Lock(); q.held--; q.mu.Unlock() }) }, launch: func(l directRunnerLaunch) error { return q.launch(ctx, l) }}, nil
+	return &directRunnerReservation{reviewOnly: pending, release: func() { once.Do(func() { q.mu.Lock(); q.held--; q.mu.Unlock() }) }, launch: func(l directRunnerLaunch) error { return q.launch(ctx, l) }}, nil
 }
 func queueJobName(runID string) string {
 	return fmt.Sprintf("lcars-work-%x", sha256.Sum256([]byte(runID)))[:51]

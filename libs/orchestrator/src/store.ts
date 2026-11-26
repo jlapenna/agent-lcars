@@ -126,6 +126,7 @@ export function selectFairQueuedRun(
   now?: string,
   priorityPositions: ReadonlyMap<string, number> = new Map(),
   credentialWindows: Readonly<Record<string, unknown>> = {},
+  reviewOnly = false,
 ): Run | undefined {
   const granted = new Set(pipelines);
   const pipelineOrder = new Map(
@@ -145,6 +146,11 @@ export function selectFairQueuedRun(
   const heads = new Map<string, Run>();
   const candidates = new Map<string, Run[]>();
   for (const run of queuedRuns) {
+    if (
+      reviewOnly &&
+      (run.params?.['mode'] !== 'review' || run.pipeline === 'goose')
+    )
+      continue;
     if (!isQueueAdmissionCandidate(run, now) || !granted.has(run.pipeline))
       continue;
     const providerRuns = candidates.get(run.pipeline) ?? [];
@@ -627,6 +633,7 @@ export interface OrchestratorStore {
     claimedBySubject: string;
     tokenHash: string;
     placementAware?: boolean;
+    reviewOnly?: boolean;
   }): Promise<Run | undefined>;
 
   /** Returns a still-live claim to the queue only when the exact claimant

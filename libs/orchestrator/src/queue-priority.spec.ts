@@ -139,6 +139,33 @@ describe('priority inside provider-fair selection', () => {
     ).toBeUndefined();
   });
 
+  it('selects only direct reviews for a small slot and preserves provider occupancy', () => {
+    const implement = queued(1, 'urgent', 'codex');
+    const review = {
+      ...queued(2, 'normal', 'codex'),
+      params: { mode: 'review' },
+    };
+    const recipe = {
+      ...queued(3, 'normal', 'goose'),
+      params: { mode: 'review' },
+    };
+    const candidates = [implement, recipe, review];
+    const select = (live: Run[]) =>
+      selectFairQueuedRun(
+        candidates,
+        live,
+        ['codex', 'goose'],
+        NOW,
+        new Map(),
+        {},
+        true,
+      );
+    expect(select([])?.runId).toBe(review.runId);
+    expect(
+      select([{ ...implement, queue: { state: 'claimed' } }]),
+    ).toBeUndefined();
+  });
+
   it('skips deferred work and unavailable classes without advancing on empty polls', () => {
     const urgent = {
       ...queued(1, 'urgent'),
