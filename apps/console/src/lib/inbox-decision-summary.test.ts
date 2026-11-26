@@ -102,6 +102,19 @@ describe('Inbox decision descriptions', () => {
     ).not.toBe(before);
   });
 
+  it('uses only the description when the model adds unrelated metadata', async () => {
+    fetchMock.mockResolvedValue(
+      response({
+        description: 'Investigate and resolve the failing CI checks.',
+        pr_number: 7,
+        execute: 'deploy',
+      }),
+    );
+    expect(await summarizeInboxDecision(inboxDecisionContext(card))).toBe(
+      'Investigate and resolve the failing CI checks.',
+    );
+  });
+
   it('bounds source text while keeping the latest question separate from the original request', () => {
     const context = JSON.parse(
       inboxDecisionContext({
@@ -131,8 +144,9 @@ describe('Inbox decision descriptions', () => {
 
   it.each([
     { description: '' },
+    { description: '   ', pr_number: 7 },
     { description: 'x'.repeat(601) },
-    { description: 'Approve', execute: 'deploy' },
+    { description: 7 },
     { actions: [] },
   ])(
     'preserves the original context when model output is invalid: %j',
