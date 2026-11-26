@@ -52,7 +52,7 @@ export function NativeDecisionRow({
   const ask = report ? undefined : humanAskFromHandoff(original);
   return (
     <div
-      className="queue-item-row"
+      className="queue-item-row queue-item-row--native"
       data-selected={selected ? '' : undefined}
       data-reason={reason}
       data-testid={`queue-row-${work.id}`}
