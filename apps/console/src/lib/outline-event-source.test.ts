@@ -179,7 +179,7 @@ describe('Outline routing and fallback ownership', () => {
     expect(f.resumeWork).toHaveBeenCalledTimes(1);
     expect(f.drain).toHaveBeenCalledTimes(1);
     const repeated = await acceptOutlineSourceReport(report, f.deps);
-    expect(repeated.delivered).toBe(3);
+    expect(repeated.delivered).toBe(0);
     expect(f.publisher.publish).toHaveBeenCalledTimes(2);
     expect(f.resumeWork).toHaveBeenCalledTimes(1);
   });

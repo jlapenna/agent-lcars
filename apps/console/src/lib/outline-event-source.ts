@@ -153,7 +153,14 @@ export async function acceptOutlineSourceReport(
       fallbackJob(notice, `unsubscribed:${notice.deliveryId}`),
     );
   }
-  return { eventId: event.id, delivered: routed.deliveries.length };
+  return {
+    eventId: event.id,
+    delivered: routed.deliveries.filter(
+      (delivery) =>
+        delivery.outcome === 'published' ||
+        delivery.outcome === 'resume-queued',
+    ).length,
+  };
 }
 
 function fallbackJob(

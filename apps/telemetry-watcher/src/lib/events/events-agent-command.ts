@@ -543,12 +543,33 @@ export async function executeEventsAgentCommand(
           fallbackEnabled:
             proc.env['LCARS_OUTLINE_FALLBACK_ENABLED'] === 'true',
           report: async (input) => {
-            if (!(await report(input)).ok)
+            const result = await report(input);
+            if (!result.ok) {
+              log({
+                component: 'outline-source',
+                stage: 'report',
+                outcome: result.error,
+              });
               throw new Error('Outline source report failed');
+            }
+            log({
+              component: 'outline-source',
+              stage: 'authorize',
+              outcome: input.outcome,
+              noticeId: input.noticeId,
+              agentCreated: input.agentCreated,
+              queued: result.value.delivered,
+            });
           },
           observe: async (id, created) => {
             if (!(await observe(id, created)).ok)
               throw new Error('Outline observation report failed');
+            log({
+              component: 'outline-source',
+              stage: 'observe',
+              outcome: created ? 'agent-created' : 'foreign-document',
+              documentId: id,
+            });
           },
         });
         outlineSource = source;
