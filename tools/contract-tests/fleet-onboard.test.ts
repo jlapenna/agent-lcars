@@ -224,20 +224,26 @@ describe('admit', () => {
 
   it('refuses an alias already used by another repository', () => {
     const root = copyProjections();
-    // supersprinklesracing/girosf already owns the alias `girosf`.
+    // supersprinklesracing/sprinkles already owns the alias `sprinkles`.
     expect(() =>
-      planAdmit(root, spec({ repo: 'jlapenna/girosf' }), 'jlapenna/sync-padd'),
-    ).toThrow(/alias girosf is already used by supersprinklesracing\/girosf/);
+      planAdmit(
+        root,
+        spec({ repo: 'jlapenna/sprinkles' }),
+        'jlapenna/sync-padd',
+      ),
+    ).toThrow(
+      /alias sprinkles is already used by supersprinklesracing\/sprinkles/,
+    );
     const edits = planAdmit(
       root,
-      spec({ repo: 'jlapenna/girosf', alias: 'jl-girosf' }),
+      spec({ repo: 'jlapenna/sprinkles', alias: 'jl-sprinkles' }),
       'jlapenna/sync-padd',
     );
     applyAdmit(root, edits, {});
     expect(readMembership(root).watchedEntries).toContainEqual({
       owner: 'jlapenna',
-      name: 'girosf',
-      alias: 'jl-girosf',
+      name: 'sprinkles',
+      alias: 'jl-sprinkles',
     });
   });
 

@@ -472,8 +472,8 @@ Rotation / (re)provisioning:
    gcloud secrets versions add AGENT_LCARS_APP_PRIVATE_KEY \
      --project=agent-lcars --data-file=key.pem
    for r in jlapenna/agent-lcars jlapenna/homelab \
-            supersprinklesracing/sprinkles supersprinklesracing/www \
-            supersprinklesracing/girosf jlapenna/nx-cache-server \
+            supersprinklesracing/sprinkles \
+            jlapenna/nx-cache-server \
             jlapenna/sync-padd; do
      gcloud secrets versions access latest \
        --secret=AGENT_LCARS_APP_PRIVATE_KEY --project=agent-lcars |
