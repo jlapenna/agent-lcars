@@ -38,6 +38,23 @@ test.describe('/agents page @smoke', () => {
     await expect(
       summaries.getByRole('link', { name: /Inbox/ }),
     ).toHaveAttribute('href', '/inbox');
+    const dispatches = page.getByTestId('current-work');
+    await expect(
+      dispatches.getByRole('heading', { name: 'Active dispatches' }),
+    ).toBeVisible();
+    await expect(
+      dispatches.getByRole('link', { name: /View schedules/ }),
+    ).toHaveAttribute('href', '/work/schedules');
+    await expect(
+      dispatches.getByRole('link', { name: /Run outcomes/ }),
+    ).toHaveAttribute('href', '/agents');
+    await expect(
+      dispatches.getByRole('link', { name: /Event-driven work/ }),
+    ).toHaveAttribute('href', '/work?activity=events');
+    await expect(page.getByTestId('latest-outcomes')).toHaveCount(0);
+    await expect(
+      page.getByRole('region', { name: 'Event-driven work' }),
+    ).toHaveCount(0);
     await agentsSummary.click();
     await page.waitForURL('/agents');
 
