@@ -497,6 +497,38 @@ func TestPollOnceClaimRequestBodyShape(t *testing.T) {
 	}
 }
 
+func TestReviewOnlyReservationNegotiatesAndValidatesClaim(t *testing.T) {
+	for _, tc := range []struct {
+		pipeline   string
+		mode       string
+		wantLaunch bool
+	}{
+		{"codex", "review", true},
+		{"codex", "implement", false},
+		{"goose", "review", false},
+		{"claw-investigator", "review", false},
+	} {
+		t.Run(tc.pipeline+"/"+tc.mode, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["reviewOnly"] != true {
+					t.Errorf("expected reviewOnly request, got %v, err=%v", body, err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"runId": "test/r1", "token": "fake", "pipeline": tc.pipeline, "placementAware": true, "mode": tc.mode})
+			}))
+			defer server.Close()
+			launched := false
+			cfg := queueExecutorConfig{consoleURL: server.URL, runnerName: "runner-a", idToken: func() (string, error) { return "fake", nil }, reserve: func() (*directRunnerReservation, error) {
+				return &directRunnerReservation{reviewOnly: true, release: func() {}, launch: func(directRunnerLaunch) error { launched = true; return nil }}, nil
+			}}
+			err := pollOnce(cfg)
+			if launched != tc.wantLaunch || (err == nil) != tc.wantLaunch {
+				t.Fatalf("launched=%v err=%v, want launch=%v", launched, err, tc.wantLaunch)
+			}
+		})
+	}
+}
+
 // TestPollOnceClaimResponseTooLargeIsError proves pollOnce bounds how much
 // of a claim response it will decode (claimResponseBodyLimit): a response
 // whose JSON object cannot close within that bound must error out rather
