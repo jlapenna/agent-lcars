@@ -177,9 +177,15 @@ describe.concurrent('owned standalone smoke boot and response', () => {
   it('bounds repeated occupied candidates instead of weakening the boot gate', async () => {
     const f = await fixture('collision-always');
     try {
-      expect(await f.run()).toMatchObject({ code: 1 });
-      expect(await f.records('attempts.jsonl')).toHaveLength(5);
-      expect(await f.smokeRequests()).toHaveLength(0);
+      const result = await f.run();
+      const diagnostics = `Smoke stdout:\n${result.stdout}\nSmoke stderr:\n${result.stderr}`;
+      const attempts = await f.records('attempts.jsonl');
+      expect(result.code, diagnostics).toBe(1);
+      expect(attempts, diagnostics).toHaveLength(5);
+      expect(result.stderr, diagnostics).toContain(
+        `listen EADDRINUSE: address already in use 127.0.0.1:${attempts[4]?.['port']}`,
+      );
+      expect(await f.smokeRequests(), diagnostics).toHaveLength(0);
     } finally {
       await f.dispose();
     }

@@ -1,6 +1,7 @@
 const { fork } = require('node:child_process');
 const { appendFileSync, readFileSync } = require('node:fs');
 const http = require('node:http');
+const net = require('node:net');
 const path = require('node:path');
 const root = process.env.SMOKE_FIXTURE_ROOT;
 const kind = process.env.SMOKE_FIXTURE_KIND;
@@ -15,6 +16,14 @@ if (!foreign) {
     .trim()
     .split('\n').length;
 }
+const port = Number(process.env.PORT);
+const host = '127.0.0.1';
+
+function failBind(error) {
+  console.error(error);
+  process.exitCode = 1;
+}
+
 function listen() {
   const server = http.createServer((req, res) => {
     record('requests.jsonl', {
@@ -32,11 +41,13 @@ function listen() {
     res.end('fixture refusal');
   });
   server.on('error', (error) => {
-    console.error(error);
-    // Slow exit permits the old script to falsely probe another listener.
-    setTimeout(() => process.exit(1), 1_200);
+    failBind(error);
+    // Leave time for a premature probe to reach the separate 401 listener.
+    if (kind === 'collision-once' && !foreign) {
+      setTimeout(() => process.exit(1), 1_200);
+    }
   });
-  server.listen(Number(process.env.PORT), '127.0.0.1', () => {
+  server.listen(port, host, () => {
     if (foreign) {
       process.send('listening');
       process.disconnect();
@@ -52,12 +63,18 @@ if (foreign) listen();
 else if (kind === 'startup-error') {
   console.error('Missing traced dependency');
   process.exit(1);
-} else if (
-  kind === 'collision-always' ||
-  (kind === 'collision-once' && attempt === 1)
-) {
+} else if (kind === 'collision-always') {
+  // Reserve the candidate in this boot process. The second bind still goes
+  // through the kernel, and the reservation dies with this attempt.
+  const blocker = net.createServer((socket) => socket.destroy());
+  blocker.on('error', failBind);
+  blocker.listen(port, host, () => {
+    blocker.unref();
+    listen();
+  });
+} else if (kind === 'collision-once' && attempt === 1) {
   const child = fork(__filename, ['--foreign'], {
-    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
   });
   child.once('message', listen);
 } else listen();
