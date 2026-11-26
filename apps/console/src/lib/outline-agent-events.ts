@@ -13,19 +13,22 @@ export const OUTLINE_AGENT_EVENTS = [
 ] as const;
 export type OutlineAgentEventName = (typeof OUTLINE_AGENT_EVENTS)[number];
 
-export function verifyOutlineSignature(
-  body: Buffer,
+interface OutlineSignature {
+  readonly timestamp: string;
+  readonly digest: Buffer;
+}
+
+export function parseOutlineSignature(
   header: string | null,
-  secret: string,
   now: number,
-): boolean {
-  if (!header || !secret) return false;
+): OutlineSignature | undefined {
+  if (!header) return undefined;
   const parts = header.split(',').map((part) => part.trim());
-  if (parts.length !== 2) return false;
+  if (parts.length !== 2) return undefined;
   const fields = new Map<string, string>();
   for (const part of parts) {
     const match = /^(t|s)=([^=]+)$/u.exec(part);
-    if (!match || fields.has(match[1])) return false;
+    if (!match || fields.has(match[1])) return undefined;
     fields.set(match[1], match[2]);
   }
   const timestamp = fields.get('t'),
@@ -36,20 +39,30 @@ export function verifyOutlineSignature(
     !signature ||
     !/^[a-f0-9]{64}$/iu.test(signature)
   )
-    return false;
+    return undefined;
   const at = Number(timestamp);
   if (
     !Number.isSafeInteger(at) ||
     Math.abs(now - at) > OUTLINE_SIGNATURE_SKEW_MS
   )
+    return undefined;
+  return { timestamp, digest: Buffer.from(signature, 'hex') };
+}
+
+export function verifyOutlineSignature(
+  body: Buffer,
+  signature: OutlineSignature,
+  secret: string,
+  now: number,
+): boolean {
+  if (Math.abs(now - Number(signature.timestamp)) > OUTLINE_SIGNATURE_SKEW_MS)
     return false;
-  const actual = Buffer.from(signature, 'hex');
   const expected = createHmac('sha256', secret)
-    .update(timestamp)
+    .update(signature.timestamp)
     .update('.')
     .update(body)
     .digest();
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
+  return timingSafeEqual(signature.digest, expected);
 }
 
 const envelope = z.object({

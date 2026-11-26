@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { readBoundedRequestBody } from '@/lib/bounded-request-body';
 import {
   outlineAgentNotice,
+  parseOutlineSignature,
   verifyOutlineSignature,
 } from '@/lib/outline-agent-events';
 
@@ -11,6 +12,12 @@ import {
  * 32 MiB (https://docs.cloud.google.com/run/quotas#request_limits). Do not
  * introduce a smaller document-size policy in this transport adapter. */
 export const OUTLINE_WEBHOOK_MAX_BYTES = 32 * 1024 * 1024;
+
+// Reserve two full deliveries per instance, including chunk and Buffer copies
+// (128 MiB total at the limit). Keep the slots through decoding and JSON parsing
+// to leave the rest of the 2 GiB Console instance available for shared traffic.
+const MAX_IN_FLIGHT_DELIVERIES = 2;
+let inFlightDeliveries = 0;
 
 /** Shadow only: authenticate and observe identifiers, never deliver. The
  * existing bridge remains responsible until the explicit cutover. API reads
@@ -35,44 +42,64 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 503 },
     );
   }
-  const body = await readBoundedRequestBody(request, OUTLINE_WEBHOOK_MAX_BYTES);
-  if (body === undefined) {
-    report('oversized');
-    return NextResponse.json(
-      { error: 'Payload exceeds the deployed request envelope' },
-      { status: 413 },
-    );
-  }
-  if (
-    !verifyOutlineSignature(
-      body,
-      request.headers.get('outline-signature'),
-      secret,
-      Date.now(),
-    )
-  ) {
+  const signature = parseOutlineSignature(
+    request.headers.get('outline-signature'),
+    Date.now(),
+  );
+  if (!signature) {
     report('unauthorized');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  let input: unknown;
-  try {
-    input = JSON.parse(body.toString('utf8'));
-  } catch {
-    report('invalid');
-    return NextResponse.json({ error: 'Malformed JSON' }, { status: 400 });
-  }
-  const parsed = outlineAgentNotice(input);
-  if (parsed.outcome === 'invalid') {
-    report('invalid');
+  if (inFlightDeliveries >= MAX_IN_FLIGHT_DELIVERIES) {
+    report('overloaded');
     return NextResponse.json(
-      { error: 'Malformed Outline event' },
-      { status: 400 },
+      { error: 'Outline shadow intake is busy' },
+      { status: 503, headers: { 'Retry-After': '1' } },
     );
   }
-  if (parsed.outcome === 'ignored') {
-    report('ignored');
-    return NextResponse.json({ ok: true, mode: 'shadow', outcome: 'ignored' });
+  inFlightDeliveries++;
+  try {
+    const body = await readBoundedRequestBody(
+      request,
+      OUTLINE_WEBHOOK_MAX_BYTES,
+    );
+    if (body === undefined) {
+      report('oversized');
+      return NextResponse.json(
+        { error: 'Payload exceeds the deployed request envelope' },
+        { status: 413 },
+      );
+    }
+    if (!verifyOutlineSignature(body, signature, secret, Date.now())) {
+      report('unauthorized');
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    let input: unknown;
+    try {
+      input = JSON.parse(body.toString('utf8'));
+    } catch {
+      report('invalid');
+      return NextResponse.json({ error: 'Malformed JSON' }, { status: 400 });
+    }
+    const parsed = outlineAgentNotice(input);
+    if (parsed.outcome === 'invalid') {
+      report('invalid');
+      return NextResponse.json(
+        { error: 'Malformed Outline event' },
+        { status: 400 },
+      );
+    }
+    if (parsed.outcome === 'ignored') {
+      report('ignored');
+      return NextResponse.json({
+        ok: true,
+        mode: 'shadow',
+        outcome: 'ignored',
+      });
+    }
+    report('shadow', { ...parsed.notice });
+    return NextResponse.json({ ok: true, mode: 'shadow', outcome: 'recorded' });
+  } finally {
+    inFlightDeliveries--;
   }
-  report('shadow', { ...parsed.notice });
-  return NextResponse.json({ ok: true, mode: 'shadow', outcome: 'recorded' });
 }
