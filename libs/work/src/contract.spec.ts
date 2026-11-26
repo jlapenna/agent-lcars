@@ -714,6 +714,9 @@ describe('generateWorkOpenApi', () => {
         '/dispatches/github',
         '/dispatches/github/redispatch',
         '/events/github',
+        '/events/outline',
+        '/events/outline/fallback',
+        '/events/outline/observations',
         '/events/session',
         '/events/subscriptions',
         '/events/subscriptions/{id}',
@@ -907,8 +910,11 @@ describe('generateWorkOpenApi', () => {
       'PUT /runs/{runId}/codex-auth': ['200', '400', '401', '409', '500'],
       // 201 always, replay included.
       'POST /events/github': ['200', '400', '403'],
+      'POST /events/outline': ['200', '403'],
+      'POST /events/outline/fallback': ['200', '403', '503'],
+      'POST /events/outline/observations': ['200', '403'],
       'POST /events/session': ['200', '400', '403'],
-      'POST /events/subscriptions': ['201', '400', '403', '409'],
+      'POST /events/subscriptions': ['201', '400', '403', '409', '503'],
       'GET /events/subscriptions': ['200'],
       'DELETE /events/subscriptions/{id}': ['200', '404'],
     });

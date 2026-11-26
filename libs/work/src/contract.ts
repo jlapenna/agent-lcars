@@ -33,6 +33,7 @@ import {
   jobCredentialObservationSchema,
   jobSecretDeliverySchema,
 } from './job-secrets';
+import { outlineSourceReportSchema } from './outline-events';
 import { repositoryAgentObservationSchema } from './repository-agents';
 import {
   clawWorkSpecSchema,
@@ -1990,6 +1991,67 @@ const eventsBase = oc.meta(openapi({ tags: ['events'], spec: withBearer }));
  *   Work, which a matching event resumes; it sees and removes only those.
  */
 export const agentEventsContract = {
+  reportOutline: eventsBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/events/outline',
+        operationId: 'reportOutlineSourceEvent',
+        summary: 'Report pike-authorized Outline identifiers',
+      }),
+    )
+    .errors({
+      FORBIDDEN: {
+        message: 'Only the configured Outline source may report authorization',
+      },
+    })
+    .input(outlineSourceReportSchema)
+    .output(
+      z.strictObject({
+        eventId: z.string(),
+        delivered: z.number().int().nonnegative(),
+      }),
+    ),
+  observeOutline: eventsBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/events/outline/observations',
+        operationId: 'reportOutlineDocumentObservation',
+        summary: 'Record pike-verified document creator metadata',
+      }),
+    )
+    .errors({
+      FORBIDDEN: {
+        message:
+          'Only the configured Outline source may attest document creators',
+      },
+    })
+    .input(
+      z.strictObject({
+        documentId: z.uuid(),
+        agentCreated: z.boolean(),
+        /** One-time migration evidence from pike's actual legacy registry. */
+        previouslySubscribed: z.literal(true).optional(),
+      }),
+    )
+    .output(z.strictObject({ ok: z.literal(true) })),
+  fallbackOutline: eventsBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/events/outline/fallback',
+        operationId: 'reportOutlineDeliveryFailure',
+        summary:
+          'Report an undeliverable Outline notice addressed to this host',
+      }),
+    )
+    .errors({
+      FORBIDDEN: { message: 'No Outline delivery receipt for this host' },
+      SERVICE_UNAVAILABLE: { message: 'Outline fallback is not active' },
+    })
+    .input(z.strictObject({ deliveryId: z.string().min(1).max(400) }))
+    .output(z.strictObject({ ok: z.literal(true) })),
   subscribe: eventsBase
     .meta(
       openapi({
@@ -2018,6 +2080,10 @@ export const agentEventsContract = {
       },
       CONFLICT: {
         message: 'Subscription limit reached for the session or Work',
+      },
+      SERVICE_UNAVAILABLE: {
+        message:
+          'Outline creator verification is pending on its trusted source host',
       },
     })
     .input(

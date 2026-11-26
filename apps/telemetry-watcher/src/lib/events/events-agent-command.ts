@@ -40,6 +40,11 @@ import {
   serveEventsSocket,
 } from './local-socket-server';
 import { DeliveryMetrics } from './metrics';
+import { outlineSourceApi } from './outline-client';
+import { outlineJobHandler } from './outline-job-handler';
+import { openOutlineJobInbox } from './outline-job-inbox';
+import { OutlineSource } from './outline-source';
+import { fileOutlineTextHashes } from './outline-source-state';
 import {
   listRecentHookSessions,
   SESSION_REPORT_TICK_MS,
@@ -77,6 +82,8 @@ Environment:
   LCARS_CONSOLE_URL, LCARS_URL   the LCARS console (default https://lcars.jlapenna.net)
   LCARS_AUDIENCE                 Work API ID-token audience (default agent-lcars-work)
   AGENT_TELEMETRY_HOST           host name, as the telemetry hook reports it
+  LCARS_OUTLINE_API_KEY          pike only: existing Agents account API key
+  LCARS_OUTLINE_AGENT_USER_ID    pike only: expected Agents account UUID
   HC                             the herdr-core client (default ~/.local/bin/hc)`;
 
 /** The host's key, installed the way the telemetry writer key is. */
@@ -495,6 +502,7 @@ export async function executeEventsAgentCommand(
 
   let stop: (() => Promise<void>) | undefined;
   let stopReporting: (() => void) | undefined;
+  let stopOutline: (() => Promise<void>) | undefined;
   if (config.credentialsFile && forwarder) {
     metrics.configured = 1;
     const socketPath = herdrCoreSocketPath(proc.env, proc.home);
@@ -512,21 +520,111 @@ export async function executeEventsAgentCommand(
         },
         sessionId,
       );
+    const outlineKey = proc.env['LCARS_OUTLINE_API_KEY'];
+    const outlineUserId = proc.env['LCARS_OUTLINE_AGENT_USER_ID'];
+    let outline: Parameters<typeof outlineJobHandler>[0]['outline'];
+    if (
+      config.host === 'pike' &&
+      outlineKey &&
+      outlineUserId &&
+      forwarder.reportOutline &&
+      forwarder.observeOutline
+    ) {
+      // A corrupt inbox or hash state disables Outline intake on this host.
+      // Ordinary terminal notices can still progress.
+      try {
+        const report = forwarder.reportOutline;
+        const observe = forwarder.observeOutline;
+        const source = new OutlineSource({
+          api: outlineSourceApi(outlineKey),
+          agentUserId: outlineUserId,
+          hashes: fileOutlineTextHashes(eventsState),
+          sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+          report: async (input) => {
+            const result = await report(input);
+            if (!result.ok) {
+              log({
+                component: 'outline-source',
+                stage: 'report',
+                outcome: result.error,
+              });
+              throw new Error('Outline source report failed');
+            }
+            log({
+              component: 'outline-source',
+              stage: 'authorize',
+              outcome: input.outcome,
+              noticeId: input.noticeId,
+              agentCreated: input.agentCreated,
+              queued: result.value.delivered,
+            });
+          },
+          observe: async (id, created) => {
+            if (!(await observe(id, created)).ok)
+              throw new Error('Outline observation report failed');
+            log({
+              component: 'outline-source',
+              stage: 'observe',
+              outcome: created ? 'agent-created' : 'foreign-document',
+              documentId: id,
+            });
+          },
+        });
+        outline = { source, inbox: openOutlineJobInbox(eventsState) };
+        metrics.outlineConfigured = 1;
+      } catch {
+        metrics.outlineSourcesFailed = 1;
+        log({
+          component: 'outline-source',
+          stage: 'restore',
+          outcome: 'failed',
+        });
+      }
+    }
     const agent = new DeliveryAgent({
       host: config.host,
       checkTarget,
       send: (address, text) =>
         herdrCoreSend(defaultRunFile, config.hc, address, text),
       delivered: fileDeliveredStore(eventsState),
-      onUndeliverable: recordOnlyUndeliverable,
+      onUndeliverable: async (delivery, reason) => {
+        if (!delivery.event.key.startsWith('outline:doc:'))
+          return recordOnlyUndeliverable(delivery, reason);
+        if (
+          !forwarder.fallbackOutline ||
+          !(await forwarder.fallbackOutline(delivery.deliveryId)).ok
+        )
+          throw new Error('Outline fallback could not be queued');
+      },
       metrics,
       log,
       now: Date.now,
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     });
+    const handler = outlineJobHandler({
+      host: config.host,
+      ...(outline ? { outline } : {}),
+      delivered: fileDeliveredStore(
+        eventsState,
+        Date.now,
+        'outline-processed.json',
+      ),
+      metrics,
+      log,
+      now: Date.now,
+      deliver: (message) => agent.handle(message),
+    });
+    if (outline) {
+      handler.pump();
+      const timer = setInterval(handler.pump, 1_000);
+      stopOutline = async () => {
+        clearInterval(timer);
+        await handler.stop();
+      };
+    }
     stop = startPulling(config, {
       openSubscriber: proc.openSubscriber ?? openPubSubSubscriber,
-      agent,
+      agent: handler,
       metrics,
       log,
       now: Date.now,
@@ -572,6 +670,7 @@ export async function executeEventsAgentCommand(
   stopReporting?.();
   await githubStreams?.stop();
   await stop?.();
+  await stopOutline?.();
   await socket?.close();
   server.close();
   return 0;

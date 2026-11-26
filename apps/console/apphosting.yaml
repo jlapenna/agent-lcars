@@ -151,6 +151,11 @@ env:
     availability:
       - RUNTIME
 
+  - variable: AGENT_LCARS_OUTLINE_WEBHOOK_SECRET
+    secret: AGENT_LCARS_OUTLINE_WEBHOOK_SECRET@1
+    availability:
+      - RUNTIME
+
   # Operator-owned repository job profiles (docs/repository-jobs.md). Each
   # profile names the repositories and principals that may admit a Goose
   # recipe, its exact whole-job allocation, and the approved input sets.

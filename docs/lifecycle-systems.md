@@ -623,3 +623,82 @@ review threads), those with a live run or a waiting delivery owner, and
 `stalled` PRs with neither and no PR or run activity for two hours, plus
 `complete=false` when the census could not read everything. Homelab turns
 both into `node_lcars_pr_remediation_*` gauges and alerts.
+
+## Outline event delivery
+
+`/api/control-plane/outline/webhook` verifies Outline's raw-body HMAC and
+five-minute signing timestamp before parsing. Only event/delivery, actor,
+document and model identifiers and event time reach the structured outcomes
+and source queue. Titles, Markdown, comments and supplied links are discarded.
+The receiver admits at most two body readers per instance and queues up to
+eight more briefly without reading their bodies. It releases a slot after
+normalizing identifiers, before source publication.
+
+The signing secret enables the receiver and subscription admission. Terraform
+owns its container and narrow App Hosting grants. App Hosting pins the version.
+Pike keeps the Outline API credential for administrator and creator checks, text
+hashes and ended-session replies.
+
+Cut over by updating the existing Outline webhook after the pinned receiver,
+pike source, observability and subscription migration are verified. Confirm a
+real live-session notice and a real ended-session reply before retiring the
+bridge. Restore the previous webhook settings if the new path fails verification.
+
+Signed identifier-only jobs share the existing `agent-event-deliveries`
+topic and pike's filtered pull.
+Pike's existing agent requires `LCARS_OUTLINE_API_KEY` and the independent
+`LCARS_OUTLINE_AGENT_USER_ID`; it refuses a key for another user. It rereads
+the creator and the actor's current admin role. Own document updates prime
+private hashes with revision metadata only when the authoritative own revision
+matches the notification. Own comments and repeated observations cannot advance
+an existing baseline. External edits
+settle for eight seconds before reading Markdown; an unchanged hash suppresses
+comment highlights. Baselines distinguish observed/own text from an accepted
+admin edit, so reordered bursts coalesce while a delayed own event cannot hide
+an administrator's newer change. Failed reads or reports leave hashes unchanged
+and retry from the Pike inbox. The Console logs bounded authorization outcomes.
+
+Registration queues a creator check and returns 503 when it lacks a verified
+creator result. An inaccessible or deleted document supplies no creator
+evidence, so a later registration can retry the check. Known non-agent
+creators receive 403. Only a positive Pike observation admits a document.
+The CLI preserves the setup explanation and marks it retryable. Host and
+native Work subscriptions use the normal router, identity and resume rules.
+Notices contain generated identifiers and canonical links, never Markdown or
+comment text. Deliberately excluded kinds do not trigger fallback comments.
+
+Before publishing a session delivery, the Console saves a metadata-only
+receipt naming its host and the signed source notice. A durable routing marker
+precedes terminal subscription settlement and survives repeated intake, so a
+lost report response cannot create a false unsubscribed fallback. Only that verified host
+may report it undeliverable. The Console queues pike's fallback, which requires
+a fresh creator check. Pike resolves the parent thread through Outline and supplies a deterministic
+comment UUID (supported by [Outline's API](https://www.getoutline.com/developers));
+a retry checks that ID before writing. Normal health probes never create
+comments. Fallback transport failures nack the original delivery instead of
+acknowledging lost work. Source/receipt metadata expires after fourteen days,
+beyond Pub/Sub's seven-day retention. Document records retain creator and
+fallback eligibility metadata. Explicit unsubscribe and successful
+`--until` completion suppress fallback for newer notices after the last
+subscription ends. Permanent Work refusal and a verified host's
+undeliverable receipt still permit fallback.
+Pike's observation endpoint can import `previouslySubscribed:true` from the
+actual legacy registry only after a positive creator read. This preserves
+ended-document fallback without assigning a stale terminal alias to a new
+session. Re-subscribe a live legacy target only after its exact session
+ownership is verified; a terminal name alone is insufficient evidence.
+
+The existing protected host metrics expose Outline configuration, pending
+failed source jobs, successful work, errors and last success. An old last-success
+timestamp alone is idle, not failure. Source enqueue failures use the deployed
+`lcars-agent-events`/`enqueue`/`failed` alert contract. Complete the owning
+Homelab dashboard, loaded rules and Loki verification before activation.
+
+Pike durably admits identifier-only Outline jobs to its local inbox before
+acknowledging Pub/Sub. Debounce, API calls and retries run from the inbox with
+two workers and one active job per document. This releases the shared receive
+slots for terminal notices. The inbox replays pending jobs on restart and
+retains up to 4,096 jobs. If it cannot take a job, Pike leaves it in Pub/Sub for
+retry. Pending count and oldest publication time cover the local backlog.
+Progress alerts distinguish an old backlog that is completing jobs from one
+that is stalled.

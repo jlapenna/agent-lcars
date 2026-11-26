@@ -6,6 +6,7 @@ export * from './github-actor-trust';
 export * from './github-checks';
 export * from './job-secrets';
 export * from './openapi';
+export * from './outline-events';
 export * from './repository-agents';
 export * from './repository-job-limits';
 export * from './spec';

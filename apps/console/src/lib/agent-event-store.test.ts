@@ -130,6 +130,32 @@ describe.each(stores)('%s agent event subscription store', (_name, make) => {
   );
 
   it.skipIf(make === undefined)(
+    'keeps fallback only when the last Outline subscription is undeliverable',
+    async () => {
+      const store = make!();
+      const documentId = '00000000-0000-4000-8000-000000000001';
+      const key = `outline:doc:${documentId}`;
+      const outline = (id: string) =>
+        subscription(id, { key, source: 'outline:doc' });
+
+      expect(await store.outlineFallbackEligible(documentId)).toBeUndefined();
+      await store.create(outline('a'));
+      await store.create(outline('b'));
+      await store.settleRouted('a', 'notice-1', true, true);
+      expect(await store.listForKey(key)).toHaveLength(1);
+      await store.delete('b');
+      expect(await store.outlineFallbackEligible(documentId)).toBe(false);
+
+      await store.create(outline('a'));
+      await store.settleRouted('a', 'notice-2', true, true);
+      expect(await store.outlineFallbackEligible(documentId)).toBe(true);
+      await store.create(outline('a'));
+      await store.settleRouted('a', 'notice-3', true);
+      expect(await store.outlineFallbackEligible(documentId)).toBe(false);
+    },
+  );
+
+  it.skipIf(make === undefined)(
     'reports whether a delete removed anything',
     async () => {
       const store = make!();

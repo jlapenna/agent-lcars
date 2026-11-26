@@ -236,15 +236,17 @@ describe('DeliveryAgent', () => {
     expect(h.metrics.deliveries.get('undeliverable')).toBe(1);
   });
 
-  it('still acks when the fallback fails', async () => {
+  it('retries a failed fallback without marking the delivery finished', async () => {
     const h = harness([{ kind: 'gone', reason: 'session-ended' }], [], {
       onUndeliverable: async () => {
         throw new Error('outline down');
       },
     });
     const message = inbound();
-    expect(await h.agent.handle(message)).toBe('undeliverable');
-    expect(message.ack).toHaveBeenCalledTimes(1);
+    expect(await h.agent.handle(message)).toBe('retried');
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(message.nack).toHaveBeenCalledTimes(1);
+    expect(h.recorded.has(DELIVERY_ID)).toBe(false);
     expect(
       h.logs.some((log) => log['msg'] === 'undeliverable fallback failed'),
     ).toBe(true);
