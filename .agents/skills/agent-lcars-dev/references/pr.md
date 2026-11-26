@@ -25,9 +25,10 @@
 
    Let LCARS route routine PRs for independent review. Omit a maintainer
    reviewer on draft creation, recovery and readying, including bot-authored
-   PRs. Request a person only for an explicitly requested human review.
-   A passing comment from the PR author cannot satisfy protected approval;
-   check the automated reviewer’s identity and the review on the current head.
+   PRs. Honor explicit human review requests and approvals reserved for a
+   human. If the author App posts a passing comment, follow the rollout and
+   recovery guidance in the [shared agent protocol](../../../../agents/shared/skills/agent-protocol/reference/agent-protocol.md#6-push-early--never-hold-finished-work-locally).
+   GitHub still requires an independent approval on the current head.
 
    **Reconcile GitHub's actual closing scope before ready/arming**, in both
    interactive and dispatched publication. Declare exactly which issues this
