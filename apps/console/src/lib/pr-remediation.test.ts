@@ -413,14 +413,47 @@ describe('automatic pull-request review & conflict remediation', () => {
     },
   );
 
+  it('admits one ordinary push review after unsuccessful PR remediation while the source owns delivery', async () => {
+    const { f, anchor, source, delivery, busySync, review, sync } =
+      await exerciseReviewLifecycle({
+        deliveryOwned: true,
+        fence: 'none',
+        failRemediation: true,
+      });
+    expect(busySync).toMatchObject({
+      status: 200,
+      body: { refused: 'task-busy' },
+    });
+    expect(review).toBeUndefined();
+
+    const reviewRunId = `${REPO}#3751/r4`;
+    expect(await sync('sync-after-failed-remediation')).toMatchObject({
+      status: 200,
+      body: { runId: reviewRunId, dispatched: true },
+    });
+    expect(await f.store.readActiveRun(anchor)).toMatchObject({
+      runId: reviewRunId,
+      params: { mode: 'review' },
+    });
+    await f.orchestrator.report(reviewRunId, { ok: true, summary: 'review' });
+    expect(await sync('repeat-sync-after-failed-remediation')).toMatchObject({
+      status: 200,
+      body: { duplicate: true, runId: reviewRunId },
+    });
+    expect(await f.store.listRuns(anchor)).toHaveLength(4);
+    expect((await f.store.readTask(source))?.task.delivery).toEqual(delivery);
+  });
+
   async function exerciseReviewLifecycle({
     deliveryOwned,
     fence,
     recoverFromSweep = false,
+    failRemediation = false,
   }: {
     deliveryOwned: boolean;
     fence: 'none' | 'current-head veto' | 'dismissed review' | 'human hold';
     recoverFromSweep?: boolean;
+    failRemediation?: boolean;
   }) {
     const f = createFixture();
     const anchor: TaskId = { repo: REPO, issue: 3751 };
@@ -717,10 +750,10 @@ describe('automatic pull-request review & conflict remediation', () => {
       f.advanceMinutes(1); // The source monitor becomes due.
     }
 
-    const sync = () =>
+    const sync = (deliveryId = 'sync-3751-head-2') =>
       handleWebhookDelivery(f.routeDeps, {
         event: 'pull_request',
-        deliveryId: 'sync-3751-head-2',
+        deliveryId,
         payload: {
           action: 'synchronize',
           repository: { full_name: REPO },
@@ -740,35 +773,44 @@ describe('automatic pull-request review & conflict remediation', () => {
     const busySync =
       deliveryOwned && fence === 'none' ? await sync() : undefined;
 
-    const completeRemediation = await createRunsHandler().handle(
-      new Request(
-        `https://lcars.test/api/work/v1/runs/${encodeURIComponent(`${REPO}#3751/r3`)}/complete`,
+    if (failRemediation) {
+      const reported = await f.orchestrator.report(
+        `${REPO}#3751/r3`,
+        { ok: false, summary: 'failed' },
+        hashRunToken(r3Token),
+      );
+      expect('refused' in reported).toBe(false);
+    } else {
+      const completeRemediation = await createRunsHandler().handle(
+        new Request(
+          `https://lcars.test/api/work/v1/runs/${encodeURIComponent(`${REPO}#3751/r3`)}/complete`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              outcome: 'comment',
+              outcomeReference: {
+                kind: 'comment',
+                number: 3751,
+                id: 555,
+                url: `https://github.com/${REPO}/pull/3751#issuecomment-555`,
+              },
+            }),
+          },
+        ),
         {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            outcome: 'comment',
-            outcomeReference: {
-              kind: 'comment',
-              number: 3751,
-              id: 555,
-              url: `https://github.com/${REPO}/pull/3751#issuecomment-555`,
-            },
-          }),
+          prefix: '/api/work/v1',
+          context: {
+            ...runsContext,
+            ...(recoverFromSweep
+              ? { reconcilePullRequestRemediation: undefined }
+              : {}),
+            bearerToken: r3Token,
+          },
         },
-      ),
-      {
-        prefix: '/api/work/v1',
-        context: {
-          ...runsContext,
-          ...(recoverFromSweep
-            ? { reconcilePullRequestRemediation: undefined }
-            : {}),
-          bearerToken: r3Token,
-        },
-      },
-    );
-    expect(completeRemediation.response?.status).toBe(200);
+      );
+      expect(completeRemediation.response?.status).toBe(200);
+    }
 
     const reviewBeforeSweep = await f.store.readActiveRun(anchor);
     if (recoverFromSweep) {

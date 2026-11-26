@@ -843,16 +843,11 @@ function newestNonReviewRun(runs: readonly Run[]): Run | undefined {
   return newest;
 }
 
-function isPrRemediation(run: Run | undefined): boolean {
-  return (
-    run?.params?.['mode'] === 'implement' || run?.params?.['mode'] === 'reply'
-  );
-}
-
 function isSuccessfulPrRemediation(run: Run | undefined): boolean {
   return (
-    isPrRemediation(run) &&
-    run?.result?.ok === true &&
+    (run?.params?.['mode'] === 'implement' ||
+      run?.params?.['mode'] === 'reply') &&
+    run.result?.ok === true &&
     run.result.summary !== 'park'
   );
 }
@@ -1219,16 +1214,20 @@ async function reconcilePullRequestRemediationOnce(
     // missing independent review after the PR's own remediation has settled.
     // Persisted history lets a later sweep retry a missed settlement read.
     deliveryOwnedRuns = await deps.store.listRuns(anchor);
-    const remediation = newestNonReviewRun(deliveryOwnedRuns);
-    if (synchronizeHead !== undefined && !isPrRemediation(remediation)) {
-      return { action: 'ignored', reason: 'ordinary-synchronize' };
-    }
     if (taskBusy) {
       return { action: 'ignored', reason: 'task-busy' };
     }
+    const successfulRemediation = isSuccessfulPrRemediation(
+      newestNonReviewRun(deliveryOwnedRuns),
+    );
+    // Unsuccessful remediation cannot qualify for recovery and must not
+    // suppress ordinary review admission on a later push.
+    if (synchronizeHead !== undefined && !successfulRemediation) {
+      return { action: 'ignored', reason: 'ordinary-synchronize' };
+    }
     if (
       waitingDeliveries.some(({ task }) => task.activeRunId !== undefined) ||
-      !isSuccessfulPrRemediation(remediation)
+      !successfulRemediation
     ) {
       return { action: 'ignored', reason: 'delivery-owned' };
     }
