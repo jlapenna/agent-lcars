@@ -23,6 +23,12 @@ import {
   type UndeliverableHandler,
 } from './delivery-agent';
 import {
+  githubPreviewApi,
+  openGithubPreviewListener,
+} from './github-stream-process';
+import { fileGithubStreamCheckpoints } from './github-stream-state';
+import { GithubStreams } from './github-streams';
+import {
   defaultRunFile,
   herdrCoreSend,
   resolveHcBinary,
@@ -434,12 +440,39 @@ export async function executeEventsAgentCommand(
   });
 
   const { credentialsFile } = config;
-  const forwarder = credentialsFile
+  const baseForwarder = credentialsFile
     ? (proc.createForwarder ?? workApiForwarderFor)({
         ...config,
         credentialsFile,
       })
     : undefined;
+  // Injected test forwarders keep their narrow transport; production ones
+  // also publish normalized native GitHub events.
+  const githubStreams = baseForwarder?.reportGithub
+    ? new GithubStreams({
+        forwarder: baseForwarder,
+        api: githubPreviewApi,
+        checkpoints: fileGithubStreamCheckpoints(
+          path.join(config.stateDirectory, EVENTS_STATE_SUBDIRECTORY),
+        ),
+        open: openGithubPreviewListener,
+        metrics,
+        log,
+        now: Date.now,
+      })
+    : undefined;
+  const forwarder = githubStreams?.forwarder ?? baseForwarder;
+  if (githubStreams) {
+    // One startup restore; failed registrations remain visible and retry on
+    // their source. A failed list is reported and retried with bounded backoff.
+    void githubStreams.restore().catch(() =>
+      log({
+        level: 'error',
+        msg: 'could not restore GitHub stream registrations',
+        component: 'github-stream',
+      }),
+    );
+  }
   let socket: EventsSocketServer | undefined;
   try {
     socket = await openLocalSocket(
@@ -455,6 +488,7 @@ export async function executeEventsAgentCommand(
       msg: 'could not open the local subscribe socket',
       error: error instanceof Error ? error.message : String(error),
     });
+    await githubStreams?.stop();
     server.close();
     return 1;
   }
@@ -536,6 +570,7 @@ export async function executeEventsAgentCommand(
   await proc.stopSignal();
   log({ level: 'info', msg: 'events agent stopping' });
   stopReporting?.();
+  await githubStreams?.stop();
   await stop?.();
   await socket?.close();
   server.close();

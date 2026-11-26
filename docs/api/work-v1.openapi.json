@@ -20757,6 +20757,9 @@
                     "type": "string",
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
                   },
+                  "githubStream": {
+                    "type": "boolean"
+                  },
                   "runId": {
                     "type": "string",
                     "minLength": 1,
@@ -20781,6 +20784,9 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "githubStream": {
+                      "type": "boolean"
+                    },
                     "id": {
                       "type": "string",
                       "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
@@ -20956,6 +20962,9 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "githubStream": {
+                            "type": "boolean"
+                          },
                           "id": {
                             "type": "string",
                             "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
@@ -21040,6 +21049,128 @@
                   },
                   "required": ["subscriptions"],
                   "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/events/github": {
+      "post": {
+        "operationId": "reportHostGitHubEvent",
+        "summary": "Route a host native GitHub stream event only to that host’s non-App subscriptions",
+        "tags": ["events"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "event": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$"
+                      },
+                      "key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "kind": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z-]{0,63}$"
+                      },
+                      "occurredAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                      },
+                      "actor": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.@[\\]-]{0,99}$"
+                      },
+                      "link": {
+                        "type": "string",
+                        "maxLength": 2048,
+                        "pattern": "^https:\\/\\/[\\x21-\\x7e]+$"
+                      },
+                      "detail": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9 _.:,/#()-]{1,120}$"
+                      }
+                    },
+                    "required": ["id", "key", "kind", "occurredAt"],
+                    "additionalProperties": false
+                  }
+                },
+                "required": ["event"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "eventId": {
+                      "type": "string"
+                    },
+                    "delivered": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["eventId", "delivered"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed GitHub stream event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/BadRequest"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host-only non-App GitHub PR source required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
                 }
               }
             }

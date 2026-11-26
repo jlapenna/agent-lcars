@@ -14,6 +14,9 @@ import {
   agentEventsContract,
   type AgentEventSubscription,
   type AgentEventSubscriptionView,
+  GITHUB_STREAM_KINDS,
+  MAX_AGENT_EVENT_CLOCK_SKEW_MS,
+  parseAgentEventKey,
   validateSubscriptionRequest,
 } from '@agent-lcars/work';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
@@ -39,6 +42,10 @@ export interface AgentEventsContext {
   /** Routes one event to its subscriptions (`routeAgentEvent`). */
   routeEvent: (
     event: AgentEvent,
+  ) => Promise<{ eventId: string; deliveries: readonly { outcome: string }[] }>;
+  routeGithubEvent: (
+    event: AgentEvent,
+    host: string,
   ) => Promise<{ eventId: string; deliveries: readonly { outcome: string }[] }>;
 }
 
@@ -107,7 +114,7 @@ export function sessionReportedByHost(
 
 /** A host's clock may run a little ahead; a report from further ahead is
  * malformed. */
-export const MAX_REPORT_CLOCK_SKEW_MS = 5 * 60_000;
+export const MAX_REPORT_CLOCK_SKEW_MS = MAX_AGENT_EVENT_CLOCK_SKEW_MS;
 
 /** One id per session, kind and moment, so a report the host repeats after
  * a lost answer routes as a duplicate. */
@@ -143,14 +150,20 @@ export function agentEventSubscriptionId(
 
 function view(
   subscription: AgentEventSubscription,
+  context: AgentEventsContext,
 ): AgentEventSubscriptionView {
+  const native =
+    subscription.target.type === 'session' &&
+    subscription.source === 'github:pr' &&
+    !isAppRepository(subscription.key, subscription.source, context);
+  const kinds =
+    subscription.kinds ?? (native ? GITHUB_STREAM_KINDS : undefined);
   return {
+    ...(native ? { githubStream: true } : {}),
     id: subscription.id,
     key: subscription.key,
     source: subscription.source,
-    ...(subscription.kinds === undefined
-      ? {}
-      : { kinds: [...subscription.kinds] }),
+    ...(kinds === undefined ? {} : { kinds: [...kinds] }),
     ...(subscription.until === undefined ? {} : { until: subscription.until }),
     target: subscription.target,
     createdAt: subscription.createdAt,
@@ -249,12 +262,28 @@ function ownWorkId(run: Run): string | undefined {
 /** A registration is a wakeup contract, not just a syntactically valid key.
  * Reject sources without a deployed producer so callers can use their fallback.
  * Keep this at the source owner; clients must not copy the fleet inventory. */
+function isAppRepository(
+  key: string,
+  source: string,
+  context: AgentEventsContext,
+): boolean {
+  const repository = key
+    .slice(source.length + 1)
+    .split(/[/#]/u)
+    .slice(0, 2)
+    .join('/');
+  return context.githubRepositories.some(
+    (repo) => repo.toLowerCase() === repository,
+  );
+}
+
 function requireAvailableSource(
   value: Extract<
     ReturnType<typeof validateSubscriptionRequest>,
     { ok: true }
   >['value'],
   context: AgentEventsContext,
+  githubStream = false,
 ): void {
   if (value.source === 'outline:doc')
     throw new ORPCError('FORBIDDEN', {
@@ -266,14 +295,23 @@ function requireAvailableSource(
       .split(/[/#]/u)
       .slice(0, 2)
       .join('/');
-    if (
-      !context.githubRepositories.some(
-        (repo) => repo.toLowerCase() === repository,
-      )
-    )
+    if (!isAppRepository(value.key, value.source, context)) {
+      if (githubStream && value.source === 'github:pr') {
+        const supported: readonly string[] = GITHUB_STREAM_KINDS;
+        const requested = value.kinds ?? supported;
+        if (
+          requested.every((kind) => supported.includes(kind)) &&
+          (!value.until || supported.includes(value.until))
+        )
+          return;
+        throw new ORPCError('FORBIDDEN', {
+          message: `GitHub preview streams support only ${supported.join(', ')}`,
+        });
+      }
       throw new ORPCError('FORBIDDEN', {
         message: `GitHub event delivery is not available for ${repository}: the App source does not watch this repository`,
       });
+    }
   }
 }
 
@@ -288,6 +326,10 @@ export const agentEventsRouter = os.router({
       const now = context.now();
       if (context.caller.kind === 'run') {
         const run = await runCaller(context, input.runId);
+        if (input.githubStream)
+          throw errors.BAD_REQUEST({
+            message: 'Native Work cannot use a host GitHub stream',
+          });
         if (input.sessionId !== undefined)
           throw errors.BAD_REQUEST({
             message: 'A run subscribes its Work, not a session',
@@ -318,7 +360,7 @@ export const agentEventsRouter = os.router({
           createdAt: now.toISOString(),
         };
         const existing = await context.store.get(subscription.id);
-        if (existing !== undefined) return view(existing);
+        if (existing !== undefined) return view(existing, context);
         if (
           (await context.store.listForWork(workId)).length >=
           MAX_SUBSCRIPTIONS_PER_WORK
@@ -326,7 +368,10 @@ export const agentEventsRouter = os.router({
           throw errors.CONFLICT({
             message: `Work ${workId} already has ${MAX_SUBSCRIPTIONS_PER_WORK} subscriptions`,
           });
-        return view((await context.store.create(subscription)).subscription);
+        return view(
+          (await context.store.create(subscription)).subscription,
+          context,
+        );
       }
       const host = requireHost(context.caller);
       if (input.runId !== undefined || input.workId !== undefined)
@@ -349,7 +394,11 @@ export const agentEventsRouter = os.router({
         throw errors.FORBIDDEN({
           message: `Session ${input.sessionId} is not a live session reported by ${host}`,
         });
-      requireAvailableSource(validated.value, context);
+      requireAvailableSource(
+        validated.value,
+        context,
+        input.githubStream === true,
+      );
       const target = {
         type: 'session' as const,
         sessionId: input.sessionId,
@@ -362,7 +411,7 @@ export const agentEventsRouter = os.router({
         createdAt: now.toISOString(),
       };
       const existing = await context.store.get(subscription.id);
-      if (existing !== undefined) return view(existing);
+      if (existing !== undefined) return view(existing, context);
       if (
         (await context.store.countForSession(input.sessionId)) >=
         MAX_SUBSCRIPTIONS_PER_SESSION
@@ -370,7 +419,10 @@ export const agentEventsRouter = os.router({
         throw errors.CONFLICT({
           message: `Session ${input.sessionId} already has ${MAX_SUBSCRIPTIONS_PER_SESSION} subscriptions`,
         });
-      return view((await context.store.create(subscription)).subscription);
+      return view(
+        (await context.store.create(subscription)).subscription,
+        context,
+      );
     },
   ),
   list: authenticated.list.handler(async ({ input, context }) => {
@@ -392,13 +444,47 @@ export const agentEventsRouter = os.router({
     }
     return {
       subscriptions: subscriptions
-        .map(view)
+        .map((subscription) => view(subscription, context))
         .sort(
           (a, b) =>
             a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
         ),
     };
   }),
+  reportGithub: authenticated.reportGithub.handler(
+    async ({ input, context, errors }) => {
+      const host = requireHost(context.caller);
+      const event = input.event;
+      const parsed = parseAgentEventKey(event.key);
+      const supported: readonly string[] = GITHUB_STREAM_KINDS;
+      if (
+        !parsed.ok ||
+        parsed.value.source !== 'github:pr' ||
+        isAppRepository(event.key, 'github:pr', context) ||
+        !supported.includes(event.kind)
+      ) {
+        throw errors.FORBIDDEN({
+          message: 'Host GitHub events are only for non-App PR preview streams',
+        });
+      }
+      if (
+        Date.parse(event.occurredAt) - context.now().getTime() >
+        MAX_REPORT_CLOCK_SKEW_MS
+      )
+        throw errors.BAD_REQUEST({ message: 'occurredAt is in the future' });
+      const [repository, number] = parsed.value.id.split('#');
+      // The link is always generated here, never supplied by an external payload.
+      const routed = await context.routeGithubEvent(
+        { ...event, link: `https://github.com/${repository}/pull/${number}` },
+        host,
+      );
+      return {
+        eventId: routed.eventId,
+        delivered: routed.deliveries.filter((d) => d.outcome === 'published')
+          .length,
+      };
+    },
+  ),
   reportSession: authenticated.reportSession.handler(
     async ({ input, context, errors }) => {
       const host = requireHost(context.caller);

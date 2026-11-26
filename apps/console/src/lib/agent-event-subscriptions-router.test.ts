@@ -699,6 +699,31 @@ describe('a dispatched run subscribing its Work (#3570)', () => {
     ).toBe(404);
   });
 
+  it('cannot opt native Work into a host stream or publish host events', async () => {
+    const ctx = runContext();
+    expect(
+      (
+        await subscribe(ctx, {
+          runId: RUN_ID,
+          key: 'github:pr:outside/upstream#1',
+          githubStream: true,
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await call(ctx, 'POST', '/events/github', {
+          event: {
+            id: 'preview1',
+            key: 'github:pr:outside/upstream#1',
+            kind: 'merged',
+            occurredAt: NOW.toISOString(),
+          },
+        })
+      ).status,
+    ).toBe(401);
+  });
+
   it('may not report session events', async () => {
     const ctx = runContext();
     expect(
@@ -883,5 +908,105 @@ describe('session report helpers', () => {
     expect(sessionEventId('s', 'idle', '2026-11-25T12:00:00.000Z')).toBe(
       'session.s.idle.2026-11-25T12:00:00.000Z',
     );
+  });
+});
+
+describe('host GitHub preview admission', () => {
+  it('requires explicit host source opt-in and preserves default identity', async () => {
+    const ctx = context();
+    const request = {
+      sessionId: 'session-a',
+      key: 'github:pr:outside/upstream#1',
+      until: 'merged',
+    };
+    expect((await subscribe(ctx, request)).status).toBe(403);
+    const registered = await subscribe(ctx, { ...request, githubStream: true });
+    expect(registered.status).toBe(201);
+    expect(registered.json).toMatchObject({
+      githubStream: true,
+      key: request.key,
+    });
+    const again = await subscribe(ctx, { ...request, githubStream: true });
+    expect(again.json).toEqual(registered.json);
+    expect(await ctx.store.countForSession('session-a')).toBe(1);
+  });
+
+  it.each([
+    'comment',
+    'thread',
+    'threads-resolved',
+    'pushed',
+    'auto-merge',
+    'behind',
+  ])('refuses unsupported preview kind %s', async (kind) => {
+    const ctx = context();
+    expect(
+      (
+        await subscribe(ctx, {
+          sessionId: 'session-a',
+          key: 'github:pr:outside/upstream#1',
+          kinds: [kind],
+          githubStream: true,
+        })
+      ).status,
+    ).toBe(403);
+    expect(await ctx.store.countForSession('session-a')).toBe(0);
+  });
+
+  it('never opts an issue or run into a PR stream', async () => {
+    for (const key of [
+      'github:issue:outside/upstream#1',
+      'github:run:outside/upstream/1',
+    ]) {
+      expect(
+        (
+          await subscribe(context(), {
+            sessionId: 'session-a',
+            key,
+            githubStream: true,
+          })
+        ).status,
+      ).toBe(403);
+    }
+  });
+
+  it('generates the link and passes only verified host identity to routing', async () => {
+    const routeGithubEvent = vi.fn(async () => ({
+      eventId: 'preview1',
+      deliveries: [{ outcome: 'published' }],
+    }));
+    const ctx = context({ routeGithubEvent });
+    const event = {
+      id: 'preview1',
+      key: 'github:pr:outside/upstream#1',
+      kind: 'merged',
+      occurredAt: NOW.toISOString(),
+      link: 'https://evil.example/commands',
+    };
+    const response = await call(ctx, 'POST', '/events/github', { event });
+    expect(response?.status).toBe(200);
+    expect(routeGithubEvent).toHaveBeenCalledWith(
+      { ...event, link: 'https://github.com/outside/upstream/pull/1' },
+      'pike',
+    );
+    for (const key of [
+      'github:pr:jlapenna/homelab#1',
+      'lcars:work:work1',
+      'github:issue:outside/upstream#1',
+    ]) {
+      const kind = key.startsWith('lcars:')
+        ? 'done'
+        : key.startsWith('github:issue')
+          ? 'closed'
+          : 'merged';
+      expect(
+        (
+          await call(ctx, 'POST', '/events/github', {
+            event: { ...event, key, kind },
+          })
+        )?.status,
+      ).toBe(403);
+    }
+    expect(routeGithubEvent).toHaveBeenCalledTimes(1);
   });
 });

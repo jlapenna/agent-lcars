@@ -20,6 +20,7 @@ import { z } from 'zod';
 
 import {
   AGENT_EVENT_SOURCES,
+  agentEventSchema,
   agentEventSessionIdSchema,
   agentEventSubscriptionIdSchema,
   agentEventSubscriptionRequestSchema,
@@ -1943,6 +1944,8 @@ export const runsContract = {
 };
 
 export const agentEventSubscriptionViewSchema = z.strictObject({
+  /** This host must hold the native stream for this non-App PR. */
+  githubStream: z.boolean().optional(),
   id: agentEventSubscriptionIdSchema,
   key: z.string(),
   source: z.enum(
@@ -2008,6 +2011,8 @@ export const agentEventsContract = {
       agentEventSubscriptionRequestSchema.extend({
         /** Host callers: the session to deliver to. */
         sessionId: agentEventSessionIdSchema.optional(),
+        /** A verified host agent can offer its native GitHub stream. */
+        githubStream: z.boolean().optional(),
         /** Run callers: the run whose token is the bearer. */
         runId: runIdSchema.optional(),
         /** Run callers: optional, and must be the run's own Work. */
@@ -2034,6 +2039,27 @@ export const agentEventsContract = {
     .output(
       z.strictObject({
         subscriptions: z.array(agentEventSubscriptionViewSchema),
+      }),
+    ),
+  reportGithub: eventsBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/events/github',
+        operationId: 'reportHostGitHubEvent',
+        summary:
+          'Route a host native GitHub stream event only to that host’s non-App subscriptions',
+      }),
+    )
+    .errors({
+      BAD_REQUEST: { message: 'Malformed GitHub stream event' },
+      FORBIDDEN: { message: 'Host-only non-App GitHub PR source required' },
+    })
+    .input(z.strictObject({ event: agentEventSchema }))
+    .output(
+      z.strictObject({
+        eventId: z.string(),
+        delivered: z.number().int().nonnegative(),
       }),
     ),
   reportSession: eventsBase

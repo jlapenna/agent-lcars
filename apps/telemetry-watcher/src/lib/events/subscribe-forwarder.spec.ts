@@ -123,8 +123,7 @@ describe('workApiSubscriptionForwarder', () => {
       ),
       {
         error: 'forbidden',
-        message:
-          'session s1 is not a live session that LCARS telemetry reports on this host (403)',
+        message: 'Session s1 is not a live session reported by pike',
         retryable: false,
       },
     ],
