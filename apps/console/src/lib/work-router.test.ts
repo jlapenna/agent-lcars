@@ -3518,6 +3518,54 @@ describe('shared repository authority', () => {
   });
 });
 
+it.each(['pending', 'parked'] as const)(
+  'requires a Goose grant to cancel a %s recipe occurrence',
+  async (state) => {
+    const ctx = context({
+      principal: {
+        ...operator,
+        principal: 'svc:work-reader',
+        subject: 'work-reader@agent-lcars.iam.gserviceaccount.com',
+        via: 'google',
+        pipelines: ['claude', 'codex', 'opencode', 'agy'],
+      },
+    });
+    await ctx.runtime.orchestrator.request({
+      taskId: { workId: ID },
+      requestId: 'recipe-1',
+      pipeline: 'goose',
+      work: {
+        origin: { principal: githubActionsOperator.principal, channel: 'api' },
+        spec: {
+          ...spec,
+          pipeline: 'goose',
+          priority: 'background',
+          jobOccurrence: 'a'.repeat(64),
+        },
+      },
+    });
+    const runId = `work:${ID}/r1`;
+    if (state === 'parked') {
+      await ctx.runtime.orchestrator.report(runId, {
+        ok: true,
+        summary: 'park',
+      });
+    }
+
+    const item = await ctx.runtime.store.readTask({ workId: ID });
+    const run = await ctx.runtime.store.readRun(runId);
+    expect((await call(ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(403);
+    expect(await ctx.runtime.store.readTask({ workId: ID })).toEqual(item);
+    expect(await ctx.runtime.store.readRun(runId)).toEqual(run);
+
+    ctx.principal = { ...githubActionsOperator, pipelines: ['goose'] };
+    expect(await call(ctx, 'POST', `/items/${ID}/cancel`)).toMatchObject({
+      status: 200,
+      json: { state: 'canceled' },
+    });
+  },
+);
+
 it('lets a repository-bound caller read its Goose occurrence through the shared item API', async () => {
   const ctx = context({
     principal: { ...githubActionsOperator, pipelines: ['goose'] },
