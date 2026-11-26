@@ -58,7 +58,11 @@ import {
   parseAgentsViewFilters,
 } from './agents/agents-view-filters';
 import { BridgeDetail } from './bridge-detail';
-import { bridgeDestinationReadouts } from './bridge-readouts';
+import {
+  bridgeDestinationReadouts,
+  bridgeWorkSummary,
+  loadBridgeStoppedPages,
+} from './bridge-readouts';
 import { resolveBridgeDetail } from './bridge-rows';
 import {
   bridgeSelectionHref,
@@ -138,6 +142,10 @@ async function getParkedWork(
 ): Promise<{
   authorized: boolean;
   items: WorkSummary[];
+  /** Uncursored first page of stopped work for the Work destination card,
+   *  kept independent of the Stopped work panel's cursor pagination. */
+  summaryStoppedItems: WorkSummary[];
+  summaryHasMoreStopped: boolean;
   eventItems: WorkSummary[];
   /** Event tasks read to find `eventItems`, and whether older ones exist. */
   eventWindow?: { size: number; windowed: boolean };
@@ -151,18 +159,28 @@ async function getParkedWork(
       return {
         authorized: false,
         items: [],
+        summaryStoppedItems: [],
+        summaryHasMoreStopped: false,
         eventItems: [],
         hasMoreTasks: false,
       };
     }
+    const cursor = parseStoppedWorkCursor(rawCursor);
     // Each read takes only tasks carrying the stored sort key (#3566): the
     // newest stopped tasks and the newest event tasks, instead of the newest
     // 200 tasks of every state filtered here.
-    const [page, recent] = await Promise.all([
-      listWorkSummaries(work.runtime.store, {
-        limit: STOPPED_WORK_PAGE,
-        cursor: parseStoppedWorkCursor(rawCursor),
-        sortKey: 'stoppedAt',
+    const [stopped, recent] = await Promise.all([
+      loadBridgeStoppedPages({
+        cursor,
+        repo,
+        readPage: (pageCursor) =>
+          listWorkSummaries(work.runtime.store, {
+            limit: STOPPED_WORK_PAGE,
+            cursor: pageCursor,
+            sortKey: 'stoppedAt',
+          }),
+        excludeClosed: (candidates) =>
+          excludeClosedGithubAnchors(work.runtime.store, candidates),
       }),
       listWorkSummaries(work.runtime.store, {
         limit: EVENT_WORK_READ,
@@ -178,24 +196,18 @@ async function getParkedWork(
           matchesWorkView(item, parseWorkViewFilters(view), Date.now()),
       )
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    const items = await excludeClosedGithubAnchors(
-      work.runtime.store,
-      page.items.filter(
-        (item) =>
-          (item.state === 'parked' || item.state === 'failed') &&
-          (!repo || workRepository(item.spec) === repo),
-      ),
-    );
     return {
       authorized: true,
-      items,
+      items: stopped.items,
+      summaryStoppedItems: stopped.summaryStoppedItems,
+      summaryHasMoreStopped: stopped.summaryHasMoreStopped,
       eventItems,
       eventWindow: {
         size: recent.items.length,
         windowed: recent.nextCursor !== undefined,
       },
-      hasMoreTasks: page.nextCursor !== undefined,
-      nextCursor: page.nextCursor,
+      hasMoreTasks: stopped.hasMoreTasks,
+      nextCursor: stopped.nextCursor,
     };
   } catch (error) {
     // The Bridge must never fall to error.tsx because this panel's fetch
@@ -205,6 +217,8 @@ async function getParkedWork(
     return {
       authorized: true,
       items: [],
+      summaryStoppedItems: [],
+      summaryHasMoreStopped: false,
       eventItems: [],
       hasMoreTasks: false,
       error:
@@ -266,6 +280,8 @@ async function IndexBody({
     {
       authorized: workAuthorized,
       items: parkedWorkItems,
+      summaryStoppedItems,
+      summaryHasMoreStopped,
       eventItems,
       eventWindow,
       hasMoreTasks: hasMoreParkedTasks,
@@ -541,14 +557,16 @@ async function IndexBody({
           decisionCount,
           nativeInboxAvailable: nativeInbox.available,
           workHref,
-          work: {
+          work: bridgeWorkSummary({
             authorized: workAuthorized,
             error: stoppedError,
-            stoppedCount: stoppedItems.length,
-            hasMoreStopped: hasMoreParkedTasks,
+            stoppedItems: summaryStoppedItems,
+            hasMoreStopped: summaryHasMoreStopped,
             eventCount: eventItems.length,
             eventWindowed: eventWindow?.windowed ?? false,
-          },
+            view,
+            now,
+          }),
         })}
       />
       <section

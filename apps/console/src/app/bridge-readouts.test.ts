@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import type { WorkSummary } from '@agent-lcars/work/derive';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { RunTimeline } from '../lib/run-history';
 import {
@@ -6,8 +7,10 @@ import {
   type BridgeDestinationReadoutsInput,
   type BridgeReadoutInput,
   bridgeReadouts,
+  bridgeWorkSummary,
   dayOfHours,
   fleetReadoutInput,
+  loadBridgeStoppedPages,
 } from './bridge-readouts';
 
 const healthy: BridgeReadoutInput = {
@@ -338,5 +341,176 @@ describe('bridgeDestinationReadouts', () => {
       value: '—',
       detail: 'Work summary unavailable',
     });
+  });
+
+  const makeStoppedSummary = (overrides: {
+    id: string;
+    updatedAt: string;
+    repo?: string;
+    pipeline?: WorkSummary['spec']['pipeline'];
+    title?: string;
+    principal?: string;
+    state?: WorkSummary['state'];
+    runPipelines?: WorkSummary['spec']['pipeline'][];
+  }): WorkSummary => ({
+    id: overrides.id,
+    anchor: { workId: overrides.id },
+    state: overrides.state ?? 'parked',
+    spec: {
+      title: overrides.title ?? `Stopped ${overrides.id}`,
+      body: 'Body',
+      target: { repo: overrides.repo ?? 'jlapenna/agent-lcars' },
+      pipeline: overrides.pipeline ?? 'claude',
+      deliverable: 'pr',
+    },
+    origin: {
+      kind: 'user',
+      principal: overrides.principal ?? 'github:jlapenna',
+    },
+    runs: (overrides.runPipelines ?? []).map((pipeline, index) => ({
+      attemptId: `g1:work:${overrides.id}/r${index + 1}`,
+      pipeline,
+      state: 'failed',
+      startedAt: overrides.updatedAt,
+      updatedAt: overrides.updatedAt,
+    })),
+    createdAt: overrides.updatedAt,
+    updatedAt: overrides.updatedAt,
+  });
+
+  it('applies the Work destination activity window, agent, and find filters to the stopped count', () => {
+    const now = Date.parse('2026-11-26T18:00:00.000Z');
+    const items = [
+      makeStoppedSummary({
+        id: '01RECENT000000000000000001',
+        updatedAt: '2026-11-26T17:30:00.000Z', // 30m ago
+        pipeline: 'claude',
+        title: 'Fresh parked item',
+        principal: 'github:jlapenna',
+      }),
+      makeStoppedSummary({
+        id: '01STALE0000000000000000002',
+        updatedAt: '2026-11-26T16:00:00.000Z', // 2h ago
+        pipeline: 'claude',
+        title: 'Two-hour-old parked item',
+        principal: 'github:jlapenna',
+      }),
+      makeStoppedSummary({
+        id: '01RUNMATCH0000000000000003',
+        updatedAt: '2026-11-26T17:45:00.000Z', // 15m ago
+        pipeline: 'claude',
+        runPipelines: ['codex'],
+        title: 'Retried on codex',
+        principal: 'github:operator-2',
+      }),
+    ];
+
+    const windowed = bridgeDestinationReadouts({
+      ...healthyDestinations,
+      workHref: '/work?repo=jlapenna%2Fagent-lcars&window=1h',
+      work: bridgeWorkSummary({
+        authorized: true,
+        stoppedItems: items,
+        hasMoreStopped: false,
+        eventCount: 1,
+        eventWindowed: false,
+        view: { window: '1h' },
+        now,
+      }),
+    });
+    expect(windowed[3]?.value).toBe(2);
+
+    const agentAndFind = bridgeDestinationReadouts({
+      ...healthyDestinations,
+      workHref:
+        '/work?repo=jlapenna%2Fagent-lcars&agent=codex&window=1h&q=operator-2',
+      work: bridgeWorkSummary({
+        authorized: true,
+        stoppedItems: items,
+        hasMoreStopped: false,
+        eventCount: 0,
+        eventWindowed: false,
+        view: { agent: 'codex', window: '1h', q: 'operator-2' },
+        now,
+      }),
+    });
+    expect(agentAndFind[3]?.value).toBe(1);
+  });
+
+  it('keeps the Work stopped count independent of the panel cursor on the final cursor page', async () => {
+    const now = Date.parse('2026-11-26T18:00:00.000Z');
+    const firstPageItems = Array.from({ length: 50 }, (_, index) =>
+      makeStoppedSummary({
+        id: `01PAGE1${String(index).padStart(19, '0')}`,
+        updatedAt: '2026-11-26T17:50:00.000Z',
+      }),
+    );
+    const secondPageItems = [
+      makeStoppedSummary({
+        id: '01PAGE20000000000000000051',
+        updatedAt: '2026-11-26T17:40:00.000Z',
+      }),
+    ];
+    const page1Cursor = {
+      taskKey: 'work:01PAGE10000000000000000049',
+      updatedAt: '2026-11-26T17:50:00.000Z',
+    };
+    const readPage = vi.fn(async (cursor?: typeof page1Cursor) =>
+      cursor
+        ? { items: secondPageItems, nextCursor: undefined }
+        : { items: firstPageItems, nextCursor: page1Cursor },
+    );
+    const excludeClosed = vi.fn(async (items: WorkSummary[]) => items);
+
+    // Page 1: single uncursored read shared by panel and destination summary.
+    const firstPage = await loadBridgeStoppedPages({
+      repo: 'jlapenna/agent-lcars',
+      readPage,
+      excludeClosed,
+    });
+    expect(readPage).toHaveBeenCalledTimes(1);
+    expect(firstPage.items).toHaveLength(50);
+    expect(firstPage.hasMoreTasks).toBe(true);
+    expect(
+      bridgeDestinationReadouts({
+        ...healthyDestinations,
+        work: bridgeWorkSummary({
+          authorized: true,
+          stoppedItems: firstPage.summaryStoppedItems,
+          hasMoreStopped: firstPage.summaryHasMoreStopped,
+          eventCount: 2,
+          eventWindowed: false,
+          view: {},
+          now,
+        }),
+      })[3]?.value,
+    ).toBe('50+');
+
+    // Final cursor page (item #51): panel shows 1 item with no next cursor,
+    // while the Work destination readout stays qualified at 50+.
+    readPage.mockClear();
+    const finalPage = await loadBridgeStoppedPages({
+      cursor: page1Cursor,
+      repo: 'jlapenna/agent-lcars',
+      readPage,
+      excludeClosed,
+    });
+    expect(readPage).toHaveBeenCalledTimes(2);
+    expect(finalPage.items).toHaveLength(1);
+    expect(finalPage.hasMoreTasks).toBe(false);
+    expect(
+      bridgeDestinationReadouts({
+        ...healthyDestinations,
+        work: bridgeWorkSummary({
+          authorized: true,
+          stoppedItems: finalPage.summaryStoppedItems,
+          hasMoreStopped: finalPage.summaryHasMoreStopped,
+          eventCount: 2,
+          eventWindowed: false,
+          view: {},
+          now,
+        }),
+      })[3]?.value,
+    ).toBe('50+');
   });
 });

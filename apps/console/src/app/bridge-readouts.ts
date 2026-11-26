@@ -1,3 +1,7 @@
+import type { TaskListCursor } from '@agent-lcars/orchestrator';
+import { workRepository } from '@agent-lcars/work';
+import type { WorkSummary } from '@agent-lcars/work/derive';
+
 import type { AgentActivity } from '../lib/agent-activity';
 import type { AutoscalerStatusResult } from '../lib/autoscaler-status';
 import type { CliSession } from '../lib/cli-sessions';
@@ -5,8 +9,10 @@ import { runCountHistory } from '../lib/run-history';
 import { fleetRunnerHistory } from '../lib/runner-history';
 import type { SessionArchiveResult } from '../lib/session-archive';
 import { repoKey } from '../lib/watched-repo';
+import type { AgentsViewFilters } from './agents/agents-view-filters';
 import type { ConsoleReadout } from './console-readouts';
 import { formatCost, formatDuration } from './format';
+import { matchesWorkView, parseWorkViewFilters } from './work/work-list-query';
 
 export interface BridgeReadoutInput {
   /** Fresh ARC runner counts; undefined when any lane is missing or stale. */
@@ -275,6 +281,101 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
       },
     },
   ];
+}
+
+export interface BridgeWorkSummaryInput {
+  authorized: boolean;
+  error?: string;
+  /** Preloaded uncursored first page of stopped work already scoped to the
+   *  Bridge's active repository filter, independent of the panel cursor. */
+  stoppedItems: readonly Pick<
+    WorkSummary,
+    'id' | 'updatedAt' | 'spec' | 'origin' | 'runs'
+  >[];
+  /** Whether older stopped work exists past that uncursored first page. */
+  hasMoreStopped: boolean;
+  eventCount: number;
+  eventWindowed: boolean;
+  /** The same Bridge toolbar filters forwarded onto the Work destination link. */
+  view: AgentsViewFilters;
+  now?: number;
+}
+
+/**
+ * Loads the Bridge's Stopped work panel page and, when that panel is paged
+ * past page 1 (`cursor`), reads the uncursored first stopped page in parallel
+ * so the Work destination card stays independent of panel pagination instead
+ * of collapsing to a bare page-local count on the final cursor page.
+ */
+export async function loadBridgeStoppedPages(input: {
+  cursor?: TaskListCursor;
+  repo?: string;
+  readPage: (cursor?: TaskListCursor) => Promise<{
+    items: WorkSummary[];
+    nextCursor?: TaskListCursor;
+  }>;
+  excludeClosed: (items: WorkSummary[]) => Promise<WorkSummary[]>;
+}): Promise<{
+  items: WorkSummary[];
+  hasMoreTasks: boolean;
+  nextCursor?: TaskListCursor;
+  summaryStoppedItems: WorkSummary[];
+  summaryHasMoreStopped: boolean;
+}> {
+  const filterForRepo = (raw: WorkSummary[]) =>
+    raw.filter(
+      (item) =>
+        (item.state === 'parked' || item.state === 'failed') &&
+        (!input.repo || workRepository(item.spec) === input.repo),
+    );
+  const [page, summaryPage] = await Promise.all([
+    input.readPage(input.cursor),
+    input.cursor ? input.readPage(undefined) : Promise.resolve(undefined),
+  ]);
+  if (!summaryPage) {
+    const items = await input.excludeClosed(filterForRepo(page.items));
+    return {
+      items,
+      hasMoreTasks: page.nextCursor !== undefined,
+      nextCursor: page.nextCursor,
+      summaryStoppedItems: items,
+      summaryHasMoreStopped: page.nextCursor !== undefined,
+    };
+  }
+  const [items, summaryStoppedItems] = await Promise.all([
+    input.excludeClosed(filterForRepo(page.items)),
+    input.excludeClosed(filterForRepo(summaryPage.items)),
+  ]);
+  return {
+    items,
+    hasMoreTasks: page.nextCursor !== undefined,
+    nextCursor: page.nextCursor,
+    summaryStoppedItems,
+    summaryHasMoreStopped: summaryPage.nextCursor !== undefined,
+  };
+}
+
+/**
+ * Derives the Work destination readout's stopped count from the preloaded
+ * uncursored stopped rows using the exact Work destination view filter
+ * (`agent`, `window`, `q`), matching what clicking the Work card opens.
+ */
+export function bridgeWorkSummary(
+  input: BridgeWorkSummaryInput,
+): BridgeDestinationReadoutsInput['work'] {
+  const workView = parseWorkViewFilters(input.view);
+  const now = input.now ?? Date.now();
+  const stoppedCount = input.stoppedItems.filter((item) =>
+    matchesWorkView(item, workView, now),
+  ).length;
+  return {
+    authorized: input.authorized,
+    error: input.error,
+    stoppedCount,
+    hasMoreStopped: input.hasMoreStopped,
+    eventCount: input.eventCount,
+    eventWindowed: input.eventWindowed,
+  };
 }
 
 export interface BridgeDestinationReadoutsInput {
