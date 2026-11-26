@@ -260,7 +260,7 @@ function openCode2Export() {
 test('OpenCode 2 background children complete through their own export and parent report', () => {
   const input = openCode2Export();
   assert.equal(
-    completedOpenCode2Child(input.root, input.call, input.child),
+    completedOpenCode2Child(input.root, input.call, input.child, 12),
     true,
   );
 });
@@ -275,14 +275,51 @@ test('OpenCode 2 children need a native parent, a finished turn and the parent r
     (input) => (input.call.state.metadata.sessionID = 'ses_other'),
     (input) => (input.call.state.metadata.truncated = true),
     (input) => input.root.messages.splice(3, 1),
+    (input) => (input.call.state.input.sessionID = input.child.info.id),
+    (input) =>
+      input.child.messages.splice(2, 0, { type: 'user', text: 'Continue.' }),
   ]) {
     const input = openCode2Export();
     mutate(input);
     assert.equal(
-      completedOpenCode2Child(input.root, input.call, input.child),
+      completedOpenCode2Child(input.root, input.call, input.child, 12),
       false,
     );
   }
+});
+
+test('OpenCode 2 step-limit summaries cannot qualify as completed passes', () => {
+  const input = openCode2Export();
+  const steps = Array.from({ length: 11 }, () => ({
+    type: 'assistant',
+    finish: 'tool-calls',
+    content: [],
+  }));
+  input.child.messages.splice(1, 0, ...steps.slice(1));
+  assert.equal(
+    completedOpenCode2Child(input.root, input.call, input.child, 12),
+    true,
+  );
+  input.child.messages.splice(1, 0, steps[0]);
+  assert.equal(
+    completedOpenCode2Child(input.root, input.call, input.child, 12),
+    false,
+  );
+
+  // Even when prior model steps are unavailable, an explicit step-limit
+  // report identifies an incomplete pass.
+  const incomplete = openCode2Export();
+  incomplete.child.messages[1].content[0].text =
+    'The maximum number of steps for this agent has been reached.';
+  assert.equal(
+    completedOpenCode2Child(
+      incomplete.root,
+      incomplete.call,
+      incomplete.child,
+      12,
+    ),
+    false,
+  );
 });
 
 test('a review that mutated its source checkout cannot pass', () => {

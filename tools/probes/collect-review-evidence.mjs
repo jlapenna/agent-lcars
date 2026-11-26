@@ -328,7 +328,14 @@ if (manifest.provider === 'opencode') {
         )
           continue;
         const child = exported(call.state.metadata?.sessionID);
-        if (completedOpenCode2Child(root, call, child))
+        if (
+          completedOpenCode2Child(
+            root,
+            call,
+            child,
+            manifest.openCodeChildSteps,
+          )
+        )
           completed.add(child.info.id);
         else
           errors.push(

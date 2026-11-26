@@ -12,22 +12,37 @@ Keep this file short. It is re-sent on every request.
 
 ## Keep investigation bounded
 
-For review dispatches, follow the trusted Anthropic procedure at
-`$AGENT_REVIEW_PATH`. Delegation is enabled for that mode only: run one fresh
-reviewer or validator at a time and synchronously wait for it before starting
-another. Use the lcars-review subagent for each independent pass and validation. Start with
-the integration bug pass so it can trace changed configuration through its
-consumers and inherited defaults. Supply any recorded external inputs alongside
-the diff. Run all four distinct passes before validation.
+For review dispatches, use the trusted Anthropic procedure at
+`$AGENT_REVIEW_PATH` to select the review tier. In a full review, give the two
+independent passes (`bugs` and `guardrails`) one fresh `lcars-review` child
+each, serially. Start with `bugs`, then give `guardrails` its own slot before
+validating candidates. Reserve the final third of the shared time for
+deduplicated validation and publication. If a pass exhausts its steps, record
+it as incomplete and move to the other pass if time allows. Do not spend that
+pass's slot on an identical retry.
 
-Aim to finish each child task within twelve model steps. In the task prompt, identify the
-specific role, source paths and deadline. Batch related reads and return
-concrete evidence or identify what could not be checked within the limit.
-The coordinator validates candidates through fresh agents. When publishing,
-copy the packaged upstream revision from the adapter used to run this review.
-The gitlink in the reviewed source identifies a separate input and can differ.
-Review children never delegate, edit the checkout, commit or push. The worktree
-and delivery instructions below apply to implementation work.
+Give each child its role, exact head, full diff, changed-file inventory, scoped
+guidance, PR metadata, recorded external inputs, and deadline. Start with the
+inventory to plan the role's coverage. Batch related diff hunks and exact-head
+source reads into a few parallel tool calls or one read-only shell command.
+Review generated locks through the declared inputs, resolved changes, and
+integrity rather than reading thousands of entries one at a time. Trace
+changed behavior through its direct callers and effective configuration. A
+validator checks one candidate and starts with its cited hunk and caller.
+Within the twelve-step cap, start composing the result by step ten. Return
+concrete evidence and relevant paths, and state any material coverage gaps.
+A step-limit summary or a material coverage gap leaves the pass incomplete.
+
+OpenCode 2 starts children in the background. After launch, yield the
+coordinator turn to receive the native terminal
+`<subagent>` report, then start the next child. Keep only one child active and
+do not poll or sleep for it. OpenCode 1 returns the child result in the tool
+call. Never reuse a child for another pass or validation.
+
+When publishing, cite the packaged upstream revision from the adapter used
+for the review. The gitlink in the reviewed source can identify a different
+revision. Review children never delegate, edit the checkout, commit or push.
+The worktree and delivery instructions below apply to implementation work.
 
 For other modes, work directly in this session. Delegated exploration is
 disabled for this serial inference runner: waiting on a child consumed an

@@ -157,12 +157,22 @@ export function completedOpenCodeChild(root, task, child) {
 // its native parent, a succeeded outcome, and a final assistant step that
 // stopped with non-empty text -- plus the parent's synthetic `<subagent>`
 // report for that child. Field names captured from OpenCode v2.3.2 exports.
-export function completedOpenCode2Child(root, call, child) {
+export function completedOpenCode2Child(root, call, child, maxSteps) {
   const metadata = call?.state?.metadata;
   const childId = child?.info?.id;
-  const assistant = child?.messages
-    ?.filter((message) => message?.type === 'assistant')
-    .at(-1);
+  const messages = child?.messages ?? [];
+  const assistantSteps = messages.filter(
+    (message) =>
+      message?.type === 'assistant' && message.finish && !message.error,
+  );
+  const assistant = messages.findLast(
+    (message) => message?.type === 'assistant',
+  );
+  const text = (assistant?.content ?? [])
+    .filter((part) => part.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text)
+    .join(' ')
+    .trim();
   const report = '<subagent sessionID="' + childId + '" state="completed"';
   return (
     call?.type === 'tool' &&
@@ -171,22 +181,26 @@ export function completedOpenCode2Child(root, call, child) {
     typeof childId === 'string' &&
     metadata?.sessionID === childId &&
     metadata?.truncated === false &&
+    call.state.input?.sessionID === undefined &&
+    messages.filter((message) => message?.type === 'user').length === 1 &&
     child?.info?.parentID === root?.info?.id &&
     childId !== root?.info?.id &&
     child?.info?.outcome === 'succeeded' &&
     assistant?.finish === 'stop' &&
     !assistant.error &&
-    assistant.content?.some(
-      (part) =>
-        part.type === 'text' &&
-        typeof part.text === 'string' &&
-        part.text.trim().length > 0,
-    ) === true &&
+    // The final configured step disables tools and requests a progress
+    // summary. Its native outcome can still be succeeded with finish: stop.
+    Number.isInteger(maxSteps) &&
+    assistantSteps.length < maxSteps &&
+    text.length > 0 &&
+    !/\b(?:maximum (?:number of )?steps?|step limit)\b.{0,80}\b(?:reached|exhausted)\b/i.test(
+      text,
+    ) &&
     root?.messages?.some(
       (message) =>
         message?.type === 'synthetic' &&
         typeof message.text === 'string' &&
-        message.text.includes(report),
+        message.text.startsWith(report + ' '),
     ) === true
   );
 }

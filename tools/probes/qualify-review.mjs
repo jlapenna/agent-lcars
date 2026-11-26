@@ -133,6 +133,12 @@ if (imageId) {
   }
 }
 writeFileSync(join(output, 'change.diff'), diff);
+if (provider === 'opencode') {
+  writeFileSync(
+    join(output, 'change-stat.txt'),
+    reviewGit('diff', '--no-ext-diff', '--numstat', `${base}...${head}`),
+  );
+}
 writeFileSync(join(output, 'guidance.md'), guidance);
 // A package lock cannot establish which revision an unversioned hosted preset served.
 const cases = JSON.parse(
@@ -187,7 +193,13 @@ ${join(output, 'guidance.md')}; PR metadata is ${join(output, 'pr.json')}.
 Give every child the full diff, guidance, PR metadata and exact head. Children
 return evidence only, never recursively delegate and never write to GitHub.
 ${dependencyContext}
-${provider === 'opencode' ? 'In the procedure receipt, cite the packaged upstream revision ' + readFileSync(join(procedure, 'revision'), 'utf8').trim() + '.' : ''}
+${
+  provider === 'opencode'
+    ? `Give each child the changed-file inventory at ${join(output, 'change-stat.txt')} for planning alongside the full diff.
+Apply the OpenCode standing instructions for serial pass allocation, batched reads, and step-limit failures.
+In the procedure receipt, cite the packaged upstream revision ${readFileSync(join(procedure, 'revision'), 'utf8').trim()}.`
+    : ''
+}
 All passes, validators and captured publication share this ${seconds}-second
 provider budget, ending by ${reviewDeadline}. Give the shared deadline to every
 child and reserve time for validation and publication.
@@ -279,6 +291,7 @@ if (provider === 'codex' && process.env.LCARS_REVIEW_CODEX_ISOLATE === '1') {
     'model_reasoning_effort=' + JSON.stringify(effort),
   );
 }
+let openCodeChildSteps;
 if (provider === 'opencode') {
   const sourceConfig = join(root, 'agents/opencode');
   const effectiveConfig = imageId
@@ -300,8 +313,12 @@ if (provider === 'opencode') {
     }
   }
   // Match the direct runner's effective per-review configuration.
+  const overlay = JSON.parse(
+    readFileSync(join(effectiveConfig, reviewOverlay), 'utf8'),
+  );
+  if (!v1) openCodeChildSteps = overlay.agents['lcars-review'].steps;
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
-    ...JSON.parse(readFileSync(join(effectiveConfig, reviewOverlay), 'utf8')),
+    ...overlay,
     provider: {
       homelab: {
         models: { default: { options: { reasoningEffort: 'medium' } } },
@@ -356,6 +373,7 @@ const manifest = {
   imageId: imageId ?? null,
   uid: process.getuid(),
   timeoutSeconds: seconds,
+  openCodeChildSteps,
   reviewWorkingDirectory: reviewRoot,
   sourceCommit: git('rev-parse', 'HEAD').trim(),
   reviewedHead: head,
