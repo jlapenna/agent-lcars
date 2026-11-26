@@ -610,6 +610,9 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
   approvedBy: string[];
 } {
   const head = snapshot.headRefOid;
+  const pullRequestAuthor = normalizeGraphqlActorLogin(
+    snapshot.author,
+  )?.toLowerCase();
   const latestByAuthor = new Map<
     string,
     { verdict: 'blocked' | 'clear'; key: string }
@@ -632,6 +635,11 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
     }
     const authorKey = login.toLowerCase();
     const isLcarsBot = LCARS_REVIEWER_LOGINS.has(authorKey);
+    // Marker comments are verdicts only when GitHub forbids self-review.
+    const isSelfReviewComment =
+      isLcarsBot &&
+      review.state === 'COMMENTED' &&
+      authorKey === pullRequestAuthor;
     const key =
       review.databaseId !== null && review.databaseId !== undefined
         ? `${login}:${review.databaseId}`
@@ -644,7 +652,7 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
       if (
         review.state === 'APPROVED' ||
         review.state === 'CHANGES_REQUESTED' ||
-        (review.state === 'COMMENTED' &&
+        (isSelfReviewComment &&
           (hasReviewLineMarker(review.body, '<!-- lcars-review:pass -->') ||
             hasReviewLineMarker(review.body, '<!-- lcars-review:block -->')))
       ) {
@@ -659,7 +667,7 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
     } else if (review.state === 'APPROVED' || review.state === 'DISMISSED') {
       if (review.state === 'DISMISSED') approvedBy.delete(authorKey);
       latestByAuthor.set(authorKey, { verdict: 'clear', key });
-    } else if (review.state === 'COMMENTED' && isLcarsBot) {
+    } else if (isSelfReviewComment) {
       if (hasReviewLineMarker(review.body, '<!-- lcars-review:block -->')) {
         latestByAuthor.set(authorKey, { verdict: 'blocked', key });
       } else if (

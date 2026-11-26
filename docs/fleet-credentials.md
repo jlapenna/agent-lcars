@@ -39,7 +39,9 @@ Three GitHub Apps serve separate roles:
   [jlapenna 150568943](https://github.com/settings/installations/150568943),
   [supersprinklesracing 150568991](https://github.com/organizations/supersprinklesracing/settings/installations/150568991).
 - **Reviewer App** (`agent-lcars-reviewer`, client `Iv23liqY0yfhlYJB6YtN`):
-  every review run and automatic dependency approval uses this identity.
+  compatible runner review checkouts and automatic dependency approvals use
+  this identity. See the [review rollout](published-actions.md) for legacy
+  runner behavior.
   Authors keep their existing identities. Permissions are source, issues and
   CI read access plus pull-request write access; no code pushes or CI reruns.
   Owner: `jlapenna`. All-repository installations: `185984458` (jlapenna),
@@ -47,7 +49,7 @@ Three GitHub Apps serve separate roles:
   remains in Secret Manager `AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY`, provisioned
   before this role decision; App Hosting exposes it as
   `AGENT_LCARS_REVIEWER_APP_PRIVATE_KEY`. A missing or failed reviewer mint
-  refuses a review run; it never falls back to the authoring App.
+  refuses a checkout that negotiated the reviewer identity.
 - **Autoscaler App** (`agent-lcars-autoscaler`, client `Iv23lir3t9e2k4RAkWxw`):
   what runner scale-set listeners register with (Administration R/W and
   Metadata R/O). Its former Actions R/O grant served only the

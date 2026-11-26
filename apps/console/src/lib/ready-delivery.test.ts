@@ -2168,6 +2168,34 @@ describe('nullable historical review identities', () => {
     });
   });
 
+  it('retains a change request after a pass marker from a reviewer who is not the PR author', async () => {
+    const reviewer = {
+      authorAssociation: 'NONE',
+      author: { __typename: 'Bot', login: 'agent-lcars-reviewer' },
+      commit: { oid: HEAD },
+    };
+    expect(
+      await observeGithubDelivery(
+        fixture({
+          pr: { user: { login: 'agent-lcars[bot]' } },
+          review: review([
+            { ...reviewer, state: 'CHANGES_REQUESTED' },
+            {
+              ...reviewer,
+              state: 'COMMENTED',
+              body: '<!-- lcars-review:pass -->',
+            },
+          ]),
+        }),
+        BINDING,
+      ),
+    ).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Review feedback requires correction',
+    });
+  });
+
   it('requests delivery correction on merge conflicts or blocking self-review comments', async () => {
     expect(
       await observeGithubDelivery(
@@ -2183,33 +2211,16 @@ describe('nullable historical review identities', () => {
     expect(
       await observeGithubDelivery(
         fixture({
-          review: {
-            ...review([
-              {
-                state: 'COMMENTED',
-                body: 'Blocking issue\n<!-- lcars-review:block -->',
-                authorAssociation: 'NONE',
-                author: { __typename: 'Bot', login: 'agent-lcars' },
-                commit: { oid: HEAD },
-              },
-            ]),
-            reviewThreads: {
-              pageInfo: { hasNextPage: false },
-              nodes: [
-                {
-                  isResolved: false,
-                  comments: {
-                    nodes: [
-                      {
-                        authorAssociation: 'NONE',
-                        author: { __typename: 'Bot', login: 'agent-lcars' },
-                      },
-                    ],
-                  },
-                },
-              ],
+          pr: { user: { login: 'agent-lcars[bot]' } },
+          review: review([
+            {
+              state: 'COMMENTED',
+              body: 'Blocking issue\n<!-- lcars-review:block -->',
+              authorAssociation: 'NONE',
+              author: { __typename: 'Bot', login: 'agent-lcars' },
+              commit: { oid: HEAD },
             },
-          },
+          ]),
         }),
         BINDING,
       ),

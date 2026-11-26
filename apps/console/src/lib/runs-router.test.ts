@@ -3733,9 +3733,14 @@ describe('checkoutToken', () => {
     expect(JSON.stringify(body)).not.toContain(runToken);
   });
 
-  it.each([false, true])(
-    'uses only the reviewer App for review checkout (crossRepo=%s)',
-    async (crossRepo) => {
+  it.each([
+    { crossRepo: false, reviewerCheckoutV1: false },
+    { crossRepo: true, reviewerCheckoutV1: false },
+    { crossRepo: false, reviewerCheckoutV1: true },
+    { crossRepo: true, reviewerCheckoutV1: true },
+  ])(
+    'selects the review checkout App for $reviewerCheckoutV1 (crossRepo=$crossRepo)',
+    async ({ crossRepo, reviewerCheckoutV1 }) => {
       const { store, orchestrator, now } = fixture();
       const runId = await seedQueuedRun(store, orchestrator, {
         workId: wid('review-checkout'),
@@ -3774,6 +3779,7 @@ describe('checkoutToken', () => {
           now,
           bearerToken: bearer,
           reviewerTokens: reviewer,
+          reviewerCheckoutV1,
           checkoutTokens: {
             tokenFor: async () => 'fleet-token',
             expiringTokenFor: fleetMint,
@@ -3785,21 +3791,23 @@ describe('checkoutToken', () => {
       );
       expect(r.status).toBe(200);
       expect(r.json).toMatchObject({
-        token: 'review-token',
-        reviewerLogin: 'agent-lcars-reviewer[bot]',
+        token: reviewerCheckoutV1 ? 'review-token' : 'fleet-token',
       });
       expect(r.json).not.toHaveProperty('identity');
-      expect(fleetMint).not.toHaveBeenCalled();
+      expect((r.json as { reviewerLogin?: string }).reviewerLogin).toBe(
+        reviewerCheckoutV1 ? 'agent-lcars-reviewer[bot]' : undefined,
+      );
+      expect(fleetMint.mock.calls.length > 0).toBe(!reviewerCheckoutV1);
       expect(reviewer.expiringTokenFor.mock.calls).toEqual(
-        crossRepo ? [] : [['jlapenna/agent-lcars']],
+        reviewerCheckoutV1 && !crossRepo ? [['jlapenna/agent-lcars']] : [],
       );
       expect(reviewer.expiringTokenForRepositories.mock.calls.length > 0).toBe(
-        crossRepo,
+        reviewerCheckoutV1 && crossRepo,
       );
+      const body = r.json as { token: string; grants?: { token: string }[] };
+      expect((body.grants?.length ?? 0) > 0).toBe(crossRepo);
       expect(
-        ((r.json as { grants?: { token: string }[] }).grants ?? []).every(
-          (g) => g.token === 'review-token',
-        ),
+        body.grants?.every((grant) => grant.token === body.token) ?? true,
       ).toBe(true);
     },
   );
@@ -3835,6 +3843,7 @@ describe('checkoutToken', () => {
           orchestrator,
           now,
           bearerToken: bearer,
+          reviewerCheckoutV1: true,
           ...(failure === 'failed'
             ? {
                 reviewerTokens: {

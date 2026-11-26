@@ -172,6 +172,8 @@ async function handle(request: Request): Promise<Response> {
   const runsResult = await runsHandler.handle(request, {
     prefix: PREFIX,
     context: {
+      reviewerCheckoutV1:
+        request.headers.get('x-lcars-reviewer-checkout') === 'v1',
       ...(bearerToken === undefined ? {} : { bearerToken }),
       ...(principal === undefined ? {} : { principal }),
       store: runtime.store,

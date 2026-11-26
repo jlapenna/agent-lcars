@@ -61,10 +61,14 @@ not approve a head that carries `status:needs-human` or `status:blocked`, a
 change request, an open trusted review thread, or a dismissed LCARS review.
 A commit from anyone else ends the exemption and the PR is reviewed normally.
 
-All review runs authenticate as the dedicated `agent-lcars-reviewer` App,
-with read access to source, issues and CI plus pull-request write access.
-Automatic dependency approvals use the same App. Missing reviewer credentials
-refuse the review; there is no fallback to an authoring identity.
+Runners that advertise `X-LCARS-Reviewer-Checkout: v1` can authenticate reviews
+as the dedicated `agent-lcars-reviewer` App, with read access to source, issues
+and CI plus pull-request write access. Automatic dependency approvals also use
+that App. Missing credentials for a negotiated reviewer checkout refuse the run.
+Legacy runners keep using the fleet App during rollout. A running review keeps
+its initial actor across renewals, including when the Console upgrades.
+After both components are deployed, `/review` requests a fresh review on the
+same head if a legacy self-review comment left a PR waiting for approval.
 Implementation authors remain unchanged, including `agent-lcars[bot]`, and
 GitHub's ordinary approving review counts because author and reviewer differ.
 The existing fleet App webhook receives these reviews and wakes auto-merge.

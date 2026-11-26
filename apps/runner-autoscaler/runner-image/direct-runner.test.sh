@@ -302,7 +302,10 @@ JSON
     # array by exporting FAKE_CHECKOUT_GRANTS_JSON as a literal JSON array;
     # every other scenario leaves it unset, so `grants` is simply absent
     # from the response, exactly like a run without the label.
-    if [ -n "${FAKE_CHECKOUT_IDENTITY_JSON:-}" ]; then
+    if [ "${FAKE_REVIEWER_CHECKOUT:-}" = 1 ] &&
+      grep -qxF 'header = "X-LCARS-Reviewer-Checkout: v1"' <<< "$config_body"; then
+      jq -cn --arg token "$checkout_token" --arg expiresAt "$expires_at" '{$token,$expiresAt,reviewerLogin:"agent-lcars-reviewer[bot]"}'
+    elif [ -n "${FAKE_CHECKOUT_IDENTITY_JSON:-}" ]; then
       echo "{\"token\":\"$checkout_token\",\"expiresAt\":null,\"refreshAt\":\"$expires_at\",\"identity\":$FAKE_CHECKOUT_IDENTITY_JSON}"
     elif [ -n "${FAKE_CHECKOUT_PR_AUTHOR_TOKEN:-}" ]; then
       echo "{\"token\":\"$checkout_token\",\"expiresAt\":\"$expires_at\",\"repository\":\"jlapenna/agent-lcars\",\"pullRequestAuthor\":{\"login\":\"agent-lcars-author[bot]\",\"token\":\"$FAKE_CHECKOUT_PR_AUTHOR_TOKEN\",\"expiresAt\":\"$expires_at\"}}"
@@ -734,6 +737,7 @@ if [ "${1:-}" = --pure ] && [ "${2:-}" = export ]; then
 fi
 echo "$@" >> "$OPENCODE_ARGS_LOG"
 printf '%s' "${OPENCODE_CONFIG_CONTENT:-null}" > "$OPENCODE_ENV_LOG.config"
+printf '%s' "${LCARS_REVIEWER_LOGIN:-}" > "$OPENCODE_ENV_LOG.reviewer"
 worker-control-fixture
 printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${GH_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
@@ -2364,8 +2368,15 @@ export FAKE_MODE=review
 export FAKE_GITHUB_PR=1
 export FAKE_GH_NO_MATCH=1
 export FAKE_GH_MARKER_REVIEW=1
-run_scenario github-review opencode
+run_scenario github-review-old-console opencode
+[ "$rc" -eq 0 ] || fail "github review on old Console: expected exit 0, got $rc"
+[ "$(cat "$OPENCODE_ENV_LOG.reviewer")" = 'agent-lcars[bot]' ] ||
+  fail "github review on old Console: publishing actor was not the fleet App"
+
+FAKE_REVIEWER_CHECKOUT=1 run_scenario github-review opencode
 unset FAKE_ANCHOR FAKE_MODE FAKE_GITHUB_PR FAKE_GH_NO_MATCH FAKE_GH_MARKER_REVIEW
+[ "$(cat "$OPENCODE_ENV_LOG.reviewer")" = 'agent-lcars-reviewer[bot]' ] ||
+  fail "github review on compatible Console: publishing actor was not the reviewer App"
 
 [ "$rc" -eq 0 ] || fail "github review: expected exit 0, got $rc"
 context_path="$scenario_runner_temp/agent-dispatch/context.json"

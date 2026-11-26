@@ -312,15 +312,31 @@ mkdir -m 700 "$CHECKOUT_OWNERS_DIR"
 PR_AUTHOR_TOKEN_FILE="$CHECKOUT_CREDENTIAL_DIR/pr-author-token"
 CHECKOUT_REPOSITORY_FILE="$CHECKOUT_CREDENTIAL_DIR/repository"
 
+reviewer_checkout=""
+if [ "$MODE" = review ]; then
+  reviewer_checkout=v1
+fi
+
 refresh_checkout_token() {
+  local response_reviewer_login
   checkout_response="$CHECKOUT_CREDENTIAL_DIR/response.$$"
   if ! curl -sf --config - >"$checkout_response" <<CURLCFG
 url = "$RUNS_API/checkout-token"
 header = "$AUTH_HEADER"
+header = "X-LCARS-Reviewer-Checkout: $reviewer_checkout"
 $CURL_TIMEOUT_CONFIG
 CURLCFG
   then
     rm -f -- "$checkout_response"
+    return 1
+  fi
+  response_reviewer_login="$(jq -er '(.reviewerLogin // "agent-lcars[bot]") | strings | select(length > 0)' "$checkout_response")" ||
+    { rm -f -- "$checkout_response"; return 1; }
+  # A rollback cannot replace the dedicated App with the fleet App mid-review.
+  if [ "$MODE" = review ] && [ -n "${LCARS_REVIEWER_LOGIN:-}" ] &&
+    [ "$response_reviewer_login" != "$LCARS_REVIEWER_LOGIN" ]; then
+    rm -f -- "$checkout_response"
+    echo "GitHub checkout renewal refused: reviewer identity changed" >&2
     return 1
   fi
   token="$(jq -er '.token | select(length > 0)' "$checkout_response")" || { rm -f -- "$checkout_response"; return 1; }
@@ -377,12 +393,20 @@ CURLCFG
   jq -c '.identity.git // .gitIdentity // null' "$checkout_response" > "$CHECKOUT_CREDENTIAL_DIR/git-identity.json.$$"
   mv -f -- "$CHECKOUT_CREDENTIAL_DIR/git-identity.json.$$" "$CHECKOUT_CREDENTIAL_DIR/git-identity.json"
   rm -f -- "$checkout_response"
+  if [ "$MODE" = review ]; then
+    LCARS_REVIEWER_LOGIN="$response_reviewer_login"
+    # A review started on the old Console keeps its actor after Console upgrades.
+    if [ "$LCARS_REVIEWER_LOGIN" = 'agent-lcars[bot]' ]; then
+      reviewer_checkout=""
+    fi
+  fi
 }
 
 # A claimed run must not be lost to one transient console error: the first
 # credential request retries with backoff, like checkout_refresh_loop does for
 # renewals. A persistent failure (for example a rejected run token) still
 # fails the run once the bounded attempts are exhausted.
+unset LCARS_REVIEWER_LOGIN
 checkout_attempt=1
 checkout_attempts="${CHECKOUT_TOKEN_BOOTSTRAP_ATTEMPTS:-4}"
 checkout_retry_seconds="${CHECKOUT_TOKEN_BOOTSTRAP_RETRY_SECONDS:-5}"
@@ -396,8 +420,11 @@ until refresh_checkout_token; do
   checkout_attempt=$((checkout_attempt + 1))
   checkout_retry_seconds=$((checkout_retry_seconds * 2))
 done
+if [ "$MODE" = review ]; then
+  export LCARS_REVIEWER_LOGIN
+fi
 CHECKOUT_TOKEN="$(cat "$CHECKOUT_TOKEN_FILE")"
-# Ruling (design spec, "Direct runner mode"): direct mode uses this ONE
+# Ruling (design spec, "Direct runner mode"): implementation uses this ONE
 # agent-lcars[bot] installation token, minted by checkout-token, for BOTH
 # checkout and the agent's own push -- the codex/opencode lane's pattern,
 # not claude's. The claude lane's own claude[bot]-push boundary (#645)

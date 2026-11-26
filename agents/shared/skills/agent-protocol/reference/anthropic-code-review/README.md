@@ -178,8 +178,10 @@ review and comment-quality guidance applies.
      with one. Notes on a passing review go in the `APPROVE` body.
    - **The one exception is this reviewer's own pull request.** Read the pull
      request's author login (`gh api repos/<repo>/pulls/<n> --jq .user.login`).
-     Only when it is the identity publishing this review (`agent-lcars-reviewer[bot]`)
-     does GitHub refuse an approval or a change request; then, and only then,
+     Read `$LCARS_REVIEWER_LOGIN` for the publishing actor selected at
+     checkout. A legacy checkout uses `agent-lcars[bot]`. Only when the PR author
+     matches the publishing actor does GitHub refuse an approval or a change
+     request. In that case,
      submit `COMMENT` with `<!-- lcars-review:pass -->` (no blocking defects,
      `comments: []`) or `<!-- lcars-review:block -->` (blocking defects) on its
      own line in `body`. A pull request opened by a maintainer, by Renovate or

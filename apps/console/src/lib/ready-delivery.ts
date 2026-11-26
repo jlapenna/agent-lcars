@@ -197,6 +197,7 @@ async function reviews(
   repo: string,
   number: number,
   head: string,
+  pullRequestAuthor: string,
 ) {
   // Complete bounded reads only: truncation and field errors retain ownership.
   const token = await deps.tokens.tokenFor(repo);
@@ -276,6 +277,7 @@ async function reviews(
     } => review.author !== null && review.commit !== null,
   );
   const latestVerdict = new Map<string, 'blocked' | 'clear'>();
+  const author = pullRequestAuthor.toLowerCase();
   for (const review of usableReviews) {
     if (review.commit.oid !== head) continue;
     const login = normalizeGraphqlActorLogin(review.author);
@@ -288,6 +290,7 @@ async function reviews(
       latestVerdict.set(authorKey, 'clear');
     } else if (
       review.state === 'COMMENTED' &&
+      authorKey === author &&
       (authorKey === 'agent-lcars[bot]' || authorKey === REVIEWER_BOT_LOGIN)
     ) {
       if (hasReviewLineMarker(review.body, '<!-- lcars-review:block -->')) {
@@ -560,7 +563,13 @@ export async function observeGithubDelivery(
       head: binding.head,
       reason: 'Pull request has merge conflicts with base branch',
     };
-  const review = await reviews(deps, binding.repo, binding.number, pr.head.sha);
+  const review = await reviews(
+    deps,
+    binding.repo,
+    binding.number,
+    pr.head.sha,
+    pr.user.login,
+  );
   if (review.changesRequested || review.unresolved)
     return {
       kind: 'correction',

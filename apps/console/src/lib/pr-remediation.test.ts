@@ -724,35 +724,49 @@ describe('automatic pull-request review & conflict remediation', () => {
     ).toEqual({ action: 'ignored', reason: 'parked-or-excluded-label' });
   });
 
-  it('requests the missing current-head review after a fix run in any repository, with no label or earlier review', async () => {
-    const f = createFixture();
-    const anchor = { repo: REPO, issue: 4020 };
-    f.setPr(REPO, 4020, {
-      author: { login: 'jlapenna' },
-      labels: [],
-      reviews: [],
-      mergeStateStatus: 'BLOCKED',
-    });
-    const afterRun = {
-      runId: `${REPO}#4020/r1`,
-      params: { mode: 'implement' },
-      result: { ok: true, summary: 'pull-request' },
-    } as unknown as Run;
+  it.each([undefined, 'pass', 'block'])(
+    'requests a current-head review after a fix run with no verdict (marker=%s)',
+    async (marker) => {
+      const f = createFixture();
+      const anchor = { repo: REPO, issue: 4020 };
+      f.setPr(REPO, 4020, {
+        author: { login: 'agent-lcars[bot]' },
+        labels: [],
+        reviews: marker
+          ? [
+              {
+                databaseId: 4020,
+                state: 'COMMENTED',
+                body: `<!-- lcars-review:${marker} -->`,
+                author: { __typename: 'Bot', login: 'agent-lcars-reviewer' },
+                authorAssociation: 'NONE',
+                commit: { oid: HEAD_1 },
+              },
+            ]
+          : [],
+        mergeStateStatus: 'BLOCKED',
+      });
+      const afterRun = {
+        runId: `${REPO}#4020/r1`,
+        params: { mode: 'implement' },
+        result: { ok: true, summary: 'pull-request' },
+      } as unknown as Run;
 
-    const result = await reconcilePullRequestRemediation(
-      f.remediationDeps,
-      anchor,
-      { afterRun },
-    );
+      const result = await reconcilePullRequestRemediation(
+        f.remediationDeps,
+        anchor,
+        { afterRun },
+      );
 
-    expect(result).toMatchObject({
-      action: 'rereviewed',
-      outcome: { kind: 'accepted' },
-    });
-    expect(await f.store.readActiveRun(anchor)).toMatchObject({
-      params: { mode: 'review' },
-    });
-  });
+      expect(result).toMatchObject({
+        action: 'rereviewed',
+        outcome: { kind: 'accepted' },
+      });
+      expect(await f.store.readActiveRun(anchor)).toMatchObject({
+        params: { mode: 'review' },
+      });
+    },
+  );
 
   describe('verified dependency updates', () => {
     const RENOVATE = { __typename: 'Bot', login: 'renovate' };

@@ -102,6 +102,8 @@ export interface RunsContext {
   tokens: DispatchTokenProvider;
   checkoutTokens: ExpiringDispatchTokenProvider;
   reviewerTokens?: ExpiringDispatchTokenProvider;
+  /** This runner can publish reviews using the checkout response's actor. */
+  reviewerCheckoutV1?: boolean;
   codexAuth: CodexAuthStore;
   jobCredentials?: Pick<JobSecrets, 'github' | 'deliver' | 'refused'>;
   /** Same outbox drain every other mutating route reaches through
@@ -1390,7 +1392,10 @@ export const runsRouter = os.router({
       }
     }
 
-    const review = run.params?.['mode'] === 'review';
+    // Baked legacy procedures assume the fleet App is publishing the review.
+    // Keep that identity for runners that have not negotiated reviewer checkout.
+    const review =
+      run.params?.['mode'] === 'review' && context.reviewerCheckoutV1;
     const checkoutTokens = review
       ? context.reviewerTokens
       : context.checkoutTokens;
