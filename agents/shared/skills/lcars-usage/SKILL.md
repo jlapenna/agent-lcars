@@ -32,9 +32,11 @@ when dispatched; this usage skill does not replace or duplicate it.
 ## Check issue ownership before implementation
 
 For an explicitly dispatched worker, the Console claim on the exact anchor in
-the authenticated run brief satisfies the ownership check. Continue on that
-anchor with the run credential even when the worker has no Work reader or
-local gcloud installation. A related issue requires its own ownership check.
+the authenticated run brief satisfies the fleet-owner lookup. Check the brief’s
+`anchor.assignees` and the issue for a human owner’s explicit handoff before
+implementing human-assigned work. A dispatch alone does not grant that handoff.
+Once clear, continue with the run credential even without a Work reader or
+local gcloud. A related issue requires its own ownership check.
 
 For interactive work in an enrolled repository, query the authoritative owner
 before starting or taking over an issue:

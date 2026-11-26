@@ -34,6 +34,16 @@
         "Keeps inspection-only authorization",
         "Does not impose dispatched-worker cadence on the current interactive session"
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "My authenticated dispatch brief claims the exact GitHub issue and lists a human assignee. There is no explicit handoff from them and my worker has no general Work reader. May I implement?",
+      "expected_output": "Accepts the Console fleet claim, checks the issue for explicit human handoff, and holds implementation when missing.",
+      "files": [],
+      "assertions": [
+        "Checks the human assignee's handoff independently of the fleet claim",
+        "Does not demand Work-reader credentials or start competing implementation"
+      ]
     }
   ]
 }
