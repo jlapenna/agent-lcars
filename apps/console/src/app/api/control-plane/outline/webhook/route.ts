@@ -3,7 +3,9 @@ import { NextResponse } from 'next/server';
 
 import { readBoundedRequestBody } from '@/lib/bounded-request-body';
 import {
+  type OutlineAgentNotice,
   outlineAgentNotice,
+  parseOutlineSignature,
   verifyOutlineSignature,
 } from '@/lib/outline-agent-events';
 import {
@@ -16,10 +18,54 @@ import {
  * introduce a smaller document-size policy in this transport adapter. */
 export const OUTLINE_WEBHOOK_MAX_BYTES = 32 * 1024 * 1024;
 
-/** Shadow only: authenticate and observe identifiers, never deliver. The
- * existing bridge remains responsible until the explicit cutover. API reads
- * and administrator/creator authorization belong on the trusted host. */
+// Reserve two full deliveries per instance, including chunk and Buffer copies
+// (128 MiB total at the limit). Keep the slots through decoding and JSON parsing
+// to leave the rest of the 2 GiB Console instance available for shared traffic.
+const MAX_IN_FLIGHT_DELIVERIES = 2;
+// One default Outline worker can send ten tasks concurrently. Queue the
+// other eight without pulling their bodies, and leave most of Outline's
+// five-second request timeout for upload and verification after admission.
+const MAX_WAITING_DELIVERIES = 8;
+const MAX_WAIT_MS = 2_000;
+let inFlightDeliveries = 0;
+const waitingDeliveries = new Set<(admitted: boolean) => void>();
+
+async function acquireDeliverySlot(signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return false;
+  if (inFlightDeliveries < MAX_IN_FLIGHT_DELIVERIES) {
+    inFlightDeliveries++;
+    return true;
+  }
+  if (waitingDeliveries.size >= MAX_WAITING_DELIVERIES) return false;
+
+  return new Promise((resolve) => {
+    const finish = (admitted: boolean) => {
+      clearTimeout(timeout);
+      signal.removeEventListener('abort', leaveQueue);
+      waitingDeliveries.delete(finish);
+      resolve(admitted);
+    };
+    const leaveQueue = () => finish(false);
+    const timeout = setTimeout(leaveQueue, MAX_WAIT_MS);
+    waitingDeliveries.add(finish);
+    signal.addEventListener('abort', leaveQueue, { once: true });
+  });
+}
+
+function releaseDeliverySlot(): void {
+  // Transfer the slot to the oldest waiter before a new request can take it.
+  const next = waitingDeliveries.values().next().value;
+  if (next) next(true);
+  else inFlightDeliveries--;
+}
+
+/** Authenticate the raw body, then hand off only normalized identifiers.
+ * API reads and administrator/creator authorization belong on the trusted host. */
 export async function POST(request: Request): Promise<NextResponse> {
+  if (process.env['MAINTENANCE_MODE'] === 'true') {
+    return new NextResponse('System is under maintenance.', { status: 503 });
+  }
+
   const sourceEnabled =
     process.env.AGENT_LCARS_OUTLINE_SOURCE_ENABLED === 'true';
   const mode = outlineDeliveryEnabled() ? 'live' : 'shadow';
@@ -38,47 +84,68 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 503 },
     );
   }
-  const body = await readBoundedRequestBody(request, OUTLINE_WEBHOOK_MAX_BYTES);
-  if (body === undefined) {
-    report('oversized');
-    return NextResponse.json(
-      { error: 'Payload exceeds the deployed request envelope' },
-      { status: 413 },
-    );
-  }
-  if (
-    !verifyOutlineSignature(
-      body,
-      request.headers.get('outline-signature'),
-      secret,
-      Date.now(),
-    )
-  ) {
+  const signature = parseOutlineSignature(
+    request.headers.get('outline-signature'),
+    Date.now(),
+  );
+  if (!signature) {
     report('unauthorized');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  let input: unknown;
-  try {
-    input = JSON.parse(body.toString('utf8'));
-  } catch {
-    report('invalid');
-    return NextResponse.json({ error: 'Malformed JSON' }, { status: 400 });
-  }
-  const parsed = outlineAgentNotice(input);
-  if (parsed.outcome === 'invalid') {
-    report('invalid');
+  if (!(await acquireDeliverySlot(request.signal))) {
+    report('overloaded');
     return NextResponse.json(
-      { error: 'Malformed Outline event' },
-      { status: 400 },
+      { error: 'Outline intake is busy' },
+      { status: 503, headers: { 'Retry-After': '1' } },
     );
   }
-  if (parsed.outcome === 'ignored') {
-    report('ignored');
-    return NextResponse.json({ ok: true, mode: 'shadow', outcome: 'ignored' });
+  let notice: OutlineAgentNotice;
+  try {
+    const body = await readBoundedRequestBody(
+      request,
+      OUTLINE_WEBHOOK_MAX_BYTES,
+    );
+    if (body === undefined) {
+      report('oversized');
+      return NextResponse.json(
+        { error: 'Payload exceeds the deployed request envelope' },
+        { status: 413 },
+      );
+    }
+    if (!verifyOutlineSignature(body, signature, secret, Date.now())) {
+      report('unauthorized');
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    let input: unknown;
+    try {
+      input = JSON.parse(body.toString('utf8'));
+    } catch {
+      report('invalid');
+      return NextResponse.json({ error: 'Malformed JSON' }, { status: 400 });
+    }
+    const parsed = outlineAgentNotice(input);
+    if (parsed.outcome === 'invalid') {
+      report('invalid');
+      return NextResponse.json(
+        { error: 'Malformed Outline event' },
+        { status: 400 },
+      );
+    }
+    if (parsed.outcome === 'ignored') {
+      report('ignored');
+      return NextResponse.json({
+        ok: true,
+        mode,
+        outcome: 'ignored',
+      });
+    }
+    notice = parsed.notice;
+  } finally {
+    releaseDeliverySlot();
   }
   if (sourceEnabled) {
     try {
-      await queueOutlineEvent(parsed.notice);
+      await queueOutlineEvent(notice);
     } catch (error) {
       // Reuse the deployed generic agent-event enqueue alert. A source job
       // that never reached Pub/Sub cannot produce a host-side failure metric.
@@ -90,7 +157,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           stage: 'enqueue',
           outcome: 'failed',
           source: 'outline',
-          noticeId: parsed.notice.deliveryId,
+          noticeId: notice.deliveryId,
           error: error instanceof Error ? error.name : 'error',
         },
         { enrich: false },
@@ -101,7 +168,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
   }
-  report(sourceEnabled ? 'queued' : 'shadow', { ...parsed.notice });
+  report(sourceEnabled ? 'queued' : 'shadow', { ...notice });
   return NextResponse.json({
     ok: true,
     mode,

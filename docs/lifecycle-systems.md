@@ -631,7 +631,10 @@ artifact-bridge migration (#3571). It verifies Outline's raw-body HMAC and
 five-minute signing timestamp before parsing. Only event/delivery, actor,
 document and model identifiers and event time reach its bounded
 `lcars-outline-events` structured outcomes; document titles, Markdown,
-comments and supplied links are discarded. Both source and delivery activation
+comments and supplied links are discarded. The receiver admits at most two
+body readers per instance and queues up to eight more briefly without reading
+their bodies. It releases a slot after normalizing identifiers, before source
+publication. Both source and delivery activation
 default off. The existing bridge remains active until the explicit cutover.
 
 The receiver stays unavailable until its separate signing secret is provisioned

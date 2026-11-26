@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   OUTLINE_SIGNATURE_SKEW_MS,
   outlineAgentNotice,
+  parseOutlineSignature,
   verifyOutlineSignature,
 } from './outline-agent-events';
 
@@ -34,11 +35,12 @@ const event = {
 describe('Outline shadow source', () => {
   it('verifies the exact raw bytes and millisecond freshness', () => {
     const raw = Buffer.from(JSON.stringify(event));
-    expect(verifyOutlineSignature(raw, sign(raw), secret, now)).toBe(true);
+    const signature = parseOutlineSignature(sign(raw), now)!;
+    expect(verifyOutlineSignature(raw, signature, secret, now)).toBe(true);
     expect(
       verifyOutlineSignature(
         Buffer.concat([raw, Buffer.from(' ')]),
-        sign(raw),
+        signature,
         secret,
         now,
       ),
@@ -46,19 +48,23 @@ describe('Outline shadow source', () => {
     expect(
       verifyOutlineSignature(
         raw,
+        signature,
+        secret,
+        now + OUTLINE_SIGNATURE_SKEW_MS + 1,
+      ),
+    ).toBe(false);
+    expect(
+      parseOutlineSignature(
         sign(raw, now - OUTLINE_SIGNATURE_SKEW_MS - 1),
-        secret,
         now,
       ),
-    ).toBe(false);
+    ).toBeUndefined();
     expect(
-      verifyOutlineSignature(
-        raw,
+      parseOutlineSignature(
         sign(raw, now + OUTLINE_SIGNATURE_SKEW_MS + 1),
-        secret,
         now,
       ),
-    ).toBe(false);
+    ).toBeUndefined();
   });
   it.each([
     null,
@@ -68,9 +74,7 @@ describe('Outline shadow source', () => {
     't=0,s=ff,s=ff',
     't=NaN,s=' + 'a'.repeat(64),
   ])('refuses malformed signature %s', (header) => {
-    expect(verifyOutlineSignature(Buffer.from('{}'), header, secret, now)).toBe(
-      false,
-    );
+    expect(parseOutlineSignature(header, now)).toBeUndefined();
   });
   it('retains only identifiers, event kind and time from signed content', () => {
     const parsed = outlineAgentNotice(event);

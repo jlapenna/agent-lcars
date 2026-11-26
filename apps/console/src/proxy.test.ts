@@ -1,6 +1,7 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { unstable_doesMiddlewareMatch } from 'next/experimental/testing/server';
 import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
 
@@ -13,6 +14,7 @@ import proxy, { config, publicPrefixes, publicRoutes } from './proxy';
 // actual #885 failure mode (recovery-observation shipped without ever
 // being added to publicRoutes). Iterating the real array instead would
 // have made the loop just as blind to that omission as production was.
+const OUTLINE_WEBHOOK_PATH = '/api/control-plane/outline/webhook';
 const EXPECTED_PUBLIC_ROUTES = [
   '/login',
   '/api/logs/error',
@@ -35,7 +37,8 @@ const EXPECTED_PUBLIC_PREFIXES = [
 
 // Every control-plane route authenticates itself (OIDC claims or raw-body
 // HMAC) and is called by machines that never carry a session cookie, so
-// each one MUST be reachable through publicRoutes/publicPrefixes. Deriving
+// each one must be reachable via the public route list or a matcher exclusion.
+// Deriving
 // the set from the route files on disk avoids stale exceptions when a route
 // is deleted or a new machine endpoint is added.
 function controlPlaneRoutesOnDisk(): string[] {
@@ -142,15 +145,15 @@ describe('console proxy public control-plane routes', () => {
     );
   });
 
-  it('lets every control-plane route that exists on disk through unauthenticated', () => {
-    const routes = controlPlaneRoutesOnDisk();
-    // If this list is ever empty the test is vacuously green — fail loud.
+  it('lets every proxied control-plane route through unauthenticated', () => {
+    const routes = controlPlaneRoutesOnDisk().filter(
+      (path) => path !== OUTLINE_WEBHOOK_PATH,
+    );
     expect(routes.length).toBeGreaterThan(0);
     for (const path of routes) {
       const request = new NextRequest(`https://lcars.jlapenna.net${path}`, {
         method: 'POST',
       });
-
       expect(
         proxy(request).status,
         `${path} must bypass the session check`,
@@ -191,11 +194,18 @@ describe('console proxy public control-plane routes', () => {
   });
 });
 
+const gated = (url: string) =>
+  unstable_doesMiddlewareMatch({ config, nextConfig: {}, url });
+
 describe('console proxy matcher', () => {
-  // Next compiles the matcher source as a path regex; this pattern is plain
-  // JavaScript regex syntax, so anchoring it reproduces the match decision.
-  const gated = (path: string) =>
-    config.matcher.some((source) => new RegExp(`^${source}$`).test(path));
+  it('skips body cloning for the exact Outline webhook path', () => {
+    expect(controlPlaneRoutesOnDisk()).toContain(OUTLINE_WEBHOOK_PATH);
+    expect(gated(OUTLINE_WEBHOOK_PATH)).toBe(false);
+    expect(gated(`${OUTLINE_WEBHOOK_PATH}/`)).toBe(false);
+    expect(gated(`${OUTLINE_WEBHOOK_PATH}/process`)).toBe(true);
+    expect(gated(`${OUTLINE_WEBHOOK_PATH}-other`)).toBe(true);
+    expect(gated('/api/control-plane/webhook')).toBe(true);
+  });
 
   it('leaves the install manifest and app icons public for Chrome installation', () => {
     for (const path of [

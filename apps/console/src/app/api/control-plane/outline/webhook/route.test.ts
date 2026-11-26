@@ -50,6 +50,7 @@ beforeEach(() => {
   vi.mocked(queueOutlineEvent).mockReset().mockResolvedValue(undefined);
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   if (original === undefined)
     delete process.env.AGENT_LCARS_OUTLINE_WEBHOOK_SECRET;
@@ -131,6 +132,108 @@ describe('Outline signed shadow receiver', () => {
     expect((await POST(request('not json'))).status).toBe(400);
     expect((await POST(request('{}'))).status).toBe(400);
   });
+  it('rejects missing, malformed and stale signature headers before reading', async () => {
+    const missing = request();
+    missing.headers.delete('outline-signature');
+    const malformed = request(undefined, { 'outline-signature': 'bad' });
+    const stale = request(undefined, {
+      'outline-signature': `t=${Date.now() - 6 * 60_000},s=${'a'.repeat(64)}`,
+    });
+    for (const delivery of [missing, malformed, stale]) {
+      expect((await POST(delivery)).status).toBe(401);
+      expect(delivery.bodyUsed).toBe(false);
+    }
+  });
+
+  function heldDelivery() {
+    const stream = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = stream.writable.getWriter();
+    const body = JSON.stringify(event);
+    const delivery = new Request(request(body), {
+      body: stream.readable,
+      duplex: 'half',
+    } as RequestInit);
+    let sent: Promise<void> | undefined;
+    return {
+      delivery,
+      response: POST(delivery),
+      send: () =>
+        (sent ??= writer.write(Buffer.from(body)).then(() => writer.close())),
+    };
+  }
+
+  it('records a ten-delivery burst while waiting bodies stay unread', async () => {
+    const deliveries = Array.from({ length: 10 }, heldDelivery);
+    try {
+      await Promise.resolve();
+      expect(deliveries.map(({ delivery }) => delivery.bodyUsed)).toEqual([
+        true,
+        true,
+        ...Array<boolean>(8).fill(false),
+      ]);
+
+      const excess = request();
+      const response = await POST(excess);
+      expect(response.status).toBe(503);
+      expect(excess.bodyUsed).toBe(false);
+    } finally {
+      await Promise.all(deliveries.map(({ send }) => send()));
+    }
+    const results = await Promise.all(
+      deliveries.map(({ response }) => response),
+    );
+    expect(results.map(({ status }) => status)).toEqual(
+      Array<number>(10).fill(200),
+    );
+  });
+
+  it('expires queued deliveries without consuming a slot or reading the body', async () => {
+    vi.useFakeTimers();
+    const first = heldDelivery();
+    const second = heldDelivery();
+    try {
+      const waiting = request();
+      const pending = POST(waiting);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect((await pending).status).toBe(503);
+      expect(waiting.bodyUsed).toBe(false);
+
+      const next = POST(request());
+      await first.send();
+      expect((await next).status).toBe(200);
+    } finally {
+      await Promise.allSettled([
+        first.send(),
+        second.send(),
+        first.response,
+        second.response,
+      ]);
+    }
+  });
+
+  it('drops a disconnected waiter and admits the next delivery', async () => {
+    const first = heldDelivery();
+    const second = heldDelivery();
+    const controller = new AbortController();
+    const abandoned = new Request(request(), { signal: controller.signal });
+    try {
+      const pending = POST(abandoned);
+      const next = POST(request());
+      controller.abort();
+      expect((await pending).status).toBe(503);
+      expect(abandoned.bodyUsed).toBe(false);
+      await first.send();
+      expect((await next).status).toBe(200);
+    } finally {
+      await Promise.allSettled([
+        first.send(),
+        second.send(),
+        first.response,
+        second.response,
+      ]);
+    }
+  });
+
   it('does not buffer a declared oversized request', async () => {
     expect(
       (
@@ -141,6 +244,13 @@ describe('Outline signed shadow receiver', () => {
         )
       ).status,
     ).toBe(413);
+  });
+  it('rejects a signed delivery in maintenance mode before observing it', async () => {
+    vi.stubEnv('MAINTENANCE_MODE', 'true');
+    const response = await POST(request());
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe('System is under maintenance.');
+    expect(logger.structured).not.toHaveBeenCalled();
   });
   it('stays unavailable until its signing secret is provisioned', async () => {
     delete process.env.AGENT_LCARS_OUTLINE_WEBHOOK_SECRET;
