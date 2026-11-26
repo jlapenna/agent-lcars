@@ -437,10 +437,10 @@ async function handleAgentDependency(
 
   if (!isWorkAnchor(parent.task)) {
     const open = await isAnchorOpen(deps, anchorTarget(parent));
-    if (open === undefined) {
-      await defer();
-      return;
-    }
+    if (open === undefined)
+      throw new Error(
+        'Could not read GitHub anchor for investigator dependency',
+      );
     if (!open) {
       await settleClaim(deps, entry, 'done');
       return;

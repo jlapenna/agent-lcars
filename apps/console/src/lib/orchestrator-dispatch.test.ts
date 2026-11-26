@@ -2023,8 +2023,8 @@ describe('waiting for an admitted investigator', () => {
         assignees: [{ login: 'agent-lcars-bot' }],
       }),
     );
-    const drain = () =>
-      drainOutbox({ store, orchestrator, tokens, fetchImpl, now: () => NOW });
+    const drain = (time = NOW) =>
+      drainOutbox({ store, orchestrator, tokens, fetchImpl, now: () => time });
     await drain();
     const yieldParent = () =>
       orchestrator.report(parent.runId, {
@@ -2081,6 +2081,36 @@ describe('waiting for an admitted investigator', () => {
       expect(f.fetchImpl.mock.calls.length).toBe(5);
     },
   );
+
+  it('backs off and retires when the GitHub anchor remains unreadable', async () => {
+    const f = await waitingFixture();
+    await f.yieldParent();
+    await f.orchestrator.report(f.child.runId, { ok: true, summary: 'report' });
+    f.fetchImpl.mockImplementation(
+      async () => new Response(null, { status: 404 }),
+    );
+
+    const at = (offsetMs: number) =>
+      new Date(Date.parse(NOW) + offsetMs).toISOString();
+    const failed = [
+      {
+        entryId: `wait-for-agent/${f.parent.runId}`,
+        error: 'Could not read GitHub anchor for investigator dependency',
+      },
+    ];
+
+    f.fetchImpl.mockClear();
+    expect((await f.drain()).failed).toEqual(failed);
+    expect((await f.drain(at(60_000))).failed).toEqual(failed);
+    const callsBeforeBackoff = f.fetchImpl.mock.calls.length;
+    expect((await f.drain(at(120_000))).failed).toEqual([]);
+    expect(f.fetchImpl).toHaveBeenCalledTimes(callsBeforeBackoff);
+
+    expect((await f.drain(at(72 * 60 * 60_000))).failed).toEqual(failed);
+    expect((await f.drain(at(73 * 60 * 60_000))).failed).toEqual([]);
+    expect(f.fetchImpl).toHaveBeenCalledTimes(callsBeforeBackoff + 1);
+    expect(await f.store.listRuns(TASK)).toHaveLength(1);
+  });
 
   it.each(['canceled', 'superseded'])(
     'drops a %s parent wait',
