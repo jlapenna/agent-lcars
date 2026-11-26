@@ -80,6 +80,7 @@ import {
 } from './queue-admission-status';
 import { joinRunMessage } from './run-message';
 import {
+  fitsReviewSlot,
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
@@ -1464,6 +1465,7 @@ export class FirestoreStore implements OrchestratorStore {
     claimedBySubject: string;
     tokenHash: string;
     placementAware?: boolean;
+    reviewOnly?: boolean;
   }): Promise<Run | undefined> {
     return this.#firestore.runTransaction(async (tx) => {
       // One query per candidate pipeline for queued work and each live state.
@@ -1477,7 +1479,7 @@ export class FirestoreStore implements OrchestratorStore {
       // occupancy, priority and credential reads below are skipped and an
       // idle poll is one round trip. Only live runs are candidates; a run
       // canceled while queued can keep `queue.state: queued`.
-      const queuedByPipeline = await Promise.all(
+      const snapshots = await Promise.all(
         requested.map((pipeline) =>
           tx.get(
             this.#runs
@@ -1487,8 +1489,14 @@ export class FirestoreStore implements OrchestratorStore {
           ),
         ),
       );
-      if (queuedByPipeline.every((snapshot) => snapshot.empty))
-        return undefined;
+      const queuedByPipeline = snapshots.map((snapshot) =>
+        input.reviewOnly
+          ? snapshot.docs.filter((doc) =>
+              fitsReviewSlot(doc.get('pipeline'), doc.get('params.mode')),
+            )
+          : snapshot.docs,
+      );
+      if (queuedByPipeline.every((docs) => docs.length === 0)) return undefined;
       const cooldowns = await Promise.all(
         requested.map((pipeline) =>
           tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
@@ -1503,7 +1511,7 @@ export class FirestoreStore implements OrchestratorStore {
       const queuedSnapshots = grantedIndexes.map(
         (index) => queuedByPipeline[index]!,
       );
-      if (queuedSnapshots.every((snapshot) => snapshot.empty)) return undefined;
+      if (queuedSnapshots.every((docs) => docs.length === 0)) return undefined;
       const [prioritySnapshots, windowSnapshots] = await Promise.all([
         Promise.all(
           granted.map((pipeline) =>
@@ -1539,7 +1547,7 @@ export class FirestoreStore implements OrchestratorStore {
         ),
       );
       const queued = queuedSnapshots
-        .flatMap((snapshot) => snapshot.docs)
+        .flat()
         .map((doc) => ({ doc, run: runSchema.parse(doc.data()) }));
       const live = liveSnapshots
         .flatMap((snapshots) => snapshots)
@@ -1557,6 +1565,7 @@ export class FirestoreStore implements OrchestratorStore {
             windowSnapshots[index]?.data(),
           ]),
         ),
+        input.reviewOnly,
       );
       const first = queued.find(({ run }) => run.runId === selected?.runId);
       if (first === undefined) return undefined;

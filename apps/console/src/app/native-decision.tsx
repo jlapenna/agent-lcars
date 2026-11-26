@@ -52,7 +52,7 @@ export function NativeDecisionRow({
   const ask = report ? undefined : humanAskFromHandoff(original);
   return (
     <div
-      className="queue-item-row"
+      className="queue-item-row queue-item-row--native"
       data-selected={selected ? '' : undefined}
       data-reason={reason}
       data-testid={`queue-row-${work.id}`}
@@ -122,7 +122,7 @@ export function NativeDecisionDetail({
 }) {
   const { work, canReply } = card;
   const decision =
-    work.state === 'parked'
+    work.state === 'parked' && !card.waitingOnEvent
       ? humanDecisionFromHandoff(nativeCardText(card))
       : undefined;
   const parkedRunId =
@@ -186,11 +186,13 @@ export function NativeDecisionDetail({
         {workRepository(work.spec)} / {work.id}
       </Text>
       <Text size="sm" c="dimmed">
-        {work.state === 'parked'
-          ? 'Human needed'
-          : card.kind === 'report'
-            ? 'Report ready'
-            : work.state}{' '}
+        {card.waitingOnEvent
+          ? 'Waiting on event'
+          : work.state === 'parked'
+            ? 'Human needed'
+            : card.kind === 'report'
+              ? 'Report ready'
+              : work.state}{' '}
         · <RelativeTime iso={nativeCardTime(card)} />
       </Text>
       {decision && (
@@ -217,7 +219,7 @@ export function NativeDecisionDetail({
           {card.decisionSummary}
         </Text>
       )}
-      {work.state === 'parked' && (
+      {work.state === 'parked' && !card.waitingOnEvent && (
         <HumanNeededSummary
           key={`${work.id}:${work.runs.at(-1)?.runId}`}
           actions={
