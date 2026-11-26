@@ -90,8 +90,20 @@ export class OutlineSource {
     if (edit && job.notice.actorId !== me.id)
       await deps.sleep(OUTLINE_EDIT_DEBOUNCE_MS);
     const document = await deps.api.document(id);
-    if (document.id !== id)
+    if (document && document.id !== id)
       throw new Error('Outline document identity mismatch');
+    if (!document) {
+      if (job.type === 'outline-fallback')
+        throw new Error('Outline fallback document is unavailable');
+      if (job.type === 'outline-observe') await deps.observe(id, false);
+      else
+        await deps.report({
+          noticeId: job.notice.deliveryId,
+          outcome: 'foreign-document',
+          agentCreated: false,
+        });
+      return;
+    }
     const agentCreated = document.createdBy.id === me.id;
 
     if (job.type === 'outline-observe') {

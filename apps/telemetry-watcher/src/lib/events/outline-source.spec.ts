@@ -3,7 +3,11 @@ import { createHash } from 'node:crypto';
 import type { OutlineSourceJob, OutlineSourceReport } from '@agent-lcars/work';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { OutlineSourceApi } from './outline-client';
+import {
+  OutlineApiError,
+  type OutlineSourceApi,
+  outlineSourceApi,
+} from './outline-client';
 import { OutlineSource, type OutlineTextBaseline } from './outline-source';
 
 const agent = '00000000-0000-4000-8000-000000000001';
@@ -66,6 +70,56 @@ function fixture() {
 }
 
 describe('Outline trusted API source', () => {
+  it.each([403, 404])(
+    'settles documents.info HTTP %s for intake and observation while refusing a fallback write',
+    async (status) => {
+      const f = fixture();
+      const http = vi.fn<typeof fetch>().mockResolvedValue({
+        ok: false,
+        status,
+      } as Response);
+      f.api.document.mockImplementation(
+        outlineSourceApi('test-key', http).document,
+      );
+      await f.source.handle(f.job);
+      await f.source.handle({ type: 'outline-observe', documentId: doc });
+      await expect(
+        f.source.handle({
+          type: 'outline-fallback',
+          id: fallback,
+          documentId: doc,
+        }),
+      ).rejects.toThrow('Outline fallback document is unavailable');
+      expect(f.report).toHaveBeenCalledWith({
+        noticeId: eventId,
+        outcome: 'foreign-document',
+        agentCreated: false,
+      });
+      expect(f.observe).toHaveBeenCalledWith(doc, false);
+      expect(f.api.createComment).not.toHaveBeenCalled();
+      expect(f.hashes.size).toBe(0);
+    },
+  );
+
+  it.each([401, 429, 503])(
+    'propagates documents.info HTTP %s for the host retry',
+    async (status) => {
+      const f = fixture();
+      const http = vi.fn<typeof fetch>().mockResolvedValue({
+        ok: false,
+        status,
+      } as Response);
+      f.api.document.mockImplementation(
+        outlineSourceApi('test-key', http).document,
+      );
+      await expect(f.source.handle(f.job)).rejects.toThrow(
+        new OutlineApiError(status),
+      );
+      expect(f.report).not.toHaveBeenCalled();
+      expect(f.observe).not.toHaveBeenCalled();
+      expect(f.api.createComment).not.toHaveBeenCalled();
+    },
+  );
   it('bounds complete distinct-document jobs and drains queued work at shutdown', async () => {
     const f = fixture();
     const releases: (() => void)[] = [];

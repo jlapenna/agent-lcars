@@ -18,7 +18,7 @@ const commentSchema = z.object({
 export interface OutlineSourceApi {
   me(): Promise<z.infer<typeof userSchema>>;
   user(id: string): Promise<z.infer<typeof userSchema>>;
-  document(id: string): Promise<z.infer<typeof documentSchema>>;
+  document(id: string): Promise<z.infer<typeof documentSchema> | undefined>;
   comment(id: string): Promise<z.infer<typeof commentSchema> | undefined>;
   createComment(input: {
     id: string;
@@ -58,8 +58,18 @@ export function outlineSourceApi(
     me: async () =>
       z.object({ user: userSchema }).parse(await call('auth.info', {})).user,
     user: async (id) => userSchema.parse(await call('users.info', { id })),
-    document: async (id) =>
-      documentSchema.parse(await call('documents.info', { id })),
+    document: async (id) => {
+      try {
+        return documentSchema.parse(await call('documents.info', { id }));
+      } catch (error) {
+        if (
+          error instanceof OutlineApiError &&
+          (error.status === 403 || error.status === 404)
+        )
+          return undefined;
+        throw error;
+      }
+    },
     comment: async (id) => {
       try {
         return commentSchema.parse(await call('comments.info', { id }));
