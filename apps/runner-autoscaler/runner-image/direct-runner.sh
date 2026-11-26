@@ -147,6 +147,7 @@ CODEX_AUTH_WAIT_PID=''
 CHECKOUT_REFRESH_PID=''
 OPENCODE_PROXY_PID=''
 EARLY_FAILURE_MESSAGE=''
+EARLY_FAILURE_OUTCOME=runner-failed
 # Every provider round's own output, still streamed to the live log. The Pod
 # and its log are deleted at settlement, so a round that exits non-zero before
 # its final message otherwise leaves nothing to diagnose (#2956).
@@ -214,8 +215,8 @@ report_early_failure() {
     if [ -z "$EARLY_FAILURE_MESSAGE" ]; then
       EARLY_FAILURE_MESSAGE="Runner setup or finalization failed (exit $early_exit_code). Inspect the retained runner diagnostics."
     fi
-    jq -cn --arg message "$EARLY_FAILURE_MESSAGE" \
-      '{outcome:"runner-failed",outcomeReference:null} + (if $message == "" then {} else {message:$message} end)' \
+    jq -cn --arg outcome "$EARLY_FAILURE_OUTCOME" --arg message "$EARLY_FAILURE_MESSAGE" \
+      '{outcome:$outcome,outcomeReference:null} + (if $message == "" then {} else {message:$message} end)' \
       > "$early_payload" 2>/dev/null
     curl -sf --config - >/dev/null 2>&1 <<CURLCFG || true
 url = "$RUNS_API/complete"
@@ -1970,20 +1971,74 @@ jq -cn --arg outcome "$OUTCOME" --argjson ref "$OUTCOME_REFERENCE" \
   '{outcome: $outcome, outcomeReference: $ref}
    + (if $message == "" then {} else {message: $message} end)' > "$payload_file"
 
-curl -sf --config - <<CURLCFG
+# Preserve the same payload for one retry on explicit throttling or
+# unavailability. Capture the acknowledgement privately and emit only known
+# states and numeric status in diagnostics.
+for completion_attempt in 1 2; do
+  completion_exit=0
+  completion_response="$(curl -sf --max-filesize 65536 --config - 2>/dev/null <<CURLCFG
 url = "$RUNS_API/complete"
 request = "POST"
 header = "$AUTH_HEADER"
 header = "content-type: application/json"
 $CURL_TIMEOUT_CONFIG
+write-out = "\n%{http_code}"
 data-binary = "@$payload_file"
 CURLCFG
-# The real report succeeded (the curl call above would have aborted the
-# script under `set -e` otherwise) -- report_early_failure's trap must not
-# report a second, stale "no-deliverable" over this one now that the real
-# outcome is recorded, including for the intentional non-zero exit just
-# below.
-COMPLETED=1
+)" || completion_exit=$?
+  completion_status="${completion_response##*$'\n'}"
+  case "$completion_status" in
+    429 | 503)
+      if [ "$completion_attempt" -eq 1 ]; then
+        sleep 1
+        continue
+      fi
+      ;;
+  esac
+  break
+done
+
+EARLY_FAILURE_OUTCOME=completion-callback-failed
+case "$completion_status" in
+  200)
+    if [ "$completion_exit" -eq 0 ]; then
+      completion_state="$(jq -ers --arg id "$LCARS_RUN_ID" \
+        'select(length == 1) | .[0] | select(.runId == $id) | .state' \
+        <<<"${completion_response%$'\n'*}" 2>/dev/null)" || completion_state=''
+      case "$completion_state" in
+        finished | completion-pending) COMPLETED=1 ;;
+        ready-delivery-refused | ready-delivery-refusal-pending)
+          COMPLETED=1
+          echo 'Completion recorded a ready delivery refusal.' >&2
+          exit 1
+          ;;
+        stale-lease | run-not-live)
+          COMPLETED=1
+          echo "Completion claim refused ($completion_state)." >&2
+          exit 1
+          ;;
+      esac
+    fi
+    EARLY_FAILURE_MESSAGE='Completion returned an unrecognized acknowledgement.'
+    ;;
+  401 | 403)
+    COMPLETED=1
+    EARLY_FAILURE_MESSAGE="Completion claim refused (HTTP $completion_status)."
+    ;;
+  429 | 5[0-9][0-9])
+    EARLY_FAILURE_MESSAGE="Completion temporarily unavailable (HTTP $completion_status)."
+    ;;
+  [1-5][0-9][0-9])
+    EARLY_FAILURE_MESSAGE="Completion rejected (HTTP $completion_status)."
+    ;;
+  *)
+    EARLY_FAILURE_MESSAGE="Completion transport failed (curl exit $completion_exit)."
+    ;;
+esac
+if [ "$COMPLETED" -ne 1 ] || [ "$completion_status" != 200 ]; then
+  echo "$EARLY_FAILURE_MESSAGE" >&2
+  exit "$(( completion_exit == 0 ? 1 : completion_exit ))"
+fi
 
 # Exit code reflects completion success, not one particular artifact class.
 # Reply comments and reviews are valid mode-specific deliverables, as are

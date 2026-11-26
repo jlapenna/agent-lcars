@@ -359,7 +359,20 @@ JSON
       echo "URL=$url"
       [ -n "$data_binary_file" ] && cat "$data_binary_file"
     } >> "$COMPLETE_LOG"
-    echo '{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","state":"finished"}'
+    case "$FIXTURE_SCENARIO" in
+      completion-delivery-refused)
+        printf '{"runId":"%s","state":"ready-delivery-refused","private":"fixture-private-response"}\n200' "$LCARS_RUN_ID"
+        ;;
+      completion-evidence-unavailable)
+        if grep -q '^write-out = ' <<<"$config_body"; then
+          printf '\n503'
+          exit 22
+        fi
+        ;;
+      *)
+        printf '{"runId":"%s","state":"finished"}\n200' "$LCARS_RUN_ID"
+        ;;
+    esac
     ;;
   *)
     echo "fake curl: unhandled URL $url" >&2
@@ -1246,6 +1259,28 @@ PY
   if grep -q 'fixture-secret-invalid-duration' "$retained"; then fail 'retained receipt exposed invalid workload input'; fi
   echo "scenario $provider-workload-failed: OK"
 done
+
+# The same exact published PR can be rejected by Console finalization.
+# A durable refusal acknowledgement terminates without the generic EXIT
+# callback, and a transient response gets a bounded diagnostic fallback.
+run_scenario completion-delivery-refused
+[ "$rc" -eq 1 ] || fail "delivery refusal: expected exit 1, got $rc"
+[ "$(grep -c '^URL=' "$COMPLETE_LOG")" -eq 1 ] || fail 'delivery refusal posted a second completion'
+jq -e '.outcome == "pull-request"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail 'delivery refusal did not exercise the published PR path'
+if grep -q 'fixture-private-response' "$scenario_log"; then
+  fail 'delivery refusal exposed the response body'
+fi
+
+run_scenario completion-evidence-unavailable
+[ "$rc" -eq 22 ] || fail "completion unavailable: expected exit 22, got $rc"
+[ "$(grep -c '^URL=' "$COMPLETE_LOG")" -eq 3 ] || fail 'completion unavailable missed its retry or diagnostic failure callback'
+[ "$(grep -c '"outcome":"pull-request"' "$COMPLETE_LOG")" -eq 2 ] ||
+  fail 'completion unavailable did not retry the original outcome'
+jq -e '.outcome == "completion-callback-failed"
+  and .message == "Completion temporarily unavailable (HTTP 503)."
+  and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail 'completion unavailable lost its bounded diagnosis'
 
 # --- Scenario 1: happy path (pull-request outcome) --------------------------
 # `TARGET_REPO` in the fake brief is `octo/example`, not `jlapenna/agent-

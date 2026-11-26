@@ -65,7 +65,9 @@ import { jobSecrets } from './job-secrets-runtime';
 import { linearConfig, linearIssueInRepository } from './linear-config';
 import type { DrainOutboxResult } from './orchestrator-dispatch';
 import {
+  DeliveryReadUnavailable,
   readyDeliveryBinding,
+  ReadyDeliveryRefusal,
   UnqualifiedDeliveryError,
 } from './ready-delivery';
 import {
@@ -1371,6 +1373,7 @@ export const runsRouter = os.router({
           'A delivery correction must publish its freshly marked PR or explicitly park',
       });
     let delivery: DeliveryBinding | undefined;
+    let deliveryRefused = false;
     const reference = result.ref?.match(/\/pull\/(\d+)$/u);
     const samePullRequestAnchor =
       reference !== undefined &&
@@ -1403,36 +1406,46 @@ export const runsRouter = os.router({
           },
         );
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        // Fail closed by default. One relaxation, for an initial
-        // pull-request result whose own exact attempt-marked PR on a
-        // protected target the authoritative read proved: a ready, open PR
-        // with no auto-merge arm yet (a repository's arming workflow can land
-        // after the executor exits). It settles as an ordinary
-        // pull-request result without durable delivery ownership instead of
-        // discarding the deliverable as runner-failed. Read failures,
-        // malformed or missing evidence, corrections and merged-deliverable
-        // claims all stay refused.
-        if (
-          !(error instanceof UnqualifiedDeliveryError) ||
-          deliveryCorrection ||
-          result.summary !== 'pull-request'
+        if (error instanceof ReadyDeliveryRefusal) {
+          // Settle through the same authenticated report transaction. The
+          // rejected artifact never establishes delivery ownership, and only
+          // this attempt's verified PR is retained for diagnosis.
+          const ref = result.ref;
+          result = {
+            ok: false,
+            summary: 'ready-delivery-refused',
+            message: error.reason,
+            ...(error.reason === 'invalid-pr-claim' || ref === undefined
+              ? {}
+              : { ref }),
+          };
+          deliveryRefused = true;
+        } else if (error instanceof DeliveryReadUnavailable) {
+          throw new ORPCError('SERVICE_UNAVAILABLE', {
+            message: 'Delivery evidence temporarily unavailable',
+          });
+        } else if (
+          error instanceof UnqualifiedDeliveryError &&
+          !deliveryCorrection &&
+          result.summary === 'pull-request'
         ) {
+          // The exact ready PR can settle without ownership while its
+          // repository's arming workflow catches up.
           logger.warn(
-            'agent-lcars: ready delivery handoff refused for %s: %s',
+            'agent-lcars: ready delivery handoff not established for %s; settling the PR without delivery ownership: %s',
             run.runId,
-            reason,
+            error.message,
+          );
+        } else {
+          logger.warn(
+            'agent-lcars: ready delivery handoff refused for %s: evidence unavailable or unqualified',
+            run.runId,
           );
           throw new ORPCError('CONFLICT', {
             message:
               'Ready delivery handoff refused; exact review and protected delivery evidence required',
           });
         }
-        logger.warn(
-          'agent-lcars: ready delivery handoff not established for %s; settling the PR without delivery ownership: %s',
-          run.runId,
-          reason,
-        );
       }
     }
     // The whole message goes out of line when it overflows the inline
@@ -1461,7 +1474,12 @@ export const runsRouter = os.router({
       !isRefusal(settled) &&
       settled.run?.credentialPendingResult !== undefined
     ) {
-      return { runId: run.runId, state: 'completion-pending' };
+      return {
+        runId: run.runId,
+        state: deliveryRefused
+          ? 'ready-delivery-refusal-pending'
+          : 'completion-pending',
+      };
     }
     // #1799: this is the route that CREATES the `report-outcome` outbox
     // entry (`orchestrator.report`'s `settle`), but it used to be the
@@ -1517,7 +1535,11 @@ export const runsRouter = os.router({
     }
     return {
       runId: run.runId,
-      state: isRefusal(settled) ? settled.reason : 'finished',
+      state: isRefusal(settled)
+        ? settled.reason
+        : deliveryRefused
+          ? 'ready-delivery-refused'
+          : 'finished',
     };
   }),
 
