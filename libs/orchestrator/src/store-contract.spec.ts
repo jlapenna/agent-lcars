@@ -157,7 +157,9 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
       expect(
         await store.migrateRunIssueSnapshots({ ...legacyPage, apply: false }),
       ).toMatchObject({ scanned: 1, candidates: 1, migrated: 0 });
-      expect((await store.readRun(legacyId))?.issue).toEqual(issue);
+      expect(
+        (await stored.doc(encodeURIComponent(legacyId)).get()).get('issue'),
+      ).toEqual(issue);
 
       expect(
         await store.migrateRunIssueSnapshots({ ...legacyPage, apply: true }),

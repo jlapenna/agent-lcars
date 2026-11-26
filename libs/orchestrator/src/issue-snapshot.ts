@@ -39,7 +39,7 @@ export async function readRunIssue(
   store: Pick<IssueSnapshotReader, 'readIssueSnapshot'>,
   run: Run,
 ): Promise<TrackerIssue | undefined> {
-  if (run.issueSnapshot === undefined) return run.issue;
+  if (run.issueSnapshot === undefined) return undefined;
   const issue = await store.readIssueSnapshot(run.issueSnapshot.id);
   if (issue === undefined) {
     throw new Error(`Missing issue snapshot for run ${run.runId}`);
@@ -57,13 +57,12 @@ export async function readRunIssues(
   const snapshots = await store.readIssueSnapshots([...ids]);
   const issues = new Map<string, TrackerIssue>();
   for (const run of runs) {
-    const issue = run.issueSnapshot
-      ? snapshots.get(run.issueSnapshot.id)
-      : run.issue;
-    if (issue) issues.set(run.runId, issue);
-    else if (run.issueSnapshot) {
+    if (run.issueSnapshot === undefined) continue;
+    const issue = snapshots.get(run.issueSnapshot.id);
+    if (issue === undefined) {
       throw new Error(`Missing issue snapshot for run ${run.runId}`);
     }
+    issues.set(run.runId, issue);
   }
   return issues;
 }

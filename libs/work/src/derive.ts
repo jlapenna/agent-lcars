@@ -127,7 +127,7 @@ export function workTitle(work: Pick<WorkSummary, 'spec' | 'issue'>): string {
  *  stay key-for-key identical. The `reply*` human-turn fields are the item
  *  view's alone (`toItemView`). */
 function toItemRunView(r: Run): ItemRunView {
-  const issue = r.issueSnapshot ?? r.issue;
+  const issue = r.issueSnapshot;
   return {
     ...(issue === undefined ? {} : { issue: trackerIssueDisplay(issue) }),
     runId: r.runId,

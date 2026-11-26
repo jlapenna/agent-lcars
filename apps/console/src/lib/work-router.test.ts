@@ -3035,30 +3035,14 @@ describe('GET /anchors/github/owner', () => {
     return decidedRun(outcome).runId;
   }
 
-  it.each(['referenced', 'legacy'] as const)(
-    'returns the full %s run issue to a read-only caller',
-    async (storage) => {
-      const ctx = context({ principal: readerOnly });
-      const runId = await admit(ctx, admittedIssue);
-      if (storage === 'legacy') {
-        const task = (await ctx.runtime.store.readTask(anchor))!;
-        const { issueSnapshot: _reference, ...run } =
-          (await ctx.runtime.store.readRun(runId))!;
-        await ctx.runtime.store.apply({
-          expectedRevision: task.revision,
-          decision: {
-            task: task.task,
-            run: { ...run, issue: admittedIssue },
-            outbox: [],
-          },
-        });
-      }
+  it('returns the full referenced run issue to a read-only caller', async () => {
+    const ctx = context({ principal: readerOnly });
+    await admit(ctx, admittedIssue);
 
-      const owner = await call(ctx, 'GET', path);
-      expect(owner.status).toBe(200);
-      expect(owner.json.task.run.issue).toEqual(admittedIssue);
-    },
-  );
+    const owner = await call(ctx, 'GET', path);
+    expect(owner.status).toBe(200);
+    expect(owner.json.task.run.issue).toEqual(admittedIssue);
+  });
 
   it('requires work.operator; reaper, executor, cron and anonymous are refused', async () => {
     for (const principal of [undefined, executorOnly, cronTick, reaperOnly]) {

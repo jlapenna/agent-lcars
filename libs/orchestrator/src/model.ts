@@ -610,8 +610,6 @@ export const runSchema = z.strictObject({
    *  and context text before it reaches here. */
   params: runParamsSchema.optional(),
   issueSnapshot: runIssueSnapshotSchema.optional(),
-  /** Legacy embedded snapshot, read until backfill is complete. */
-  issue: trackerIssueSchema.optional(),
   sourceRevision: workRevisionSchema.optional(),
   revisionAttempt: z.number().int().positive().optional(),
   /** Queue order when it differs from createdAt: a capacity-wait requeue
