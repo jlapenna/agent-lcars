@@ -12,13 +12,19 @@ import {
 import { App, getApps, initializeApp } from 'firebase-admin/app';
 import {
   FieldValue as AdminFieldValue,
+  FieldPath as AdminFieldPath,
   Firestore as AdminFirestore,
   getFirestore as getAdminFirestore,
   Timestamp as AdminTimestamp,
 } from 'firebase-admin/firestore';
 
 import { parseSessionDoc, SESSION_WRITTEN_AT_FIELD } from '../lib/session-doc';
-import { sessionSpendForWrite } from '../lib/session-spend';
+import {
+  sessionSpendForWrite,
+  sessionSpendFromStored,
+  storedTokenUsage,
+  type StoredSessionSpendInputs,
+} from '../lib/session-spend';
 import {
   SessionDoc,
   SessionRepository,
@@ -183,6 +189,202 @@ function isNotFound(error: unknown): boolean {
     error !== null &&
     (error as { code?: unknown }).code === 5
   );
+}
+
+/** Largest page one spend-backfill call reads. Well under Firestore's 500
+ * documents-per-batch bound, and each stale doc is written in its own
+ * transaction, so a smaller page also bounds the work between progress lines. */
+const MAX_SPEND_BACKFILL_PAGE_SIZE = 200;
+
+/** The fields a spend-backfill page reads: the four pricing inputs
+ * `spend` is derived from, the stored `spend` it is compared against, and the
+ * activity time that decides whether the doc is in the window. */
+const SPEND_BACKFILL_FIELDS = [
+  'lastActivityAt',
+  'tokens',
+  'model',
+  'resolvedModel',
+  'totalCostUsd',
+  'spend',
+];
+
+export interface BackfillSessionSpendOptions {
+  /** Write what the pass derives. Without it the pass only reports coverage,
+   * which is the read an operator uses to decide the totals cutover is safe. */
+  apply: boolean;
+  /** The `nextCursor` of a previous page; the resumable position. */
+  cursor?: string;
+  /** ISO timestamp. Sessions last active before it are counted as
+   * `outsideWindow` and left untouched: no page reads them, so materializing
+   * their spend buys nothing. Defaults to no window (the whole collection). */
+  activeSince?: string;
+  /** Docs per page, clamped to [1, {@link MAX_SPEND_BACKFILL_PAGE_SIZE}]. */
+  pageSize?: number;
+}
+
+export interface BackfillSessionSpendPage {
+  /** Docs this page read. */
+  scanned: number;
+  /** Docs whose stored `spend` is missing or disagrees with their pricing inputs. */
+  stale: number;
+  /** Docs this page actually wrote (`apply` only, and only if still stale in
+   * the write transaction). */
+  written: number;
+  /** In-window docs whose stored fields cannot yield a spend — no complete
+   * `tokens` map. Left untouched; a nonzero count means a writer is not
+   * recording usage, not a backfill to retry. */
+  unusable: number;
+  scannedOutsideWindow: number;
+  /** Pass back as `cursor` to resume; absent once a page came back short. */
+  nextCursor?: string;
+}
+
+/**
+ * Brings stored session docs up to the materialized-`spend` contract that
+ * #3641's writers now maintain, walking the `sessions` collection in document
+ * id order and re-deriving each doc's `spend` from its own pricing inputs
+ * through {@link sessionSpendFromStored} — the same derivation the writers use,
+ * so a backfilled doc and a written one cannot disagree.
+ *
+ * It is resumable (`cursor` is a document id, `nextCursor` is the next
+ * position), idempotent (a doc whose stored `spend` already matches is not
+ * written, so a second pass costs reads only), and dry-run by default.
+ * Ordering by document id is what keeps it index-free: a `lastActivityAt` range
+ * plus that ordering would need a new composite index, so the window is applied
+ * per doc instead of in the query.
+ *
+ * Each write re-reads the doc in its own transaction and re-derives, because a
+ * live writer may have advanced the session between this page's read and its
+ * write; overwriting that with the older value would silently under-report a
+ * running session. The transaction's read is also what makes a concurrent write
+ * abort this one rather than race it.
+ *
+ * Run it again after a writer rollout reaches every runner image: a session
+ * still being updated by an older writer is stale again the moment it is
+ * written, which is why the operator's acceptance is a dry run reporting
+ * `stale: 0`, not one pass of `--apply`.
+ */
+export async function backfillSessionSpend(
+  options: BackfillSessionSpendOptions,
+): Promise<BackfillSessionSpendPage> {
+  const firestore = getAgentTelemetryWriterFirestore();
+  const pageSize = Math.min(
+    Math.max(1, options.pageSize ?? MAX_SPEND_BACKFILL_PAGE_SIZE),
+    MAX_SPEND_BACKFILL_PAGE_SIZE,
+  );
+  const query = firestore
+    .collection(SESSIONS_COLLECTION)
+    .orderBy(AdminFieldPath.documentId())
+    .select(...SPEND_BACKFILL_FIELDS);
+  const page = await (
+    options.cursor === undefined ? query : query.startAfter(options.cursor)
+  )
+    .limit(pageSize)
+    .get();
+
+  let stale = 0;
+  let written = 0;
+  let unusable = 0;
+  let scannedOutsideWindow = 0;
+  for (const doc of page.docs) {
+    const stored = doc.data();
+    if (isOutsideWindow(stored, options.activeSince)) {
+      scannedOutsideWindow += 1;
+      continue;
+    }
+    const derived = sessionSpendFromStored(spendInputsFromStored(stored));
+    if (derived === undefined) {
+      unusable += 1;
+      continue;
+    }
+    if (sameSpend(stored['spend'], derived)) {
+      continue;
+    }
+    stale += 1;
+    if (!options.apply) {
+      continue;
+    }
+    const ref = doc.ref;
+    const changed = await firestore.runTransaction(async (transaction) => {
+      const currentData = (await transaction.get(ref)).data();
+      if (currentData === undefined) {
+        // TTL-deleted or removed since the page read: nothing to bring up.
+        return false;
+      }
+      const currentDerived = sessionSpendFromStored(
+        spendInputsFromStored(currentData),
+      );
+      if (
+        currentDerived === undefined ||
+        sameSpend(currentData['spend'], currentDerived)
+      ) {
+        return false;
+      }
+      transaction.update(ref, {
+        spend: currentDerived,
+        [SESSION_WRITTEN_AT_FIELD]: AdminFieldValue.serverTimestamp(),
+      });
+      return true;
+    });
+    if (changed) {
+      written += 1;
+    }
+  }
+
+  const nextCursor = page.size === pageSize ? page.docs.at(-1)?.id : undefined;
+  return {
+    scanned: page.size,
+    stale,
+    written,
+    unusable,
+    scannedOutsideWindow,
+    ...(nextCursor === undefined ? {} : { nextCursor }),
+  };
+}
+
+function isOutsideWindow(
+  stored: Record<string, unknown> | undefined,
+  activeSince: string | undefined,
+): boolean {
+  if (activeSince === undefined) {
+    return false;
+  }
+  // `lastActivityAt` is stored as an ISO 8601 UTC string (see listSessionDocs),
+  // so the lexicographic comparison is the time comparison.
+  const lastActivityAt = stored?.['lastActivityAt'];
+  return typeof lastActivityAt !== 'string' || lastActivityAt < activeSince;
+}
+
+function spendInputsFromStored(
+  stored: Record<string, unknown> | undefined,
+): StoredSessionSpendInputs {
+  const model = stored?.['model'];
+  const resolvedModel = stored?.['resolvedModel'];
+  const totalCostUsd = stored?.['totalCostUsd'];
+  return {
+    tokens: storedTokenUsage(stored?.['tokens']),
+    model: typeof model === 'string' ? model : undefined,
+    resolvedModel:
+      typeof resolvedModel === 'string' ? resolvedModel : undefined,
+    totalCostUsd:
+      typeof totalCostUsd === 'number' && Number.isFinite(totalCostUsd)
+        ? totalCostUsd
+        : undefined,
+  };
+}
+
+/** Whether a stored `spend` already holds the derived value. Anything that is
+ * not the two-number shape a writer produces counts as missing, so a malformed
+ * field is repaired rather than treated as coverage. */
+function sameSpend(
+  stored: unknown,
+  derived: NonNullable<SessionDoc['spend']>,
+): boolean {
+  if (typeof stored !== 'object' || stored === null) {
+    return false;
+  }
+  const { tokens, costUsd } = stored as Record<string, unknown>;
+  return tokens === derived.tokens && costUsd === derived.costUsd;
 }
 
 /** Default retained result size for dashboard and scoped session readers.
