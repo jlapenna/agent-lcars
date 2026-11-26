@@ -595,3 +595,27 @@ review threads), those with a live run or a waiting delivery owner, and
 `stalled` PRs with neither and no PR or run activity for two hours, plus
 `complete=false` when the census could not read everything. Homelab turns
 both into `node_lcars_pr_remediation_*` gauges and alerts.
+
+## Outline shadow receiver
+
+`/api/control-plane/outline/webhook` is a signed shadow receiver for the
+artifact-bridge migration (#3571). It verifies Outline's raw-body HMAC and
+five-minute signing timestamp before parsing. Only event/delivery, actor,
+document and model identifiers and event time reach its bounded
+`lcars-outline-events` structured outcomes; document titles, Markdown,
+comments and supplied links are discarded. Shadow receipts never deliver a
+notice or admit an Outline subscription. The existing bridge remains active.
+
+The receiver stays unavailable until its separate signing secret is provisioned
+and pinned in App Hosting. Terraform owns the secret container and its narrow
+App Hosting grants, never the value. The trusted host keeps the existing
+Outline API credential for the later administrator/creator checks, text hash
+and ended-session fallback. The console has no Outline API credential or
+trusted-network access.
+
+Rollout order is secret container/apply, secret version, runtime reference,
+then a second Outline webhook for shadow evidence. Host authorization and the
+explicit delivery cutover precede enabling subscription admission. Reuse the
+existing host agent; do not expose another LAN listener or copy the bridge's
+registry into console application state. Retirement and the one-day proof
+remain acceptance gates on #3571.
