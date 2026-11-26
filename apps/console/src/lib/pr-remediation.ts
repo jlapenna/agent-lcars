@@ -54,6 +54,7 @@ import {
   isDependencyBotOnlyHead,
   isVerifiedDependencyUpdate,
   parseAttemptClaimRunId,
+  pullRequestHeadReviewRequestId,
   selectCrossModelReviewer,
   selectPullRequestRemediation,
 } from './pr-review-routing';
@@ -83,7 +84,6 @@ const PR_REMEDIATION_REQUEST_PREFIX = 'pr-remediation:';
  * they do not count toward `MAX_AUTO_PR_REMEDIATION_ROUNDS`. A round that
  * fails to change the head is still caught by the no-op and dedupe rules. */
 const CONFLICT_ONLY_REMEDIATION_REASON = 'conflict-only';
-const PR_REREVIEW_REQUEST_PREFIX = 'pr-rereview:';
 
 /** A dependency bot's draft pull request, or its ready one whose checks fail,
  * is qualification work: Renovate opens
@@ -822,7 +822,7 @@ async function resolveAuthorPipeline(
   });
 }
 
-function newestNonReviewRunIsParked(runs: readonly Run[]): boolean {
+function newestNonReviewRun(runs: readonly Run[]): Run | undefined {
   let newest: Run | undefined;
   for (const run of runs) {
     if (run.params?.['mode'] === 'review') continue;
@@ -834,7 +834,16 @@ function newestNonReviewRunIsParked(runs: readonly Run[]): boolean {
       newest = run;
     }
   }
-  return newest?.result?.summary === 'park';
+  return newest;
+}
+
+function isSuccessfulPrRemediation(run: Run | undefined): boolean {
+  return (
+    (run?.params?.['mode'] === 'implement' ||
+      run?.params?.['mode'] === 'reply') &&
+    run.result?.ok === true &&
+    run.result.summary !== 'park'
+  );
 }
 
 /** True when the newest non-review run is an automatic remediation round for
@@ -845,17 +854,7 @@ function newestRemediationRoundWasNoOp(
   runs: readonly Run[],
   headSha: string,
 ): boolean {
-  let newest: Run | undefined;
-  for (const run of runs) {
-    if (run.params?.['mode'] === 'review') continue;
-    if (
-      newest === undefined ||
-      (parseRunGeneration(run.runId) ?? 0) >
-        (parseRunGeneration(newest.runId) ?? 0)
-    ) {
-      newest = run;
-    }
-  }
+  const newest = newestNonReviewRun(runs);
   if (newest?.result?.summary !== 'no-op') return false;
   const round = newest.requestId.startsWith(PR_REMEDIATION_REQUEST_PREFIX)
     ? newest
@@ -962,7 +961,7 @@ async function qualifyDependencyUpdate(
     return { action: 'ignored', reason: 'unverified-dependency-head' };
   }
   const runs = await deps.store.listRuns(anchor);
-  if (newestNonReviewRunIsParked(runs)) {
+  if (newestNonReviewRun(runs)?.result?.summary === 'park') {
     return { action: 'ignored', reason: 'parked' };
   }
   const rounds = new Set(
@@ -1131,7 +1130,10 @@ export async function reconcilePullRequestRemediation(
     throw error;
   }
   // Out-of-scope repositories are not remediation checks.
-  if (result.action !== 'ignored' || result.reason !== 'wrong-repo') {
+  if (
+    result.action !== 'ignored' ||
+    (result.reason !== 'wrong-repo' && result.reason !== 'ordinary-synchronize')
+  ) {
     recordPrRemediationOutcome({
       trigger,
       outcome:
@@ -1153,8 +1155,10 @@ export async function reconcilePullRequestRemediation(
   return result;
 }
 
-interface PrRemediationOptions {
+export interface PrRemediationOptions {
   afterRun?: Run;
+  /** Route a push through the delivery-owned recovery fences, when applicable. */
+  synchronizeHead?: string;
   waitForMergeability?: boolean;
   wakeDelivery?: boolean;
   trigger?: PrRemediationTrigger;
@@ -1178,26 +1182,49 @@ async function reconcilePullRequestRemediationOnce(
     return { action: 'ignored', reason: 'parked' };
   }
 
+  const synchronizeHead = options?.synchronizeHead;
   const activeRun = await deps.store.readActiveRun(anchor);
-  if (activeRun !== undefined && isLive(activeRun.state)) {
+  const taskBusy = activeRun !== undefined && isLive(activeRun.state);
+  if (taskBusy && synchronizeHead === undefined) {
     return { action: 'ignored', reason: 'task-busy' };
   }
 
-  const waitingDeliveries = await deps.store.readWaitingDeliveryTasks({
-    repo: anchor.repo,
-    number: anchor.issue,
-  });
-  if (waitingDeliveries.length > 0) {
-    if (options?.wakeDelivery !== false) {
-      const woken = await wakeDeliveryMonitor(deps, {
-        repo: anchor.repo,
-        number: anchor.issue,
-      });
+  const deliveryBinding = { repo: anchor.repo, number: anchor.issue };
+  const waitingDeliveries =
+    await deps.store.readWaitingDeliveryTasks(deliveryBinding);
+  const deliveryOwned = waitingDeliveries.length > 0;
+  if (!deliveryOwned && synchronizeHead !== undefined) {
+    return { action: 'ignored', reason: 'ordinary-synchronize' };
+  }
+  let deliveryOwnedRuns: Run[] | undefined;
+  if (deliveryOwned) {
+    if (options?.wakeDelivery !== false && synchronizeHead === undefined) {
+      const woken = await wakeDeliveryMonitor(deps, deliveryBinding);
       if (woken.length > 0) {
         await deps.drain(Math.max(10, woken.length * 2));
       }
     }
-    return { action: 'ignored', reason: 'delivery-owned' };
+    // The delivery monitor owns corrections and completion. Only recover a
+    // missing independent review after the PR's own remediation has settled.
+    // Persisted history lets a later sweep retry a missed settlement read.
+    deliveryOwnedRuns = await deps.store.listRuns(anchor);
+    if (taskBusy) {
+      return { action: 'ignored', reason: 'task-busy' };
+    }
+    const successfulRemediation = isSuccessfulPrRemediation(
+      newestNonReviewRun(deliveryOwnedRuns),
+    );
+    // Unsuccessful remediation cannot qualify for recovery and must not
+    // suppress ordinary review admission on a later push.
+    if (synchronizeHead !== undefined && !successfulRemediation) {
+      return { action: 'ignored', reason: 'ordinary-synchronize' };
+    }
+    if (
+      waitingDeliveries.some(({ task }) => task.activeRunId !== undefined) ||
+      !successfulRemediation
+    ) {
+      return { action: 'ignored', reason: 'delivery-owned' };
+    }
   }
 
   let snapshot = await readPullRequestSnapshot(deps, anchor);
@@ -1221,6 +1248,12 @@ async function reconcilePullRequestRemediationOnce(
     }
   }
 
+  if (
+    synchronizeHead !== undefined &&
+    snapshot.headRefOid !== synchronizeHead
+  ) {
+    return { action: 'ignored', reason: 'head-moved' };
+  }
   if (snapshot.state !== 'OPEN' || snapshot.mergedAt !== null) {
     return { action: 'ignored', reason: 'anchor-closed' };
   }
@@ -1234,6 +1267,14 @@ async function reconcilePullRequestRemediationOnce(
   const dependencyBotAuthor = isDependencyBotLogin(
     normalizeGraphqlActorLogin(snapshot.author),
   );
+  if (
+    deliveryOwned &&
+    (dependencyBotAuthor ||
+      (snapshot.reviewDecision !== 'CHANGES_REQUESTED' &&
+        snapshot.reviewDecision !== 'REVIEW_REQUIRED'))
+  ) {
+    return { action: 'ignored', reason: 'delivery-owned' };
+  }
   if (snapshot.isDraft) {
     if (dependencyBotAuthor) {
       return qualifyDependencyUpdate(deps, anchor, snapshot, watchedRepo);
@@ -1327,7 +1368,7 @@ async function reconcilePullRequestRemediationOnce(
 
   const [existingTask, runs] = await Promise.all([
     deps.store.readTask(anchor),
-    deps.store.listRuns(anchor),
+    deliveryOwnedRuns ?? deps.store.listRuns(anchor),
   ]);
   // A dependency bot's PR stays the bot's until the fleet qualified it; after
   // that the fleet's commits are on the branch and the bot no longer rebases.
@@ -1347,7 +1388,7 @@ async function reconcilePullRequestRemediationOnce(
   if (labels.includes('bot:renovate') && !fleetQualified) {
     return { action: 'ignored', reason: 'parked-or-excluded-label' };
   }
-  if (newestNonReviewRunIsParked(runs)) {
+  if (newestNonReviewRun(runs)?.result?.summary === 'park') {
     return { action: 'ignored', reason: 'parked' };
   }
 
@@ -1382,8 +1423,9 @@ async function reconcilePullRequestRemediationOnce(
     // `BLOCKED` is the normal state while checks or approval are pending;
     // only a conflict proves this PR needs a human.
     if (
-      snapshot.mergeable === 'CONFLICTING' ||
-      snapshot.mergeStateStatus === 'DIRTY'
+      !deliveryOwned &&
+      (snapshot.mergeable === 'CONFLICTING' ||
+        snapshot.mergeStateStatus === 'DIRTY')
     ) {
       await applyNeedsHumanLabel(deps, anchor);
     }
@@ -1441,8 +1483,12 @@ async function reconcilePullRequestRemediationOnce(
     hasMergeConflict ||
     unresolvedThreadIds.length > 0 ||
     blockingReviewKeys.length > 0 ||
-    failingChecks.length > 0
+    // The delivery monitor evaluates failures against branch protection.
+    (!deliveryOwned && failingChecks.length > 0)
   ) {
+    if (deliveryOwned) {
+      return { action: 'ignored', reason: 'delivery-owned' };
+    }
     if (newestRemediationRoundWasNoOp(runs, snapshot.headRefOid)) {
       await applyNeedsHumanLabel(deps, anchor);
       return { action: 'ignored', reason: 'remediation-no-op' };
@@ -1525,8 +1571,15 @@ async function reconcilePullRequestRemediationOnce(
     options?.trigger === 'open-sweep' &&
     snapshot.reviewDecision === 'REVIEW_REQUIRED' &&
     hasSuccessfulDependencyQualification(runsForApproval);
+  const unresolvedThreadCount = snapshot.reviewThreads.nodes.filter(
+    (thread) => thread !== null && !thread.isResolved,
+  ).length;
+  if (deliveryOwned && unresolvedThreadCount !== 0) {
+    return { action: 'ignored', reason: 'delivery-owned' };
+  }
   if (
-    (recoveringMissingDependencyReview ||
+    (deliveryOwned ||
+      recoveringMissingDependencyReview ||
       (options?.afterRun?.result?.ok === true &&
         options.afterRun.result.summary !== 'park')) &&
     !hasCurrentHeadLcarsReview &&
@@ -1541,7 +1594,24 @@ async function reconcilePullRequestRemediationOnce(
       requestedPipeline,
       supportedPipelines,
     });
-    const requestId = `${PR_REREVIEW_REQUEST_PREFIX}${anchor.issue}:${snapshot.headRefOid.slice(0, 16)}`;
+    if (deliveryOwned) {
+      // Waking the monitor can itself start a source correction. Check the
+      // current owners, including bindings with no GitHub closing reference.
+      const owners = await deps.store.readWaitingDeliveryTasks(deliveryBinding);
+      if (
+        owners.length === 0 ||
+        owners.some(
+          ({ task }) =>
+            task.activeRunId !== undefined || task.closedAt !== undefined,
+        )
+      ) {
+        return { action: 'ignored', reason: 'delivery-owned' };
+      }
+    }
+    const requestId = pullRequestHeadReviewRequestId(
+      anchor.issue,
+      snapshot.headRefOid,
+    );
     const outcome = await admitGithubWork(deps, {
       anchor,
       requestId,
@@ -1560,9 +1630,6 @@ async function reconcilePullRequestRemediationOnce(
   // Every enrolled ruleset requires conversation resolution, so a thread
   // remediation must not act on (an untrusted author's) still blocks the
   // merge. Hand it to a human instead of leaving the PR blocked unseen.
-  const unresolvedThreadCount = snapshot.reviewThreads.nodes.filter(
-    (thread) => thread !== null && !thread.isResolved,
-  ).length;
   if (unresolvedThreadCount > unresolvedThreadIds.length) {
     await applyNeedsHumanLabel(deps, anchor);
     return { action: 'ignored', reason: 'untrusted-threads' };
@@ -1834,12 +1901,20 @@ export async function reconcileOpenPullRequestRemediations(
       try {
         const active = await deps.store.readActiveRun(projection.anchor);
         if (active !== undefined && isLive(active.state)) continue;
-        // The delivery monitor owns these PRs; remediation must not race it.
-        const waitingDeliveries = await deps.store.readWaitingDeliveryTasks({
+        const waiting = await deps.store.readWaitingDeliveryTasks({
           repo: projection.anchor.repo,
           number: projection.anchor.issue,
         });
-        if (waitingDeliveries.length > 0) continue;
+        // Ordinary waiting deliveries should not consume the budget reserved
+        // for remediation and for recovery after a completed PR-anchor run.
+        if (
+          waiting.length > 0 &&
+          (waiting.some(({ task }) => task.activeRunId !== undefined) ||
+            !isSuccessfulPrRemediation(
+              newestNonReviewRun(await deps.store.listRuns(projection.anchor)),
+            ))
+        )
+          continue;
         inspected += 1;
         await reconcilePullRequestRemediation(
           enqueueOnlyDeps,

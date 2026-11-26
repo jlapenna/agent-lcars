@@ -7,6 +7,14 @@ import {
 export const UNIFIED_REVIEW_LABEL = 'review';
 export const UNIFIED_REVIEW_COMMAND = '/review';
 
+/** A push and recovery of its missed review must share the admission key. */
+export function pullRequestHeadReviewRequestId(
+  number: number,
+  head: string,
+): string {
+  return `pr-rereview:${number}:${head.slice(0, 16)}`;
+}
+
 const DEPENDENCY_BOT_LOGINS = new Set([
   'renovate[bot]',
   'app/renovate',

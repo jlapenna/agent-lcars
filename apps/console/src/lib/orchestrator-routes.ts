@@ -29,7 +29,10 @@ import {
   githubAnchorProjectionFromDelivery,
 } from '@/lib/github-anchor-projection';
 import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-refresh';
-import { admitGithubWork } from '@/lib/github-work-admission';
+import {
+  admitGithubWork,
+  type GithubWorkAdmissionOutcome,
+} from '@/lib/github-work-admission';
 import { issueFromGithubProjection } from '@/lib/issue-trackers';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
 import { wakeDeliveryMonitor } from '@/lib/orchestrator-dispatch';
@@ -39,6 +42,10 @@ import {
   type IngestResult,
   interpretDelivery,
 } from '@/lib/orchestrator-ingest';
+import type {
+  PrRemediationOptions,
+  PrRemediationResult,
+} from '@/lib/pr-remediation';
 import { selectCrossModelReviewer } from '@/lib/pr-review-routing';
 import { attemptTaggedReplyResume } from '@/lib/tagged-reply-resume';
 import { workPayloadFromGithub } from '@/lib/work-from-github';
@@ -64,8 +71,8 @@ export interface OrchestratorRouteDeps {
   ) => Promise<void>;
   reconcilePullRequestRemediation?: (
     anchor: GithubAnchor,
-    options?: { afterRun?: Run },
-  ) => Promise<unknown>;
+    options?: PrRemediationOptions,
+  ) => Promise<PrRemediationResult>;
   reconcileMergedPullRequestConflicts?: (input: {
     repo: string;
     baseRef: string;
@@ -456,6 +463,36 @@ export async function handleWebhookDelivery(
       await maybeReconcilePullRequestRemediation(deps, input, false);
       return ignored;
     }
+    if (
+      interpreted.kind === 'request' &&
+      !isWorkAnchor(interpreted.taskId) &&
+      interpreted.reviewContext?.synchronizeHead !== undefined
+    ) {
+      const recovery = await deps.reconcilePullRequestRemediation?.(
+        interpreted.taskId,
+        { synchronizeHead: interpreted.reviewContext.synchronizeHead },
+      );
+      if (recovery?.action === 'rereviewed') {
+        const result = githubWorkAdmissionResponse(recovery.outcome);
+        if (result.status === 200) {
+          await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+        }
+        return result;
+      }
+      if (
+        recovery?.action === 'ignored' &&
+        recovery.reason !== 'ordinary-synchronize'
+      ) {
+        await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+        return {
+          status: 200,
+          body:
+            recovery.reason === 'task-busy'
+              ? { refused: recovery.reason }
+              : { ignored: recovery.reason },
+        };
+      }
+    }
     const result = await decideDelivery(deps, input, interpreted);
     // Every acknowledged outcome refreshes the anchor's projection exactly
     // once, after the durable decision; a rejected admission (500) is retried
@@ -700,6 +737,12 @@ async function decideDelivery(
       : { requestBinding: resolvedDecision.requestBinding }),
   });
 
+  return githubWorkAdmissionResponse(outcome);
+}
+
+function githubWorkAdmissionResponse(
+  outcome: GithubWorkAdmissionOutcome,
+): RouteResult {
   switch (outcome.kind) {
     case 'busy':
       return { status: 200, body: { refused: 'task-busy' } };
