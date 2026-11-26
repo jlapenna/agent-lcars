@@ -678,31 +678,6 @@ async function dispatchPostedReply(
   }
 }
 
-export async function approveAndMergePr(
-  repo: WatchedRepo,
-  prNumber: number,
-): Promise<void> {
-  const octokit = getGithubClient();
-
-  await octokit.rest.pulls.createReview({
-    owner: repo.owner,
-    repo: repo.name,
-    pull_number: prNumber,
-    event: 'APPROVE',
-  });
-
-  await octokit.rest.pulls.merge({
-    owner: repo.owner,
-    repo: repo.name,
-    pull_number: prNumber,
-    merge_method: 'squash',
-  });
-  // No run transition is required by a merge. The durable maintenance tick
-  // owns expired leases and pending outbox deliveries, independently of this
-  // request's lifetime. Never await a whole-fleet sweep to acknowledge it.
-  await refreshGithubMutation(repo, prNumber);
-}
-
 // Resolves the `behind` mergeable_state ("Base branch has moved" in
 // action-item-card.tsx's MERGEABLE_WARNINGS) the same way GitHub's own
 // "Update branch" button does: merges the base branch into the PR branch,
@@ -725,64 +700,214 @@ export async function updatePrBranch(
 // schema exposes enablePullRequestAutoMerge, and it's keyed by the PR's
 // GraphQL node ID rather than its REST pull number.
 const ENABLE_AUTO_MERGE_MUTATION = `
-  mutation EnableAutoMerge($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+  mutation EnableAutoMerge($pullRequestId: ID!, $head: GitObjectID!) {
     enablePullRequestAutoMerge(
-      input: { pullRequestId: $pullRequestId, mergeMethod: $mergeMethod }
+      input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH, expectedHeadOid: $head }
     ) {
       clientMutationId
     }
   }
 `;
 
-// The "Approve & Rebase" counterpart to approveAndMergePr, used instead of
-// it once the PR's branch has fallen behind its base (mergeableState
-// 'behind' - see derivePrimaryAction): approves, then brings the branch up
-// to date and turns on auto-merge so the PR lands on its own once checks
-// pass, rather than merging immediately against a stale base. GitHub's
-// update-branch endpoint actually merges the base into head (a merge
-// commit), not a literal git rebase - but it's the same maintainer intent
-// this button's name promises: catch the PR up, then let it land.
+export async function approveAndMergePr(
+  repo: WatchedRepo,
+  prNumber: number,
+  head: string | undefined,
+  actor: CommentActor,
+): Promise<string | undefined> {
+  return approvePullRequest(repo, prNumber, head, actor, 'merge');
+}
+
 export async function approveAndRebasePr(
   repo: WatchedRepo,
   prNumber: number,
-): Promise<void> {
+  head: string | undefined,
+  actor: CommentActor,
+): Promise<string | undefined> {
+  return approvePullRequest(repo, prNumber, head, actor, 'update');
+}
+
+async function approvePullRequest(
+  repo: WatchedRepo,
+  prNumber: number,
+  head: string | undefined,
+  actor: CommentActor,
+  operation: 'merge' | 'update',
+): Promise<string | undefined> {
+  if (!head || !/^[a-f0-9]{40}$/i.test(head)) {
+    await refreshGithubMutation(repo, prNumber).catch(() => undefined);
+    throw new ActionError(
+      'The Inbox did not have a current revision to confirm. Reopen the confirmation or review the pull request on GitHub.',
+      409,
+    );
+  }
   const octokit = getGithubClient();
+  const params = { owner: repo.owner, repo: repo.name, pull_number: prNumber };
+  const read = async () => (await octokit.rest.pulls.get(params)).data;
+  const refresh = async (note: string | undefined, outcome: string) => {
+    try {
+      await refreshGithubMutation(repo, prNumber);
+      return note;
+    } catch {
+      return `${note ?? outcome} The Inbox could not refresh yet.`;
+    }
+  };
+  const merged = () =>
+    refresh('GitHub reports that the pull request is already merged.', '');
+  let approvalRecorded = false;
+  let autoMergeEnabled = false;
+  let phase: 'read' | 'approve' | 'arm' | 'merge' | 'update' = 'read';
 
-  await octokit.rest.pulls.createReview({
-    owner: repo.owner,
-    repo: repo.name,
-    pull_number: prNumber,
-    event: 'APPROVE',
-  });
+  try {
+    const pr = await read();
+    if (pr.merged) return merged();
+    if (pr.head.sha !== head) {
+      await refreshGithubMutation(repo, prNumber).catch(() => undefined);
+      throw new ActionError(
+        'The pull request head changed. Review the new revision and confirm again.',
+        409,
+      );
+    }
+    if (pr.state !== 'open' || pr.draft) {
+      throw new ActionError(
+        'The pull request must be open and ready for review.',
+        409,
+      );
+    }
+    if (pr.user?.login.toLowerCase() === actor.login.toLowerCase()) {
+      throw new ActionError(
+        'GitHub requires someone else to approve a pull request you authored.',
+        422,
+      );
+    }
 
-  await octokit.rest.pulls.updateBranch({
-    owner: repo.owner,
-    repo: repo.name,
-    pull_number: prNumber,
-  });
+    phase = 'approve';
+    await asOperator(actor, (user) =>
+      user.rest.pulls.createReview({
+        ...params,
+        commit_id: head,
+        event: 'APPROVE',
+      }),
+    );
+    approvalRecorded = true;
 
-  const { data: pr } = await octokit.rest.pulls.get({
-    owner: repo.owner,
-    repo: repo.name,
-    pull_number: prNumber,
-  });
+    if (operation === 'merge') {
+      phase = 'merge';
+      const { data } = await octokit.rest.pulls.merge({
+        ...params,
+        sha: head,
+        merge_method: 'squash',
+      });
+      if (!data.merged)
+        throw new ActionError('GitHub declined the squash merge.', 409);
+      return refresh(undefined, 'Pull request merged.');
+    }
 
-  // Squash, matching approveAndMergePr's own merge_method - the two buttons
-  // should produce the same merge shape, differing only in whether the
-  // branch needed catching up first.
-  //
-  // This mutation is keyed entirely by `pr.node_id` (an opaque GraphQL node
-  // id) - unlike every other GitHub call in this file, no owner/repo
-  // parameter or variable names the target repo, so getGithubClient()'s
-  // per-request auth routing (github-app-tokens.ts's
-  // `resolveRequestRepo`) cannot recover it structurally. The REPO_HEADER
-  // header is the documented escape hatch for exactly this case.
-  await octokit.graphql(ENABLE_AUTO_MERGE_MUTATION, {
-    pullRequestId: pr.node_id,
-    mergeMethod: 'SQUASH',
-    headers: { [REPO_HEADER]: repoKey(repo) },
-  });
-  await refreshGithubMutation(repo, prNumber);
+    // Arm on the reviewed head before requesting the asynchronous branch
+    // update. GitHub applies its normal review and check rules to the new head.
+    phase = 'arm';
+    if (pr.auto_merge?.merge_method !== 'squash') {
+      await octokit.graphql(ENABLE_AUTO_MERGE_MUTATION, {
+        pullRequestId: pr.node_id,
+        head,
+        headers: { [REPO_HEADER]: repoKey(repo) },
+      });
+    }
+    autoMergeEnabled = true;
+    phase = 'update';
+    await octokit.rest.pulls.updateBranch({
+      ...params,
+      expected_head_sha: head,
+    });
+    return refresh(
+      undefined,
+      'Approval recorded, squash auto-merge enabled, and branch update requested.',
+    );
+  } catch (error) {
+    if (phase === 'read' && error instanceof ActionError) throw error;
+    const current =
+      phase === 'read' ? undefined : await read().catch(() => undefined);
+    if (current?.merged) return merged();
+    if (error instanceof GithubReauthRequiredError) throw error;
+    // A lost review response can still leave a real, attributable approval.
+    if (phase === 'approve' && current) {
+      const reviews = await octokit
+        .paginate(octokit.rest.pulls.listReviews, {
+          ...params,
+          // Pagination expands the route before the installation auth hook.
+          headers: { [REPO_HEADER]: repoKey(repo) },
+        })
+        .catch(() => []);
+      const latest = reviews.findLast(
+        (review) =>
+          review.user?.login.toLowerCase() === actor.login.toLowerCase() &&
+          ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state),
+      );
+      approvalRecorded =
+        latest?.state === 'APPROVED' && latest.commit_id === head;
+    }
+    if (
+      phase === 'arm' &&
+      current?.head.sha === head &&
+      current.auto_merge?.merge_method === 'squash'
+    ) {
+      // GitHub committed the arm, but this request never reached the update.
+      autoMergeEnabled = true;
+    }
+    const changed = current !== undefined && current.head.sha !== head;
+    const detail = changed
+      ? 'The pull request head changed. Review the new revision and confirm again.'
+      : githubPullRequestFailure(error, actor.githubToken);
+    if (approvalRecorded) {
+      return refresh(
+        `Approval recorded for the selected revision.${autoMergeEnabled ? ' Squash auto-merge was enabled before the update request.' : ''} ${detail}`,
+        '',
+      );
+    }
+    if (changed)
+      await refreshGithubMutation(repo, prNumber).catch(() => undefined);
+    throw new ActionError(
+      detail,
+      error instanceof ActionError ? error.statusCode : 409,
+    );
+  }
+}
+
+/** Use only bounded GitHub response fields, never Octokit's request or headers. */
+function githubPullRequestFailure(error: unknown, token: string): string {
+  if (error instanceof ActionError) return error.message;
+  const failure = error as {
+    response?: { data?: { message?: unknown; errors?: unknown } };
+    errors?: unknown;
+  } | null;
+  const data = failure?.response?.data;
+  const errors = data?.errors ?? failure?.errors;
+  const clean = (value: unknown) =>
+    typeof value === 'string'
+      ? (token ? value.replaceAll(token, '[redacted]') : value)
+          .replace(/\b(?:github_pat_|gh[pousr]_)[a-z0-9_]+/gi, '[redacted]')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 180)
+      : '';
+  const reasons = (Array.isArray(errors) ? errors.slice(0, 3) : []).map(
+    (entry: unknown) => {
+      if (typeof entry === 'string') return clean(entry);
+      if (!entry || typeof entry !== 'object') return '';
+      const { message, field, code } = entry as Record<string, unknown>;
+      return (
+        clean(message) || [clean(field), clean(code)].filter(Boolean).join(' ')
+      );
+    },
+  );
+  const message = [clean(data?.message), ...reasons]
+    .filter(Boolean)
+    .join(' ')
+    .slice(0, 450);
+  return (
+    message ||
+    'GitHub could not confirm the pull request action. Check the pull request before retrying.'
+  );
 }
 
 // The console's "Done" affordance for a loop that's simply finished (stale

@@ -33,6 +33,7 @@ import {
   jobCredentialObservationSchema,
   jobSecretDeliverySchema,
 } from './job-secrets';
+import { outlineSourceReportSchema } from './outline-events';
 import { repositoryAgentObservationSchema } from './repository-agents';
 import {
   clawWorkSpecSchema,
@@ -96,6 +97,7 @@ export const outcomeReferenceSchema = z.discriminatedUnion('kind', [
 
 const runResultSchema = z.strictObject({
   ok: z.boolean(),
+  dependencyWorkId: workIdSchema.optional(),
   summary: z.string().max(4_096).optional(),
   ref: z.string().max(1_024).optional(),
   /** Additional exact deliverable, e.g. the blocker comment beside a partial PR. */
@@ -1252,6 +1254,20 @@ const runBriefSharedSchema = {
   attemptId: z.string(),
   generation: z.number().int().positive(),
   intentId: z.string(),
+  /** This Console accepts an authenticated investigator dependency wait. */
+  agentDependencyWait: z.literal(true).optional(),
+  /** Terminal evidence for this successor's exact admitted dependency. */
+  agentDependency: z
+    .strictObject({
+      workId: workIdSchema,
+      state: z.enum(['done', 'failed', 'canceled', 'parked', 'unavailable']),
+      runId: runIdSchema.optional(),
+      ok: z.boolean().optional(),
+      summary: z.string().optional(),
+      report: z.string().optional(),
+      reportAvailability: z.enum(['complete', 'partial', 'unavailable']),
+    })
+    .optional(),
   // Present iff the run's params carried a resume request. The same shape the
   // old hosted `work` input carried, so one provider adapter can consume it.
   resume: z
@@ -1402,6 +1418,55 @@ const withRunToken = (current: OpenAPIV3_2.OperationObject) => ({
 });
 
 const runBase = oc.meta(openapi({ tags: ['runs'] }));
+
+const runCheckout = runBase
+  .errors({
+    UNAUTHORIZED: { message: 'Invalid or expired run token' },
+    CONFLICT: { message: 'Worker generation or credential refused' },
+    FORBIDDEN: { message: 'Recipe occurrence or execution profile refused' },
+  })
+  .input(z.strictObject({ runId: runIdSchema }))
+  .output(
+    z.strictObject({
+      // The anchor repo's own credential -- unchanged meaning, present
+      // and unchanged whether or not `grants` is. When `grants` is
+      // present, `token`/`expiresAt` are simply that grant's own owner's
+      // token (see `runs-router.ts`'s `checkoutToken` handler).
+      token: z.string(),
+      expiresAt: z.string().nullable(),
+      repository: z.string(),
+      /** Dedicated App identity; present only for review-mode credentials. */
+      reviewerLogin: z.string().optional(),
+      /** Explicit personal credential selection for a Goose occurrence. */
+      refreshAt: z.string().optional(),
+      identity: z
+        .strictObject({
+          login: z.string().regex(/^[a-zA-Z0-9-]{1,39}$/u),
+          git: z.strictObject({ name: z.string(), email: z.string() }),
+        })
+        .optional(),
+      gitIdentity: z
+        .strictObject({ name: z.string(), email: z.string() })
+        .optional(),
+      /** Present iff the run's `agent-option:cross-repo` was requested
+       *  (`params.crossRepo === 'true'`, #1993): one entry per distinct
+       *  GitHub owner among the fleet's watched repositories, including
+       *  the anchor's own, each token scoped to every watched repo name
+       *  under that owner. A single installation token can never span
+       *  two owners. Absent entirely -- never an empty array -- when the
+       *  option was not requested. */
+      grants: z
+        .array(
+          z.strictObject({
+            owner: z.string(),
+            repositories: z.array(z.string()),
+            token: z.string(),
+            expiresAt: z.string(),
+          }),
+        )
+        .optional(),
+    }),
+  );
 
 export const runsContract = {
   /** A dispatched run invokes a repository-owned agent (`lcars investigate`,
@@ -1618,7 +1683,13 @@ export const runsContract = {
         providerProcessStarted: z.literal(true).optional(),
       }),
     )
-    .output(z.strictObject({ runId: runIdSchema, expiresAt: z.string() })),
+    .output(
+      z.strictObject({
+        runId: runIdSchema,
+        expiresAt: z.string(),
+        reviewerLogin: z.string().optional(),
+      }),
+    ),
   placement: runBase
     .meta(
       openapi({
@@ -1808,75 +1879,25 @@ export const runsContract = {
       }),
     )
     .output(z.strictObject({ runId: runIdSchema, state: z.string() })),
-  checkoutToken: runBase
-    .meta(
-      openapi({
-        method: 'GET',
-        path: '/runs/{runId}/checkout-token',
-        operationId: 'getRunCheckoutToken',
-        summary:
-          "Mint a short-lived GitHub token for a claimed run's target repo",
-        spec: withRunToken,
-      }),
-    )
-    .errors({
-      UNAUTHORIZED: { message: 'Invalid or expired run token' },
-      CONFLICT: { message: 'Worker generation or credential refused' },
-      FORBIDDEN: { message: 'Recipe occurrence or execution profile refused' },
-    })
-    .input(z.strictObject({ runId: runIdSchema }))
-    .output(
-      z.strictObject({
-        // The anchor repo's own credential -- unchanged meaning, present
-        // and unchanged whether or not `grants` is. When `grants` is
-        // present, `token`/`expiresAt` are simply that grant's own owner's
-        // token (see `runs-router.ts`'s `checkoutToken` handler).
-        token: z.string(),
-        expiresAt: z.string().nullable(),
-        repository: z.string(),
-        /** Explicit personal credential selection for a Goose occurrence. */
-        refreshAt: z.string().optional(),
-        identity: z
-          .strictObject({
-            login: z.string().regex(/^[a-zA-Z0-9-]{1,39}$/u),
-            git: z.strictObject({ name: z.string(), email: z.string() }),
-          })
-          .optional(),
-        gitIdentity: z
-          .strictObject({ name: z.string(), email: z.string() })
-          .optional(),
-        /** Present iff the run's `agent-option:cross-repo` was requested
-         *  (`params.crossRepo === 'true'`, #1993): one entry per distinct
-         *  GitHub owner among the fleet's watched repositories, including
-         *  the anchor's own, each token scoped to every watched repo name
-         *  under that owner. A single installation token can never span
-         *  two owners. Absent entirely -- never an empty array -- when the
-         *  option was not requested. */
-        grants: z
-          .array(
-            z.strictObject({
-              owner: z.string(),
-              repositories: z.array(z.string()),
-              token: z.string(),
-              expiresAt: z.string(),
-            }),
-          )
-          .optional(),
-        /** The pull-request author App's token for the anchor repository,
-         *  present when that App is configured. The runner opens pull
-         *  requests with it, so the PR's author is never the
-         *  `agent-lcars[bot]` reviewer, whose approval GitHub would refuse
-         *  as a self-approval (#3522). Every other GitHub call keeps using
-         *  `token`. */
-        pullRequestAuthor: z
-          .strictObject({
-            login: z.string(),
-            token: z.string(),
-            expiresAt: z.string(),
-          })
-          .optional(),
-      }),
-    ),
+  checkoutToken: runCheckout.meta(
+    openapi({
+      method: 'GET',
+      path: '/runs/{runId}/checkout-token',
+      operationId: 'getRunCheckoutToken',
+      summary:
+        "Mint a short-lived GitHub token for a claimed run's target repo",
+      spec: withRunToken,
+    }),
+  ),
+  reviewerCheckoutToken: runCheckout.meta(
+    openapi({
+      method: 'GET',
+      path: '/runs/{runId}/reviewer-checkout-token',
+      operationId: 'getRunReviewerCheckoutToken',
+      summary: 'Mint a GitHub token for a run bound to the reviewer App',
+      spec: withRunToken,
+    }),
+  ),
   codexAuth: runBase
     .meta(
       openapi({
@@ -1985,6 +2006,67 @@ const eventsBase = oc.meta(openapi({ tags: ['events'], spec: withBearer }));
  *   Work, which a matching event resumes; it sees and removes only those.
  */
 export const agentEventsContract = {
+  reportOutline: eventsBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/events/outline',
+        operationId: 'reportOutlineSourceEvent',
+        summary: 'Report pike-authorized Outline identifiers',
+      }),
+    )
+    .errors({
+      FORBIDDEN: {
+        message: 'Only the configured Outline source may report authorization',
+      },
+    })
+    .input(outlineSourceReportSchema)
+    .output(
+      z.strictObject({
+        eventId: z.string(),
+        delivered: z.number().int().nonnegative(),
+      }),
+    ),
+  observeOutline: eventsBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/events/outline/observations',
+        operationId: 'reportOutlineDocumentObservation',
+        summary: 'Record pike-verified document creator metadata',
+      }),
+    )
+    .errors({
+      FORBIDDEN: {
+        message:
+          'Only the configured Outline source may attest document creators',
+      },
+    })
+    .input(
+      z.strictObject({
+        documentId: z.uuid(),
+        agentCreated: z.boolean(),
+        /** One-time migration evidence from pike's actual legacy registry. */
+        previouslySubscribed: z.literal(true).optional(),
+      }),
+    )
+    .output(z.strictObject({ ok: z.literal(true) })),
+  fallbackOutline: eventsBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/events/outline/fallback',
+        operationId: 'reportOutlineDeliveryFailure',
+        summary:
+          'Report an undeliverable Outline notice addressed to this host',
+      }),
+    )
+    .errors({
+      FORBIDDEN: { message: 'No Outline delivery receipt for this host' },
+      SERVICE_UNAVAILABLE: { message: 'Outline fallback is not active' },
+    })
+    .input(z.strictObject({ deliveryId: z.string().min(1).max(400) }))
+    .output(z.strictObject({ ok: z.literal(true) })),
   subscribe: eventsBase
     .meta(
       openapi({
@@ -2013,6 +2095,10 @@ export const agentEventsContract = {
       },
       CONFLICT: {
         message: 'Subscription limit reached for the session or Work',
+      },
+      SERVICE_UNAVAILABLE: {
+        message:
+          'Outline creator verification is pending on its trusted source host',
       },
     })
     .input(

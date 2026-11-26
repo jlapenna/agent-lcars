@@ -31,6 +31,7 @@ import {
   rebasePr,
   updateIssueContent,
 } from './actions';
+import { beginOperatorReauth } from './operator-reauth';
 import { showErrorToast } from './show-error-toast';
 
 /**
@@ -204,18 +205,20 @@ export function useItemOverflowMenu(
     startTransition(async () => {
       const result =
         reviewAction === 'approve-rebase'
-          ? await approveAndRebase(item.repo, item.number)
-          : await mergePr(item.repo, item.number);
+          ? await approveAndRebase(item.repo, item.number, item.headSha)
+          : await mergePr(item.repo, item.number, item.headSha);
       if (!result.ok) {
+        if (result.reauth) beginOperatorReauth();
         showErrorToast(result.message);
         return;
       }
       notifications.show({
         message:
-          reviewAction === 'approve-rebase'
-            ? `#${item.number} approved, branch updated, auto-merge enabled`
-            : `#${item.number} merged`,
-        color: 'green',
+          result.note ??
+          (reviewAction === 'approve-rebase'
+            ? 'Approval recorded, squash auto-merge enabled, and branch update requested.'
+            : `#${item.number} merged`),
+        color: result.note ? 'yellow' : 'green',
       });
     });
   };
@@ -228,14 +231,14 @@ export function useItemOverflowMenu(
         <Text size="sm">
           {rebasing ? (
             <>
-              This approves &ldquo;{item.title}&rdquo;, updates its branch from
-              main, and turns on auto-merge so it squash-merges on its own once
-              checks pass.
+              This submits an approval as your GitHub user, enables squash
+              auto-merge, and requests a branch update for &ldquo;{item.title}
+              &rdquo;.
             </>
           ) : (
             <>
-              This approves and squash-merges &ldquo;{item.title}&rdquo; into
-              main. This can&rsquo;t be undone from here.
+              This submits an approval as your GitHub user and squash-merges
+              &ldquo;{item.title}&rdquo;. This can&rsquo;t be undone from here.
             </>
           )}
         </Text>

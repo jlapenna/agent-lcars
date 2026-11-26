@@ -110,6 +110,25 @@ resource "google_firestore_index" "sessions_source_repo_last_activity" {
   }
 }
 
+# A range on lastActivityAt with a sum on a materialized spend field
+# requires a composite index. Keep both in the sessions writers' database.
+resource "google_firestore_index" "sessions_spend" {
+  for_each    = toset(["spend.tokens", "spend.costUsd"])
+  project     = var.project_id
+  database    = google_firestore_database.default.name
+  collection  = "sessions"
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "lastActivityAt"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = each.value
+    order      = "ASCENDING"
+  }
+}
+
 # Telemetry writers stamp `expireAt` and readers assume Firestore deletes the
 # document after it (libs/telemetry session retention, the runner
 # autoscaler's `runner-status` snapshots), but no TTL policy existed: on
@@ -147,6 +166,24 @@ resource "google_firestore_database" "dispatch_controller" {
   delete_protection_state = "DELETE_PROTECTION_ENABLED"
   deletion_policy         = "ABANDON"
   depends_on              = [google_firebase_project.this]
+}
+
+# The Work list filters the backfilled projection while keeping its work-ID
+# cursor and excluding GitHub anchors (which have no task.task.workId).
+resource "google_firestore_index" "native_tasks_state_work_id" {
+  project     = var.project_id
+  database    = google_firestore_database.dispatch_controller.name
+  collection  = "orchestrator-tasks"
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "derived.state"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "task.task.workId"
+    order      = "DESCENDING"
+  }
 }
 
 resource "google_storage_bucket" "transcripts" {
@@ -497,6 +534,7 @@ resource "google_secret_manager_secret" "runtime" {
     "AGENT_LCARS_PUSH_VAPID",
     "AGENT_LCARS_LINEAR_API_KEY",
     "AGENT_LCARS_LINEAR_WEBHOOK_SECRET",
+    "AGENT_LCARS_OUTLINE_WEBHOOK_SECRET",
   ])
   secret_id = each.value
   replication {
@@ -798,11 +836,10 @@ resource "google_secret_manager_secret_iam_member" "agent_lcars_app_private_key_
   member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
 }
 
-# The pull-request author App's private key (jlapenna/agent-lcars#3522).
-# GitHub refuses an approval from a PR's own author, so dispatched runs open
-# pull requests as `agent-lcars-author[bot]` and the `agent-lcars[bot]`
-# review can approve them. Upload the value out of band like the key above:
-#   gcloud secrets versions add AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY --data-file=<key.pem>
+# Dedicated reviewer App's key. The existing secret ID/resource names are
+# retained from #3594 to preserve its stored key and deployed grants; Console
+# binds this slot as AGENT_LCARS_REVIEWER_APP_PRIVATE_KEY. Authors keep their
+# existing identity, while reviews use agent-lcars-reviewer[bot] (#3522).
 resource "google_secret_manager_secret" "agent_lcars_author_app_private_key" {
   secret_id = "AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY"
   replication {
@@ -840,7 +877,7 @@ resource "google_secret_manager_secret_iam_member" "agent_lcars_app_private_key_
   member    = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-firebaseapphosting.iam.gserviceaccount.com"
 }
 
-# The same build-preparer grants for the pull-request author App's key.
+# The same build-preparer grants for the dedicated reviewer App's key.
 resource "google_secret_manager_secret_iam_member" "agent_lcars_author_app_private_key_viewer" {
   project   = var.project_id
   secret_id = google_secret_manager_secret.agent_lcars_author_app_private_key.secret_id
@@ -870,4 +907,19 @@ resource "google_billing_budget" "monthly" {
     content { threshold_percent = threshold_rules.value }
   }
   depends_on = [google_project_service.services]
+}
+
+# Outline's signed receiver has no Outline API credential. Only this
+# signing-secret container is cloud-owned; the host keeps its existing API key.
+resource "google_secret_manager_secret_iam_member" "outline_viewer" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime["AGENT_LCARS_OUTLINE_WEBHOOK_SECRET"].secret_id
+  role      = "roles/secretmanager.viewer"
+  member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+resource "google_secret_manager_secret_iam_member" "outline_version_manager" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime["AGENT_LCARS_OUTLINE_WEBHOOK_SECRET"].secret_id
+  role      = "roles/secretmanager.secretVersionManager"
+  member    = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-firebaseapphosting.iam.gserviceaccount.com"
 }

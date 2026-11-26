@@ -231,9 +231,11 @@ export function runOrchestratorStoreContract(
       expect((await store.readTask(TASK))?.task.issue).toEqual(edited);
     });
 
-    it('strictly parses legacy embedded issue snapshots and reads them without a reference', async () => {
+    it('supports issue-less runs and rejects embedded issue snapshots', async () => {
       const store = await makeStore();
-      const { run } = await started(new Orchestrator(store, new TestClock(T0)));
+      const clock = new TestClock(T0);
+      const orchestrator = new Orchestrator(store, clock);
+      const { run } = await started(orchestrator);
       const issue = {
         reference: { tracker: 'github', ...TASK },
         identifier: 'octo/example#7',
@@ -245,11 +247,23 @@ export function runOrchestratorStoreContract(
         labels: [],
         assignees: [],
       } satisfies TrackerIssue;
-      const legacy = runSchema.parse({ ...run, issue });
-      expect(await readRunIssue(store, legacy)).toEqual(issue);
-      expect(await readRunIssues(store, [legacy])).toEqual(
-        new Map([[legacy.runId, issue]]),
-      );
+      expect(runSchema.safeParse({ ...run, issue }).success).toBe(false);
+      const stored = await store.readRun(run.runId);
+      assert(stored);
+      expect(stored.issueSnapshot).toBeUndefined();
+      expect(await readRunIssue(store, stored)).toBeUndefined();
+      expect(await readRunIssues(store, [stored])).toEqual(new Map());
+
+      await orchestrator.confirmDispatch(run.runId);
+      await orchestrator.refreshIssue(TASK, issue);
+      expect((await store.readTask(TASK))?.task.issue).toEqual(issue);
+      clock.advanceMinutes(180);
+      const { retried } = await orchestrator.sweepExpired();
+      const retry = retried.find(({ lostRunId }) => lostRunId === run.runId);
+      assert(retry);
+      const successor = await store.readRun(retry.newRunId);
+      assert(successor);
+      expect(successor.issueSnapshot).toBeUndefined();
     });
 
     it('binds a source to one time-ordered Work identity under concurrent admission', async () => {
@@ -3898,6 +3912,34 @@ export function runOrchestratorStoreContract(
 
         expect(native.map((entry) => entry.task.task)).toEqual([{ workId }]);
         expect(native[0]?.revision).toBe(1);
+      });
+
+      it('filters native state before applying the page limit and cursor', async () => {
+        const { store, orchestrator } = await fixture();
+        const older = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3A' };
+        const newer = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3B' };
+        for (const taskId of [older, newer]) {
+          const requested = await orchestrator.request({
+            taskId,
+            requestId: taskId.workId,
+            pipeline: 'claude',
+            work: { origin: { principal: 'user:jlapenna' } },
+          });
+          if (isRefusal(requested)) throw new Error(requested.reason);
+          if (taskId === older) {
+            await orchestrator.report(decidedRun(requested).runId, {
+              ok: true,
+            });
+          }
+        }
+        const github = await started(orchestrator, 'req-github');
+        await orchestrator.report(github.run.runId, { ok: true });
+
+        const first = await store.listNativeTasks(1, undefined, 'done');
+        expect(first.map((entry) => entry.task.task)).toEqual([older]);
+        expect(await store.listNativeTasks(1, older.workId, 'done')).toEqual(
+          [],
+        );
       });
 
       it('orders newest-first and honors a limit', async () => {

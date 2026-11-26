@@ -1,8 +1,10 @@
 import { parseRunGeneration } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
+  agentDependencyEntryId,
   agentEventIdOf,
   deliveryBindingSchema,
+  isRefusal,
   isWorkAnchor,
   type LeasedOutboxEntry,
   MAX_AUTO_RETRIES,
@@ -17,10 +19,11 @@ import {
 import {
   type AgentEvent,
   isSourceManagedWork,
+  storedClawWorkSpec,
   storedWorkPayloadSchema,
   workAgentEvent,
 } from '@agent-lcars/work';
-import { deriveItemState } from '@agent-lcars/work/derive';
+import { deriveItemState, latestRun } from '@agent-lcars/work/derive';
 
 import {
   defaultAgentEventPublisher,
@@ -52,6 +55,7 @@ import {
   queueWorkEventResume,
   type WorkEventResumeDeps,
 } from './work-event-resume';
+import { resumeParamsFor } from './work-resume-session';
 
 /**
  * The outbox drain: turns `@agent-lcars/orchestrator` decisions into real
@@ -263,6 +267,8 @@ export async function drainOutbox(
         await handleMonitorDelivery(deps, entry);
       } else if (entry.kind === 'agent-event') {
         await handleAgentEvent(deps, entry);
+      } else if (entry.kind === 'wait-for-agent') {
+        await handleAgentDependency(deps, entry);
       } else if (entry.kind === 'event-resume') {
         await handleEventResume(deps, entry);
       } else {
@@ -361,6 +367,20 @@ async function handleAgentEvent(
     await settleClaim(deps, entry, 'failed');
     return;
   }
+  if (isClosedItemState(entry.itemState)) {
+    const child = (await deps.store.readTask(entry.task))?.task;
+    const principal = storedWorkPayloadSchema.safeParse(child?.work).data
+      ?.origin.principal;
+    if (
+      storedClawWorkSpec(child?.work) !== undefined &&
+      principal?.startsWith('run:')
+    ) {
+      await deps.store.wakeOutbox({
+        entryId: agentDependencyEntryId(principal.slice(4)),
+        now: now(deps),
+      });
+    }
+  }
   const event = workAgentEvent({
     workId: entry.task.workId,
     eventId: agentEventIdOf(entry),
@@ -369,6 +389,122 @@ async function handleAgentEvent(
     consoleUrl: consoleUrl(),
   });
   await (deps.routeAgentEvent ?? defaultRouteAgentEvent(deps))(event);
+  await settleClaim(deps, entry, 'done');
+}
+
+/** Child terminal transitions wake this entry. The fallback read covers a
+ * child that finished before the parent yielded, or during this entry's lease. */
+async function handleAgentDependency(
+  deps: DispatchDeps,
+  entry: LeasedOutboxEntry,
+): Promise<void> {
+  const parent = await deps.store.readRun(entry.runId);
+  const workId = parent?.result?.dependencyWorkId;
+  const task = (await deps.store.readTask(entry.task))?.task;
+  if (
+    parent === undefined ||
+    workId === undefined ||
+    task === undefined ||
+    task.closedAt !== undefined ||
+    task.runCount !== parseRunGeneration(parent.runId)
+  ) {
+    await settleClaim(deps, entry, 'done');
+    return;
+  }
+
+  const childAnchor = { workId };
+  const child = (await deps.store.readTask(childAnchor))?.task;
+  const owned =
+    storedClawWorkSpec(child?.work) !== undefined &&
+    storedWorkPayloadSchema.safeParse(child?.work).data?.origin.principal ===
+      `run:${parent.runId}`;
+  const childRuns =
+    child !== undefined && owned ? await deps.store.listRuns(childAnchor) : [];
+  const childState =
+    child !== undefined && owned
+      ? deriveItemState(child, childRuns)
+      : 'unavailable';
+
+  const defer = () =>
+    settleClaim(deps, entry, 'pending', {
+      nextAttemptAt: new Date(Date.parse(now(deps)) + 60_000).toISOString(),
+      recovered: true,
+    });
+  if (childState === 'running') {
+    await defer();
+    return;
+  }
+
+  if (!isWorkAnchor(parent.task)) {
+    const open = await isAnchorOpen(deps, anchorTarget(parent));
+    if (open === undefined)
+      throw new Error(
+        'Could not read GitHub anchor for investigator dependency',
+      );
+    if (!open) {
+      await settleClaim(deps, entry, 'done');
+      return;
+    }
+  }
+
+  const childRun = latestRun(childRuns);
+  const sessions = await deps
+    .sessionDocsForRuns?.([parent.runId])
+    .catch((error: unknown) => {
+      logger.warn(
+        'agent-lcars: investigator dependency %s will resume without a session: %s',
+        workId,
+        error,
+      );
+      return undefined;
+    });
+  const params =
+    sessions === undefined
+      ? {}
+      : resumeParamsFor(sessions, new Set([parent.runId]), parent.pipeline);
+  const outcome = await deps.orchestrator.request({
+    taskId: parent.task,
+    requestId: agentDependencyEntryId(parent.runId),
+    requestSource: 'event',
+    expectedDependency: { runId: parent.runId, workId },
+    pipeline: parent.pipeline,
+    ...(parent.priority === undefined ? {} : { priority: parent.priority }),
+    params: {
+      mode: 'implement',
+      ...params,
+      ...(parent.params?.context === undefined
+        ? {}
+        : { context: parent.params.context }),
+      ...(parent.params?.runbook === undefined
+        ? {}
+        : { runbook: parent.params.runbook }),
+      ...(parent.params?.timeoutMinutes === undefined
+        ? {}
+        : { timeoutMinutes: parent.params.timeoutMinutes }),
+      dependencyParentRunId: parent.runId,
+      dependencyState: childState,
+      ...(childRun === undefined
+        ? {}
+        : { dependencyChildRunId: childRun.runId }),
+    },
+  });
+  if (isRefusal(outcome) && outcome.reason === 'task-busy') {
+    await defer();
+    return;
+  }
+  if (
+    isRefusal(outcome) &&
+    !['duplicate-request', 'stale-lease', 'task-closed'].includes(
+      outcome.reason,
+    )
+  )
+    throw new Error(`Dependency resume refused: ${outcome.reason}`);
+  logger.info(
+    'agent-lcars: investigator dependency %s for %s settled as %s',
+    workId,
+    parent.runId,
+    childState,
+  );
   await settleClaim(deps, entry, 'done');
 }
 

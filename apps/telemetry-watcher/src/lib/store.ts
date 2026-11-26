@@ -1,6 +1,7 @@
 import { logger } from '@agent-lcars/logging';
 import {
   SESSION_WRITTEN_AT_FIELD,
+  sessionSpendForWrite,
   type SessionWrite,
 } from '@agent-lcars/telemetry';
 import { FieldValue, Firestore, Timestamp } from '@google-cloud/firestore';
@@ -57,12 +58,14 @@ export function createFirestoreStore(
       // `instanceof` failure (#2762). This module is a plain
       // `@google-cloud/firestore` client, so it stays on that package's own
       // `FieldValue` throughout.
-      await firestore
-        .collection(SESSIONS_COLLECTION)
-        .doc(doc.sessionId)
-        .set(
+      const ref = firestore.collection(SESSIONS_COLLECTION).doc(doc.sessionId);
+      await firestore.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        transaction.set(
+          ref,
           {
             ...doc,
+            spend: sessionSpendForWrite(write, snapshot.data()),
             ...(doc.expireAt && {
               expireAt: Timestamp.fromDate(new Date(doc.expireAt)),
             }),
@@ -73,6 +76,7 @@ export function createFirestoreStore(
           },
           { merge: true },
         );
+      });
     },
   };
 }

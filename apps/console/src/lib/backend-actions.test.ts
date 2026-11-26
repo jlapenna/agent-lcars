@@ -1326,101 +1326,274 @@ describe('postComment (direct Work admission)', () => {
   });
 });
 
-describe('approveAndRebasePr', () => {
+describe('confirmed pull request approval', () => {
+  const head = 'a'.repeat(40);
+  const newerHead = 'b'.repeat(40);
+  const pr = {
+    node_id: 'PR_kwAB',
+    head: { sha: head },
+    user: { login: 'agent-lcars[bot]' },
+    state: 'open',
+    draft: false,
+    merged: false,
+  };
+  const pull = {
+    owner: DEFAULT_REPO.owner,
+    repo: DEFAULT_REPO.name,
+    pull_number: 42,
+  };
+
   function mockOctokit() {
     const createReview = vi.fn().mockResolvedValue({});
+    const merge = vi.fn().mockResolvedValue({ data: { merged: true } });
+    const get = vi.fn().mockResolvedValue({ data: pr });
+    const listReviews = vi.fn();
+    const paginate = vi.fn().mockResolvedValue([]);
     const updateBranch = vi.fn().mockResolvedValue({});
-    const get = vi.fn().mockResolvedValue({ data: { node_id: 'PR_kwAB' } });
     const graphql = vi.fn().mockResolvedValue({});
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: {
-        pulls: { createReview, updateBranch, get },
-        actions: { createWorkflowDispatch },
-      },
+      rest: { pulls: { get, merge, updateBranch, listReviews } },
       graphql,
+      paginate,
     });
-    return { createReview, updateBranch, get, graphql, createWorkflowDispatch };
+    (createGithubUserClient as Mock).mockReturnValue({
+      rest: { pulls: { createReview } },
+    });
+    return {
+      createReview,
+      merge,
+      get,
+      updateBranch,
+      graphql,
+      listReviews,
+      paginate,
+    };
   }
 
-  it('approves, updates the branch, then enables squash auto-merge - and never notifies', async () => {
-    const { createReview, updateBranch, get, graphql, createWorkflowDispatch } =
-      mockOctokit();
-
-    await approveAndRebasePr(DEFAULT_REPO, 42);
-
-    expect(createReview).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'sprinkles',
-      pull_number: 42,
-      event: 'APPROVE',
+  const mergePr = () => approveAndMergePr(DEFAULT_REPO, 42, head, OPERATOR);
+  const updatePr = () => approveAndRebasePr(DEFAULT_REPO, 42, head, OPERATOR);
+  const reject = (status: number, data: object) =>
+    Object.assign(new Error('Octokit request failed'), {
+      status,
+      response: { data },
     });
-    expect(updateBranch).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'sprinkles',
-      pull_number: 42,
-    });
-    expect(get).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'sprinkles',
-      pull_number: 42,
-    });
-    expect(graphql).toHaveBeenCalledWith(
-      expect.stringContaining('enablePullRequestAutoMerge'),
-      {
-        pullRequestId: 'PR_kwAB',
-        mergeMethod: 'SQUASH',
-        headers: { [REPO_HEADER]: 'supersprinklesracing/sprinkles' },
-      },
-    );
-    // Approving, updating the branch, and merely *enabling* auto-merge
-    // write no ledger-tracked fact themselves - the eventual merge is a
-    // normal GitHub-initiated event the hosted controller observes on its
-    // own, so no reconcile ping should follow any of these calls.
-    expect(createWorkflowDispatch).not.toHaveBeenCalled();
-  });
 
-  it('propagates a GitHub API error from the approval step', async () => {
-    const { createReview, updateBranch } = mockOctokit();
-    createReview.mockRejectedValue(
-      Object.assign(new Error('Review already submitted'), { status: 422 }),
-    );
-
-    await expect(approveAndRebasePr(DEFAULT_REPO, 42)).rejects.toThrow(
-      'Review already submitted',
-    );
-    expect(updateBranch).not.toHaveBeenCalled();
-  });
-});
-
-describe('approveAndMergePr', () => {
-  function mockOctokit() {
-    const createReview = vi.fn().mockResolvedValue({});
-    const merge = vi.fn().mockResolvedValue({});
-    (getGithubClient as Mock).mockReturnValue({
-      rest: { pulls: { createReview, merge } },
-    });
-    return { createReview, merge };
-  }
-
-  it('approves then squash-merges the PR', async () => {
+  it('approves as the operator and squash-merges the confirmed head', async () => {
     const { createReview, merge } = mockOctokit();
-    fixtureOrchestratorRuntime();
 
-    await approveAndMergePr(DEFAULT_REPO, 42);
+    await mergePr();
 
-    expect(createReview).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'sprinkles',
-      pull_number: 42,
+    expect(createGithubUserClient).toHaveBeenCalledWith(OPERATOR.githubToken);
+    expect(createReview).toHaveBeenCalledExactlyOnceWith({
+      ...pull,
+      commit_id: head,
       event: 'APPROVE',
     });
-    expect(merge).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'sprinkles',
-      pull_number: 42,
+    expect(merge).toHaveBeenCalledExactlyOnceWith({
+      ...pull,
+      sha: head,
       merge_method: 'squash',
     });
+    expect(createReview).toHaveBeenCalledBefore(merge);
+  });
+
+  it('binds approval, squash arming and the asynchronous update to the confirmed head', async () => {
+    const { createReview, graphql, updateBranch } = mockOctokit();
+
+    await expect(updatePr()).resolves.toBeUndefined();
+
+    expect(createReview).toHaveBeenCalledExactlyOnceWith({
+      ...pull,
+      commit_id: head,
+      event: 'APPROVE',
+    });
+    expect(graphql).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining('mergeMethod: SQUASH, expectedHeadOid: $head'),
+      {
+        pullRequestId: pr.node_id,
+        head,
+        headers: { [REPO_HEADER]: DEFAULT_REPO_KEY },
+      },
+    );
+    expect(updateBranch).toHaveBeenCalledExactlyOnceWith({
+      ...pull,
+      expected_head_sha: head,
+    });
+    expect(createReview).toHaveBeenCalledBefore(graphql);
+    expect(graphql).toHaveBeenCalledBefore(updateBranch);
+  });
+
+  it('refreshes a legacy projection and requires a new confirmation without writing to GitHub', async () => {
+    const { get, createReview, merge } = mockOctokit();
+
+    await expect(
+      approveAndMergePr(DEFAULT_REPO, 42, undefined, OPERATOR),
+    ).rejects.toThrow('Reopen the confirmation');
+    expect(
+      refreshCurrentGithubAnchorProjection,
+    ).toHaveBeenCalledExactlyOnceWith({
+      repo: DEFAULT_REPO_KEY,
+      issue: 42,
+    });
+    expect(get).not.toHaveBeenCalled();
+    expect(createReview).not.toHaveBeenCalled();
+    expect(merge).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['merge', mergePr],
+    ['update', updatePr],
+  ])(
+    'refuses %s when the confirmed head changed before approval',
+    async (_name, act) => {
+      const { get, createReview, merge, updateBranch, graphql } = mockOctokit();
+      get.mockResolvedValue({ data: { ...pr, head: { sha: newerHead } } });
+
+      await expect(act()).rejects.toThrow('head changed');
+
+      expect(createReview).not.toHaveBeenCalled();
+      expect(merge).not.toHaveBeenCalled();
+      expect(updateBranch).not.toHaveBeenCalled();
+      expect(graphql).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([mergePr, updatePr])(
+    'refuses self-approval without using either identity to write',
+    async (act) => {
+      const { get, createReview, merge, updateBranch, graphql } = mockOctokit();
+      get.mockResolvedValue({ data: { ...pr, user: { login: 'JLAPENNA' } } });
+
+      await expect(act()).rejects.toThrow('someone else to approve');
+
+      expect(createReview).not.toHaveBeenCalled();
+      expect(merge).not.toHaveBeenCalled();
+      expect(updateBranch).not.toHaveBeenCalled();
+      expect(graphql).not.toHaveBeenCalled();
+    },
+  );
+
+  it('requires reauthorization for a refused operator token without falling back', async () => {
+    const { createReview, merge } = mockOctokit();
+    createReview.mockRejectedValue(reject(401, { message: 'Bad credentials' }));
+
+    await expect(mergePr()).rejects.toBeInstanceOf(GithubReauthRequiredError);
+    expect(merge).not.toHaveBeenCalled();
+  });
+
+  it('surfaces nested GitHub validation reasons without exposing credentials or raw fields', async () => {
+    const { createReview, updateBranch, graphql } = mockOctokit();
+    createReview.mockRejectedValue(
+      reject(422, {
+        message: 'Unprocessable Entity',
+        errors: [
+          { message: 'A review is already pending.', value: 'private field' },
+          { message: `Token ${OPERATOR.githubToken} ghp_never_show` },
+          { field: 'commit_id', code: 'invalid', value: 'private value' },
+        ],
+      }),
+    );
+
+    await expect(updatePr()).rejects.toThrow(
+      'Unprocessable Entity A review is already pending. Token [redacted] [redacted] commit_id invalid',
+    );
+    expect(updateBranch).not.toHaveBeenCalled();
+    expect(graphql).not.toHaveBeenCalled();
+  });
+
+  it('acknowledges an already merged PR without claiming a new approval', async () => {
+    const { get, createReview, merge } = mockOctokit();
+    get.mockResolvedValue({ data: { ...pr, merged: true } });
+
+    await expect(mergePr()).resolves.toMatch(/already merged/);
+
+    expect(createReview).not.toHaveBeenCalled();
+    expect(merge).not.toHaveBeenCalled();
+  });
+
+  it('recognizes a concurrent merge only after GitHub readback', async () => {
+    const { get, merge } = mockOctokit();
+    get.mockResolvedValueOnce({ data: pr }).mockResolvedValueOnce({
+      data: { ...pr, merged: true },
+    });
+    merge.mockRejectedValue(reject(422, { message: 'Unprocessable Entity' }));
+
+    await expect(mergePr()).resolves.toMatch(/already merged/);
+
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('recognizes a merge from an existing squash arm while updating the branch', async () => {
+    const { get, graphql, updateBranch } = mockOctokit();
+    get
+      .mockResolvedValueOnce({
+        data: { ...pr, auto_merge: { merge_method: 'squash' } },
+      })
+      .mockResolvedValueOnce({ data: { ...pr, merged: true } });
+    updateBranch.mockRejectedValue(
+      reject(422, { message: 'Unprocessable Entity' }),
+    );
+
+    await expect(updatePr()).resolves.toMatch(/already merged/);
+
+    expect(graphql).not.toHaveBeenCalled();
+    expect(updateBranch).toHaveBeenCalledExactlyOnceWith({
+      ...pull,
+      expected_head_sha: head,
+    });
+  });
+
+  it('reports a recorded approval and stale head when squash arming loses the race', async () => {
+    const { get, graphql, updateBranch } = mockOctokit();
+    get.mockResolvedValueOnce({ data: pr }).mockResolvedValueOnce({
+      data: { ...pr, head: { sha: newerHead } },
+    });
+    graphql.mockRejectedValue(reject(422, { message: 'Unprocessable Entity' }));
+
+    await expect(updatePr()).resolves.toMatch(
+      /Approval recorded.*head changed/,
+    );
+
+    expect(updateBranch).not.toHaveBeenCalled();
+  });
+
+  it('reports approval and enabled auto-merge when the branch update is rejected', async () => {
+    const { updateBranch } = mockOctokit();
+    updateBranch.mockRejectedValue(
+      reject(422, {
+        message: 'Unprocessable Entity',
+        errors: [{ message: 'Branch has conflicts.' }],
+      }),
+    );
+
+    await expect(updatePr()).resolves.toMatch(
+      /Approval recorded.*Squash auto-merge was enabled.*Branch has conflicts/,
+    );
+  });
+
+  it('recognizes only an attributable exact-head approval after a lost response', async () => {
+    const { createReview, listReviews, paginate, merge } = mockOctokit();
+    createReview.mockRejectedValue(new Error('Socket lost'));
+    paginate.mockResolvedValueOnce([
+      { user: { login: OPERATOR.login }, state: 'APPROVED', commit_id: head },
+      { user: { login: OPERATOR.login }, state: 'COMMENTED', commit_id: head },
+    ]);
+
+    await expect(mergePr()).resolves.toMatch(/Approval recorded/);
+    expect(paginate).toHaveBeenCalledExactlyOnceWith(listReviews, {
+      ...pull,
+      headers: { [REPO_HEADER]: DEFAULT_REPO_KEY },
+    });
+
+    paginate.mockResolvedValueOnce([
+      {
+        user: { login: OPERATOR.login },
+        state: 'APPROVED',
+        commit_id: newerHead,
+      },
+    ]);
+    await expect(mergePr()).rejects.toThrow('GitHub could not confirm');
+    expect(merge).not.toHaveBeenCalled();
   });
 
   it('merges without sweeping unrelated expired leases (#2227)', async () => {
@@ -1428,7 +1601,7 @@ describe('approveAndMergePr', () => {
     const { orchestrator } = fixtureOrchestratorRuntime();
     const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
-    await approveAndMergePr(DEFAULT_REPO, 42);
+    await mergePr();
 
     expect(sweepSpy).not.toHaveBeenCalled();
   });
@@ -1466,7 +1639,7 @@ describe('approveAndMergePr', () => {
     const maintenance = handleReconcile(deps);
     await started;
     try {
-      await approveAndMergePr(DEFAULT_REPO, 42);
+      await mergePr();
       expect(createReview).toHaveBeenCalledOnce();
       expect(merge).toHaveBeenCalledOnce();
       expect(refreshCurrentGithubAnchorProjection).toHaveBeenCalledOnce();
@@ -1507,7 +1680,7 @@ describe('approveAndMergePr', () => {
       .spyOn(orchestrator, 'sweepExpired')
       .mockRejectedValueOnce(new Error('unrelated store unavailable'));
     expect((await handleReconcile(runtime)).status).toBe(500);
-    await expect(approveAndMergePr(DEFAULT_REPO, 42)).resolves.toBeUndefined();
+    await expect(mergePr()).resolves.toBeUndefined();
     expect(merge).toHaveBeenCalledOnce();
     expect(await store.readRun(seeded.run.runId)).toMatchObject({
       state: 'pending',
@@ -1520,7 +1693,7 @@ describe('approveAndMergePr', () => {
     expect((await handleReconcile(runtime)).body['dispatched']).toEqual([]);
   });
 
-  it('waits for authoritative presentation refresh and propagates its failure', async () => {
+  it('waits for authoritative presentation refresh and reports a refresh warning', async () => {
     const { merge } = mockOctokit();
     let release!: () => void;
     refreshCurrentGithubAnchorProjection.mockImplementationOnce(
@@ -1530,7 +1703,7 @@ describe('approveAndMergePr', () => {
         }),
     );
     let acknowledged = false;
-    const mutation = approveAndMergePr(DEFAULT_REPO, 42).then(() => {
+    const mutation = mergePr().then(() => {
       acknowledged = true;
     });
     await vi.waitFor(() =>
@@ -1544,38 +1717,21 @@ describe('approveAndMergePr', () => {
     refreshCurrentGithubAnchorProjection.mockRejectedValueOnce(
       new Error('projection unavailable'),
     );
-    await expect(approveAndMergePr(DEFAULT_REPO, 43)).rejects.toThrow(
-      'projection unavailable',
+    await expect(mergePr()).resolves.toBe(
+      'Pull request merged. The Inbox could not refresh yet.',
     );
   });
 
-  it('propagates a GitHub API error from the approval step and never merges or sweeps', async () => {
-    const { createReview, merge } = mockOctokit();
-    createReview.mockRejectedValue(
-      Object.assign(new Error('Review already submitted'), { status: 422 }),
-    );
-    const { orchestrator } = fixtureOrchestratorRuntime();
-    const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
-
-    await expect(approveAndMergePr(DEFAULT_REPO, 42)).rejects.toThrow(
-      'Review already submitted',
-    );
-    expect(merge).not.toHaveBeenCalled();
-    expect(sweepSpy).not.toHaveBeenCalled();
-  });
-
-  it('propagates a GitHub API error from the merge step and never sweeps', async () => {
+  it('reports a genuine merge refusal after approval without sweeping', async () => {
     const { merge } = mockOctokit();
     merge.mockRejectedValue(
-      Object.assign(new Error('Pull Request is not mergeable'), {
-        status: 405,
-      }),
+      reject(405, { message: 'Pull Request is not mergeable' }),
     );
     const { orchestrator } = fixtureOrchestratorRuntime();
     const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
-    await expect(approveAndMergePr(DEFAULT_REPO, 42)).rejects.toThrow(
-      'Pull Request is not mergeable',
+    await expect(mergePr()).resolves.toMatch(
+      /Approval recorded.*Pull Request is not mergeable/,
     );
     expect(sweepSpy).not.toHaveBeenCalled();
   });
@@ -1586,7 +1742,7 @@ describe('approveAndMergePr', () => {
       throw new Error('orchestrator unavailable');
     });
 
-    await expect(approveAndMergePr(DEFAULT_REPO, 42)).resolves.toBeUndefined();
+    await expect(mergePr()).resolves.toBeUndefined();
     expect(merge).toHaveBeenCalled();
   });
 });

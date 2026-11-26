@@ -1,6 +1,9 @@
 import 'server-only';
 
-import { AGENT_BOT_LOGINS } from '@agent-lcars/dispatch-contracts';
+import {
+  AGENT_BOT_LOGINS,
+  REVIEWER_BOT_LOGIN,
+} from '@agent-lcars/dispatch-contracts';
 import {
   formatAttemptId,
   formatClaimMarker,
@@ -98,6 +101,8 @@ async function github(deps: DeliveryGithubDeps, repo: string, path: string) {
       signal: AbortSignal.timeout(10_000),
     },
   );
+  if (response.status === 429 || response.status >= 500)
+    throw new DeliveryReadUnavailable(response.status);
   if (!response.ok)
     throw new Error(`Delivery read refused (${response.status})`);
   return response.json() as Promise<unknown>;
@@ -194,6 +199,7 @@ async function reviews(
   repo: string,
   number: number,
   head: string,
+  pullRequestAuthor: string,
 ) {
   // Complete bounded reads only: truncation and field errors retain ownership.
   const token = await deps.tokens.tokenFor(repo);
@@ -272,7 +278,11 @@ async function reviews(
       commit: { oid: string };
     } => review.author !== null && review.commit !== null,
   );
-  const latestVerdict = new Map<string, 'blocked' | 'clear'>();
+  const latestVerdict = new Map<
+    string,
+    'blocked' | 'self-review-blocked' | 'clear'
+  >();
+  const author = pullRequestAuthor.toLowerCase();
   for (const review of usableReviews) {
     if (review.commit.oid !== head) continue;
     const login = normalizeGraphqlActorLogin(review.author);
@@ -283,12 +293,21 @@ async function reviews(
       latestVerdict.set(authorKey, 'blocked');
     } else if (review.state === 'APPROVED' || review.state === 'DISMISSED') {
       latestVerdict.set(authorKey, 'clear');
+      if (
+        review.state === 'APPROVED' &&
+        authorKey === REVIEWER_BOT_LOGIN &&
+        latestVerdict.get('agent-lcars[bot]') === 'self-review-blocked'
+      ) {
+        latestVerdict.delete('agent-lcars[bot]');
+      }
     } else if (
       review.state === 'COMMENTED' &&
-      authorKey === 'agent-lcars[bot]'
+      authorKey === author &&
+      latestVerdict.get(authorKey) !== 'blocked' &&
+      (authorKey === 'agent-lcars[bot]' || authorKey === REVIEWER_BOT_LOGIN)
     ) {
       if (hasReviewLineMarker(review.body, '<!-- lcars-review:block -->')) {
-        latestVerdict.set(authorKey, 'blocked');
+        latestVerdict.set(authorKey, 'self-review-blocked');
       } else if (
         hasReviewLineMarker(review.body, '<!-- lcars-review:pass -->')
       ) {
@@ -297,7 +316,9 @@ async function reviews(
     }
   }
   return {
-    changesRequested: [...latestVerdict.values()].includes('blocked'),
+    changesRequested: [...latestVerdict.values()].some(
+      (verdict) => verdict !== 'clear',
+    ),
     unresolved: pr.reviewThreads.nodes.some((thread) => {
       if (thread.isResolved) return false;
       const firstComment = thread.comments?.nodes[0];
@@ -308,6 +329,26 @@ async function reviews(
       );
     }),
   };
+}
+
+/** A transient response from GitHub, without a usable delivery read. */
+export class DeliveryReadUnavailable extends Error {
+  constructor(status: number) {
+    super(`Delivery read refused (${status})`);
+  }
+}
+
+/** A bounded refusal from the authoritative PR read. Only reasons after
+ * the attempt-marker check can carry a verified reference. */
+export class ReadyDeliveryRefusal extends Error {
+  override readonly name = 'ReadyDeliveryRefusal';
+
+  constructor(
+    readonly reason:
+      'invalid-pr-claim' | 'draft-hold' | 'pr-closed' | 'non-squash-arm',
+  ) {
+    super(reason);
+  }
 }
 
 /** Thrown only after an authoritative read proved the run's own exact
@@ -340,19 +381,17 @@ export async function readyDeliveryBinding(
   const payload = parsedPayload.data;
   if (payload.spec.target.repo !== repo)
     throw new Error('Delivery target changed');
-  if (
-    pr.number !== number ||
-    (!pr.merged && pr.state !== 'open') ||
-    pr.draft ||
-    !pr.body?.includes(formatClaimMarker(attempt))
-  )
-    throw new Error('Deliverable is not ready and armed');
+  if (pr.number !== number || !pr.body?.includes(formatClaimMarker(attempt)))
+    throw new ReadyDeliveryRefusal('invalid-pr-claim');
+  if (pr.draft) throw new ReadyDeliveryRefusal('draft-hold');
+  if (!pr.merged && pr.state !== 'open')
+    throw new ReadyDeliveryRefusal('pr-closed');
   if (
     !pr.merged &&
     pr.auto_merge !== null &&
     pr.auto_merge.merge_method !== 'squash'
   )
-    throw new Error('Deliverable is armed with a non-squash method');
+    throw new ReadyDeliveryRefusal('non-squash-arm');
   await protectedChecks(deps, repo, pr.base.ref);
   // Proven by the authoritative read above and the established protected
   // target policy: this run's exact marked, ready, open PR in its own target
@@ -557,7 +596,13 @@ export async function observeGithubDelivery(
       head: binding.head,
       reason: 'Pull request has merge conflicts with base branch',
     };
-  const review = await reviews(deps, binding.repo, binding.number, pr.head.sha);
+  const review = await reviews(
+    deps,
+    binding.repo,
+    binding.number,
+    pr.head.sha,
+    pr.user.login,
+  );
   if (review.changesRequested || review.unresolved)
     return {
       kind: 'correction',

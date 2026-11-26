@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   stat,
   symlink,
   writeFile,
@@ -1971,7 +1972,7 @@ test('a harness that exits is reported at once, whatever holds its output open',
 
 // A harness host on a Unix socket, as the pod's harness container is: its
 // own harness table and environment, and nothing of the launcher's.
-async function socketHost(made, serve) {
+async function socketHost(made, serve, memoryCgroup) {
   const path = join(made.root, 'harness.sock');
   const {
     LCARS_RUN_TOKEN: _token,
@@ -1985,6 +1986,7 @@ async function socketHost(made, serve) {
       void serveHarness(socket, {
         harnesses: { openclaw: HARNESSES.openclaw, ...made.deps.harnesses },
         env: hostEnv,
+        memoryCgroup,
       });
   });
   await new Promise((listening) => server.listen(path, listening));
@@ -2012,7 +2014,24 @@ test('a harness in its own container runs the turn without the run token', async
   assert.equal(initialize.settings, '{"permissions":{}}');
 });
 
-test('an OpenClaw turn settles across the harness socket', async () => {
+async function memoryFixture(root) {
+  const cgroup = await mkdtemp(join(root, 'cgroup-'));
+  const write = async (key, value) => {
+    const temporary = join(cgroup, `${key}.tmp`);
+    await writeFile(temporary, `${value}\n`);
+    await rename(temporary, join(cgroup, key));
+  };
+  const setUsage = (mib) => write('memory.current', mib * 1024 ** 2);
+  const setKills = (kills) =>
+    write('memory.events', `oom 0\noom_kill ${kills}`);
+  await write('memory.max', 2688 * 1024 ** 2);
+  await write('memory.stat', `anon 0\ninactive_file ${256 * 1024 ** 2}`);
+  await setUsage(2431);
+  await setKills(3); // An event before this attempt isn't its diagnosis.
+  return { path: async () => cgroup, setUsage, setKills };
+}
+
+test('an OpenClaw turn settles across the harness socket with reclaimable cache', async () => {
   const made = await fixture({
     acp: {
       steps: [{ say: 'Checking files now' }, { say: 'Done.' }],
@@ -2020,7 +2039,8 @@ test('an OpenClaw turn settles across the harness socket', async () => {
     },
     brief: agentBrief(agentFiles, { requireToolEvidence: false }),
   });
-  const host = await socketHost(made);
+  const memory = await memoryFixture(made.root);
+  const host = await socketHost(made, undefined, memory.path);
   // The host reports how the Gateway recorded the turn; the launcher, which
   // holds what was streamed, places the answer in it.
   assert.deepEqual(await main(host.env, host.deps), {
@@ -2030,6 +2050,76 @@ test('an OpenClaw turn settles across the harness socket', async () => {
   const log = await made.openclawLog();
   assert.ok(log.every((entry) => entry.key === 'sk-test'));
   assert.deepEqual(ran(log).slice(-2), ['gateway call', 'gateway call']);
+});
+
+test('an isolated OpenClaw turn settles memory pressure and kernel OOM separately', async (t) => {
+  for (const failure of ['pressure', 'oom']) {
+    await t.test(failure, async () => {
+      const made = await fixture({
+        acp: { hang: true },
+        env: { CLAW_TURN_DEADLINE_SECONDS: '15' },
+      });
+      const memory = await memoryFixture(made.root);
+      const host = await socketHost(made, undefined, memory.path);
+      const pending = main(host.env, host.deps);
+      for (
+        let i = 0;
+        i < 100 &&
+        !made.calls.some((call) => call.body?.providerProcessStarted);
+        i++
+      )
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.ok(made.calls.some((call) => call.body?.providerProcessStarted));
+      if (failure === 'pressure') await memory.setUsage(2432);
+      else await memory.setKills(4);
+      const result = await pending;
+      assert.deepEqual(result, {
+        outcome: 'runner-failed',
+        message:
+          failure === 'pressure'
+            ? 'Claw turn failed: OpenClaw harness memory guard stopped the turn at 2176 MiB (threshold 2176 MiB, limit 2688 MiB); reduce the Gateway or tool working set.'
+            : 'Claw turn failed: OpenClaw harness cgroup recorded a kernel OOM kill (memory.events oom_kill increased).',
+      });
+      assert.deepEqual(completion(made.calls), result);
+      const log = await made.openclawLog();
+      const gateway = log.find(
+        ({ args }) => args[0] === 'gateway' && args[1] === 'run',
+      );
+      gone(gateway.pid);
+    });
+  }
+});
+
+test('an OpenClaw setup failure samples the kernel OOM counter before replying', async (t) => {
+  // Hold the periodic sample so only the setup failure path can see the kill.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const made = await fixture();
+  const memory = await memoryFixture(made.root);
+  made.deps.harnesses = {
+    openclaw: async () => {
+      await memory.setKills(4);
+      throw new ClawFailure('OpenClaw Gateway exited null before it was ready');
+    },
+  };
+  const host = await socketHost(made, undefined, memory.path);
+  const result = await main(host.env, host.deps);
+  assert.deepEqual(result, {
+    outcome: 'runner-failed',
+    message:
+      'Claw setup failed: OpenClaw harness cgroup recorded a kernel OOM kill (memory.events oom_kill increased).',
+  });
+  assert.deepEqual(completion(made.calls), result);
+});
+
+test('an isolated OpenClaw host fails setup before starting OpenClaw without readable cgroup counters', async () => {
+  const made = await fixture();
+  const host = await socketHost(made, undefined, async () => made.root);
+  assert.deepEqual(await main(host.env, host.deps), {
+    outcome: 'runner-failed',
+    message:
+      'Claw setup failed: OpenClaw harness memory guard requires readable cgroup v2 counters and a finite memory limit.',
+  });
+  assert.ok(!made.calls.some((call) => call.body?.providerProcessStarted));
 });
 
 test('nothing a harness prints can pass for its host', async () => {
@@ -2059,7 +2149,8 @@ test('a harness host that goes away fails the attempt', async () => {
   });
   assert.deepEqual(await main(gone.env, gone.deps), {
     outcome: 'runner-failed',
-    message: 'Claw turn failed: harness exited null mid-turn.',
+    message:
+      'Claw turn failed: the harness host connection was lost (cause unconfirmed).',
   });
   // One that never listens is given until the run's deadline.
   const absent = await harnessFixture(
@@ -2136,7 +2227,11 @@ test('a harness socket that is reset still leaves a settled attempt', async () =
     setTimeout(() => socket.destroy(), 100);
   });
   const result = await main(host.env, host.deps);
-  assert.equal(result.outcome, 'runner-failed');
+  assert.deepEqual(result, {
+    outcome: 'runner-failed',
+    message:
+      'Claw setup failed: the harness host connection was lost (cause unconfirmed).',
+  });
   assert.deepEqual(completion(made.calls), result);
 });
 

@@ -23,10 +23,17 @@ import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
 import type { AgentEventSubscriptionStore } from './agent-event-store';
+import {
+  acceptOutlineSourceReport,
+  OUTLINE_SOURCE_HOST,
+  type OutlineSourceDependencies,
+  queueOutlineFallback,
+} from './outline-event-source';
 import { runTokenMatches } from './run-token';
 import type { WorkPrincipal } from './work-auth';
 
 export interface AgentEventsContext {
+  outline?: OutlineSourceDependencies;
   /** Repositories whose App webhooks this console consumes. */
   githubRepositories: readonly string[];
   principal?: WorkPrincipal;
@@ -277,18 +284,33 @@ function isAppRepository(
   );
 }
 
-function requireAvailableSource(
+async function requireAvailableSource(
   value: Extract<
     ReturnType<typeof validateSubscriptionRequest>,
     { ok: true }
   >['value'],
   context: AgentEventsContext,
   githubStream = false,
-): void {
-  if (value.source === 'outline:doc')
-    throw new ORPCError('FORBIDDEN', {
-      message: 'Outline event delivery is not available yet',
-    });
+): Promise<void> {
+  if (value.source === 'outline:doc') {
+    if (!context.outline)
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Outline event delivery is not available yet',
+      });
+    const documentId = value.key.slice('outline:doc:'.length);
+    const observed = await context.outline.store.document(documentId);
+    if (!observed?.agentCreated && observed?.creatorVerified !== true) {
+      await context.outline.publish({ type: 'outline-observe', documentId });
+      throw new ORPCError('SERVICE_UNAVAILABLE', {
+        message:
+          'Outline creator verification is pending on pike; retry registration after that setup completes',
+      });
+    }
+    if (!observed?.agentCreated)
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Only agent-created Outline documents may be subscribed',
+      });
+  }
   if (value.source.startsWith('github:')) {
     const repository = value.key
       .slice(value.source.length + 1)
@@ -316,6 +338,56 @@ function requireAvailableSource(
 }
 
 export const agentEventsRouter = os.router({
+  reportOutline: authenticated.reportOutline.handler(
+    async ({ input, context }) => {
+      if (
+        requireHost(context.caller) !== OUTLINE_SOURCE_HOST ||
+        !context.outline
+      )
+        throw new ORPCError('FORBIDDEN', {
+          message:
+            'Only the configured Outline source may report authorization',
+        });
+      return acceptOutlineSourceReport(input, context.outline);
+    },
+  ),
+  observeOutline: authenticated.observeOutline.handler(
+    async ({ input, context }) => {
+      if (
+        requireHost(context.caller) !== OUTLINE_SOURCE_HOST ||
+        !context.outline
+      )
+        throw new ORPCError('FORBIDDEN', {
+          message:
+            'Only the configured Outline source may attest document creators',
+        });
+      await context.outline.store.observe(input.documentId, input.agentCreated);
+      if (input.agentCreated && input.previouslySubscribed)
+        await context.outline.store.subscribed(input.documentId);
+      return { ok: true as const };
+    },
+  ),
+  fallbackOutline: authenticated.fallbackOutline.handler(
+    async ({ input, context }) => {
+      const host = requireHost(context.caller);
+      if (!context.outline)
+        throw new ORPCError('SERVICE_UNAVAILABLE', {
+          message: 'Outline fallback is not active',
+        });
+      if (
+        !(await queueOutlineFallback(
+          input.deliveryId,
+          host,
+          context.outline.store,
+          context.outline.publish,
+        ))
+      )
+        throw new ORPCError('FORBIDDEN', {
+          message: 'No Outline delivery receipt for this host',
+        });
+      return { ok: true as const };
+    },
+  ),
   subscribe: authenticated.subscribe.handler(
     async ({ input, context, errors }) => {
       const validated = validateSubscriptionRequest({
@@ -351,7 +423,7 @@ export const agentEventsRouter = os.router({
           throw errors.BAD_REQUEST({
             message: 'A Work cannot subscribe to its own state',
           });
-        requireAvailableSource(validated.value, context);
+        await requireAvailableSource(validated.value, context);
         const target = { type: 'work' as const, workId };
         const subscription: AgentEventSubscription = {
           ...validated.value,
@@ -394,7 +466,7 @@ export const agentEventsRouter = os.router({
         throw errors.FORBIDDEN({
           message: `Session ${input.sessionId} is not a live session reported by ${host}`,
         });
-      requireAvailableSource(
+      await requireAvailableSource(
         validated.value,
         context,
         input.githubStream === true,

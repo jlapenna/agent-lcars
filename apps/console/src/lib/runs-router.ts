@@ -1,17 +1,16 @@
 import 'server-only';
 
-import {
-  type IssueReference,
-  PULL_REQUEST_AUTHOR_BOT_LOGIN,
-} from '@agent-lcars/dispatch-contracts';
+import type { IssueReference } from '@agent-lcars/dispatch-contracts';
 import {
   formatAttemptId,
   parseRunGeneration,
   recordRunEvidence,
+  REVIEWER_BOT_LOGIN,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import { usesCodexCredentials } from '@agent-lcars/orchestrator';
 import {
+  agentDependencyEntryId,
   type DeliveryBinding,
   deliveryWaiting,
   externalizeRunMessage,
@@ -25,6 +24,9 @@ import {
   readRunIssue,
   type Run,
   runRecoveryDeadline,
+  type RunResult,
+  type Task,
+  taskKey,
 } from '@agent-lcars/orchestrator';
 import {
   type AgentRunStatus,
@@ -34,6 +36,7 @@ import {
   runsContract,
   storedClawWorkSpec,
   storedWorkPayloadSchema,
+  workIdSchema,
   workPayloadSchema,
 } from '@agent-lcars/work';
 import { deriveItemState } from '@agent-lcars/work/derive';
@@ -67,7 +70,9 @@ import { jobSecrets } from './job-secrets-runtime';
 import { linearConfig, linearIssueInRepository } from './linear-config';
 import type { DrainOutboxResult } from './orchestrator-dispatch';
 import {
+  DeliveryReadUnavailable,
   readyDeliveryBinding,
+  ReadyDeliveryRefusal,
   UnqualifiedDeliveryError,
 } from './ready-delivery';
 import {
@@ -104,9 +109,9 @@ export interface RunsContext {
   orchestrator: Orchestrator;
   tokens: DispatchTokenProvider;
   checkoutTokens: ExpiringDispatchTokenProvider;
-  /** Mints the pull-request author App's token (`checkoutToken`'s
-   *  `pullRequestAuthor`); absent while that App is not configured. */
-  pullRequestAuthorTokens?: () => ExpiringDispatchTokenProvider | undefined;
+  reviewerTokens?: ExpiringDispatchTokenProvider;
+  /** This runner can publish reviews using the checkout response's actor. */
+  reviewerCheckoutV1?: boolean;
   codexAuth: CodexAuthStore;
   jobCredentials?: Pick<JobSecrets, 'github' | 'deliver' | 'refused'>;
   /** Same outbox drain every other mutating route reaches through
@@ -181,6 +186,18 @@ function claimantSubject(principal: WorkPrincipal): string {
   return principal.subject.toLowerCase();
 }
 
+const reviewerCheckoutNote =
+  'Review checkout bound to the dedicated reviewer App';
+
+function usesReviewerCheckout(run: Run): boolean {
+  return (
+    run.params?.['mode'] === 'review' &&
+    run.events.some(
+      (event) => event.by === 'executor' && event.note === reviewerCheckoutNote,
+    )
+  );
+}
+
 /** Loads the run named by the path, verifies the bearer's hash against
  *  `run.queue.tokenHash` in constant time, that the run is still live
  *  (`isLive(run.state)`), and that its lease has not already expired --
@@ -193,42 +210,14 @@ function claimantSubject(principal: WorkPrincipal): string {
  *  non-`claim` route calls this first, by hand (not middleware: the runId
  *  lives in the validated input, which middleware registered via `.use`
  *  cannot see). */
-/**
- * The pull-request author App's token for `repo`, or `undefined` when that
- * App is not configured or cannot mint here (for example, not installed on
- * the owner). A run without it opens its pull request as `agent-lcars[bot]`,
- * which the console then routes to the maintainer for approval, so a mint
- * failure must not refuse the checkout itself.
- */
-async function pullRequestAuthorGrant(
-  context: RunsContext,
-  repo: string,
-): Promise<{ login: string; token: string; expiresAt: string } | undefined> {
-  try {
-    // Inside the try: a malformed key throws while the provider is built,
-    // and that must not fail the checkout either.
-    const provider = context.pullRequestAuthorTokens?.();
-    if (provider === undefined) return undefined;
-    const token = await provider.expiringTokenFor(repo);
-    return {
-      login: PULL_REQUEST_AUTHOR_BOT_LOGIN,
-      token: token.token,
-      expiresAt: token.expiresAt,
-    };
-  } catch (error) {
-    logger.warn(
-      { err: error, repo },
-      'pull-request author token unavailable; the run opens its PR as agent-lcars[bot]',
-    );
-    return undefined;
-  }
-}
-
 async function requireRunToken(
   context: RunsContext,
   runId: string,
 ): Promise<Run> {
-  const run = await context.store.readRun(runId);
+  return authenticateRunToken(context, await context.store.readRun(runId));
+}
+
+function authenticateRunToken(context: RunsContext, run: Run | undefined): Run {
   const token = context.bearerToken;
   if (
     run?.queue?.tokenHash === undefined ||
@@ -409,6 +398,251 @@ async function agentRunStatus(
           ...(result.summary === undefined ? {} : { summary: result.summary }),
           ...(report === undefined ? {} : { report }),
         }),
+  };
+}
+
+async function supportsAgentDependencyWait(
+  store: OrchestratorStore,
+  run: Run,
+  task: Task | undefined,
+): Promise<boolean> {
+  if (
+    run.params?.mode !== 'implement' ||
+    run.params.jobOccurrence !== undefined ||
+    task === undefined ||
+    deliveryWaiting(task) ||
+    run.sourceRevision !== undefined ||
+    workPayloadSchema.safeParse(task.work).data?.spec.deliverable === 'report'
+  ) {
+    return false;
+  }
+  // PR reconciliation owns PR implementations. Only advertise or accept a
+  // GitHub wait when the stored anchor metadata establishes it is an issue.
+  return (
+    isWorkAnchor(run.task) ||
+    (await store.readGithubAnchorProjection(run.task))?.kind === 'issue'
+  );
+}
+
+/** Evidence is anchored to the admitting run and to the child attempt
+ * observed at admission. A later child round cannot replace this report. */
+async function dependencyEvidence(store: OrchestratorStore, run: Run) {
+  const parentId = run.params?.dependencyParentRunId;
+  const childId = run.params?.dependencyChildRunId;
+  const state = run.params?.dependencyState;
+  if (
+    parentId === undefined ||
+    (state !== 'done' &&
+      state !== 'failed' &&
+      state !== 'canceled' &&
+      state !== 'parked' &&
+      state !== 'unavailable')
+  )
+    return undefined;
+  const parent = await store.readRun(parentId);
+  const workId = parent?.result?.dependencyWorkId;
+  if (
+    parent === undefined ||
+    workId === undefined ||
+    parent.runId === run.runId ||
+    taskKey(parent.task) !== taskKey(run.task)
+  )
+    return undefined;
+  const childTask = (await store.readTask({ workId }))?.task;
+  const owned =
+    storedClawWorkSpec(childTask?.work) !== undefined &&
+    storedWorkPayloadSchema.safeParse(childTask?.work).data?.origin
+      .principal === runCaller(parentId);
+  const child =
+    owned && childId !== undefined ? await store.readRun(childId) : undefined;
+  const exact =
+    child !== undefined &&
+    isWorkAnchor(child.task) &&
+    child.task.workId === workId
+      ? child
+      : undefined;
+  const result = exact?.result;
+  return {
+    workId,
+    state: owned ? state : 'unavailable',
+    ...(exact === undefined ? {} : { runId: exact.runId }),
+    ...(result === undefined ? {} : { ok: result.ok }),
+    ...(result?.summary === undefined ? {} : { summary: result.summary }),
+    ...(result?.message === undefined ? {} : { report: result.message }),
+    reportAvailability:
+      result?.message === undefined
+        ? 'unavailable'
+        : result.messageOverflow === undefined
+          ? 'complete'
+          : 'partial',
+  } as const;
+}
+
+async function mintCheckoutToken(
+  runId: string,
+  context: RunsContext,
+  review: boolean,
+) {
+  const run = await requireRunToken(context, runId);
+  if (
+    run.params?.['mode'] === 'review' &&
+    run.queue?.firstHeartbeatAt === undefined
+  ) {
+    throw new ORPCError('CONFLICT', {
+      message: 'Review startup heartbeat required',
+    });
+  }
+  if (review !== usesReviewerCheckout(run)) {
+    throw new ORPCError('CONFLICT', {
+      message: 'Checkout route does not match the bound App',
+    });
+  }
+  const task =
+    'workId' in run.task
+      ? (await context.store.readTask(run.task))?.task
+      : undefined;
+  if (clawRunSpec(run, task) !== undefined)
+    throw new ORPCError('FORBIDDEN', {
+      message: 'Claw runs have no repository checkout',
+    });
+  const target = anchorTarget(run, task);
+
+  let profile: JobProfile | undefined;
+  if (run.pipeline === 'goose' || Boolean(run.params?.['jobOccurrence'])) {
+    const jobs = repositoryJobs({
+      store: context.store,
+      orchestrator: context.orchestrator,
+      drain: context.drain,
+    });
+    const id = run.params?.['jobOccurrence'];
+    const occurrence =
+      id === undefined ? undefined : await jobs.deps.store.readOccurrence(id);
+    if (
+      !occurrence ||
+      !('workId' in run.task) ||
+      occurrence.workId !== run.task.workId ||
+      occurrence.definition.repository !== target.repo
+    )
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Not a recipe occurrence',
+      });
+    profile = authorizedRecipeProfile(jobs, occurrence);
+    if (profile.credentialSet) {
+      if (run.params?.['mode'] === 'review')
+        throw new ORPCError('FORBIDDEN', {
+          message: 'Review runs require the dedicated reviewer App',
+        });
+      const service = context.jobCredentials ?? jobSecrets();
+      if (!service || !occurrence.secretSnapshot)
+        throw new ORPCError('CONFLICT', {
+          message: 'Job credentials unavailable',
+        });
+      const credential = await service
+        .github(occurrence, occurrence.secretSnapshot)
+        .catch(async () => {
+          await service.refused(occurrence, 'delivery');
+          throw new ORPCError('CONFLICT', {
+            message:
+              'Selected GitHub credential is unavailable, expired, or has the wrong identity',
+          });
+        });
+      if (credential)
+        return {
+          token: credential.token,
+          expiresAt: credential.expiresAt,
+          refreshAt: credential.refreshAt,
+          repository: target.repo,
+          identity: {
+            login: credential.login,
+            git: profile.gitIdentity ?? {
+              name: credential.login,
+              email: `${credential.login}@users.noreply.github.com`,
+            },
+          },
+        };
+    }
+  }
+
+  const checkoutTokens = review
+    ? context.reviewerTokens
+    : context.checkoutTokens;
+  if (!checkoutTokens)
+    throw new ORPCError('CONFLICT', {
+      message: 'Reviewer credentials unavailable',
+    });
+  const reviewIdentity = review ? { reviewerLogin: REVIEWER_BOT_LOGIN } : {};
+  if (run.params?.['crossRepo'] !== 'true') {
+    const token = await checkoutTokens.expiringTokenFor(target.repo);
+    return {
+      token: token.token,
+      repository: target.repo,
+      expiresAt: token.expiresAt,
+      ...(profile?.gitIdentity ? { gitIdentity: profile.gitIdentity } : {}),
+      ...reviewIdentity,
+    };
+  }
+
+  // agent-option:cross-repo (#1993): the run's credential covers every
+  // watched repository, not just its own anchor's. One installation
+  // token can never span two GitHub owners (GitHub's own constraint --
+  // each App installation is per-account), so this mints one grant per
+  // distinct owner among `getWatchedRepos()`, each scoped to every
+  // watched repo name under that owner.
+  const namesByOwner = new Map<string, string[]>();
+  const addRepository = (owner: string, name: string) => {
+    const names = namesByOwner.get(owner);
+    if (names === undefined) namesByOwner.set(owner, [name]);
+    else if (!names.includes(name)) names.push(name);
+  };
+  for (const repo of getWatchedRepos()) addRepository(repo.owner, repo.name);
+  // A repository-owned job (docs/repository-jobs.md) is admitted by its
+  // operator profile, not by watched-repo membership, so its anchor may
+  // lie outside `getWatchedRepos()`. The run must still be able to check
+  // out its own source: always cover the anchor in its owner's grant.
+  const slash = target.repo.indexOf('/');
+  if (slash <= 0 || slash === target.repo.length - 1) {
+    // Admission validates the target as "owner/name"; a stored anchor
+    // that is not must never be minted for a guessed owner.
+    throw new ORPCError('INTERNAL_SERVER_ERROR', {
+      message: `checkout token: malformed anchor repository ${JSON.stringify(target.repo)}`,
+    });
+  }
+  const anchorOwner = target.repo.slice(0, slash);
+  addRepository(anchorOwner, target.repo.slice(slash + 1));
+  const grants = await Promise.all(
+    [...namesByOwner.entries()].map(async ([owner, repositories]) => {
+      const token = await checkoutTokens.expiringTokenForRepositories(
+        owner,
+        repositories,
+      );
+      return {
+        owner,
+        repositories,
+        token: token.token,
+        expiresAt: token.expiresAt,
+      };
+    }),
+  );
+  const anchorGrant = grants.find((grant) => grant.owner === anchorOwner);
+  if (anchorGrant === undefined) {
+    // Structural guard: the anchor was added to its owner's grant above,
+    // so every mint produces one for `anchorOwner`. This is unreachable
+    // unless the grant list itself is corrupted.
+    throw new ORPCError('INTERNAL_SERVER_ERROR', {
+      message: `checkout token: anchor owner ${JSON.stringify(anchorOwner)} has no grant`,
+    });
+  }
+  // The singular token/repository/expiresAt fields keep meaning exactly
+  // what they meant before this option existed -- the anchor repo's own
+  // credential -- by simply reusing its owner's grant token, so a runner
+  // that never reads `grants` keeps working unmodified.
+  return {
+    token: anchorGrant.token,
+    repository: target.repo,
+    expiresAt: anchorGrant.expiresAt,
+    grants,
+    ...reviewIdentity,
+    ...(profile?.gitIdentity ? { gitIdentity: profile.gitIdentity } : {}),
   };
 }
 
@@ -816,12 +1050,17 @@ export const runsRouter = os.router({
         ? parsedTimeout
         : undefined;
     const issue = await readRunIssue(context.store, run);
+    const agentDependency = await dependencyEvidence(context.store, run);
     const shared = {
+      ...(agentDependency === undefined ? {} : { agentDependency }),
       ...(issue === undefined ? {} : { issue }),
       pipeline: run.pipeline,
       ...params,
       attemptId: formatAttemptId({ generation, intentId: run.runId }),
       generation,
+      ...((await supportsAgentDependencyWait(context.store, run, task?.task))
+        ? { agentDependencyWait: true as const }
+        : {}),
       intentId: run.runId,
       ...(resume === undefined ? {} : { resume }),
       ...(timeoutMinutes === undefined ? {} : { timeoutMinutes }),
@@ -962,6 +1201,11 @@ export const runsRouter = os.router({
         run.runId,
         run.queue?.tokenHash ?? '',
         input.providerProcessStarted,
+        run.params?.['mode'] === 'review' &&
+          context.reviewerCheckoutV1 &&
+          input.providerProcessStarted !== true
+          ? reviewerCheckoutNote
+          : undefined,
       );
       if (isRefusal(renewed))
         throw new ORPCError('UNAUTHORIZED', {
@@ -980,6 +1224,9 @@ export const runsRouter = os.router({
     return {
       runId: run.runId,
       expiresAt,
+      ...(usesReviewerCheckout(renewed)
+        ? { reviewerLogin: REVIEWER_BOT_LOGIN }
+        : {}),
     };
   }),
 
@@ -1124,6 +1371,16 @@ export const runsRouter = os.router({
       // The usual case: the worker reported its outcome, then exited. A
       // first report for a settled run retires its claim (physical exit).
       const current = (await context.store.readRun(run.runId)) ?? run;
+      if (
+        current.queue?.state === 'retired' &&
+        current.result?.dependencyWorkId !== undefined
+      ) {
+        await context.store.wakeOutbox({
+          entryId: agentDependencyEntryId(run.runId),
+          now: context.now().toISOString(),
+        });
+        await drainAfterCompletion(context, run.runId);
+      }
       return {
         runId: run.runId,
         state: current.state,
@@ -1167,23 +1424,45 @@ export const runsRouter = os.router({
     const target = claw === undefined ? anchorTarget(run, task) : undefined;
     // The shared outcome mapper validates exact references against this
     // stored run's anchor and mode, not caller-supplied identity metadata.
-    let result =
-      target === undefined
-        ? toClawRunResult(input.outcome, input.message)
-        : toRunResult(
-            target.repo,
-            input.outcome,
-            input.outcomeReference,
-            input.message,
-            {
-              issue: target.issue,
-              mode: run.params?.mode,
-              report:
-                isWorkAnchor(run.task) &&
-                workPayloadSchema.safeParse(task?.work).data?.spec
-                  .deliverable === 'report',
-            },
-          );
+    let dependencyWorkId: string | undefined;
+    if (input.outcome === 'wait-for-agent') {
+      const workId = workIdSchema.safeParse(input.outcomeReference);
+      if (
+        !workId.success ||
+        !(await supportsAgentDependencyWait(context.store, run, task))
+      )
+        throw new ORPCError('CONFLICT', {
+          message: 'Invalid implementation dependency wait',
+        });
+      const child = (await context.store.readTask({ workId: workId.data }))
+        ?.task;
+      if (
+        storedWorkPayloadSchema.safeParse(child?.work).data?.origin
+          .principal !== runCaller(run.runId) ||
+        storedClawWorkSpec(child?.work) === undefined
+      )
+        throw new ORPCError('NOT_FOUND');
+      dependencyWorkId = workId.data;
+    }
+    let result: RunResult =
+      dependencyWorkId !== undefined
+        ? { ok: true, summary: 'waiting-for-agent', dependencyWorkId }
+        : target === undefined
+          ? toClawRunResult(input.outcome, input.message)
+          : toRunResult(
+              target.repo,
+              input.outcome,
+              input.outcomeReference,
+              input.message,
+              {
+                issue: target.issue,
+                mode: run.params?.mode,
+                report:
+                  isWorkAnchor(run.task) &&
+                  workPayloadSchema.safeParse(task?.work).data?.spec
+                    .deliverable === 'report',
+              },
+            );
     let publishTriage = false;
     if (triageBriefContext(run) !== undefined && result.ok) {
       try {
@@ -1213,6 +1492,7 @@ export const runsRouter = os.router({
           'A delivery correction must publish its freshly marked PR or explicitly park',
       });
     let delivery: DeliveryBinding | undefined;
+    let deliveryRefused = false;
     const reference = result.ref?.match(/\/pull\/(\d+)$/u);
     const samePullRequestAnchor =
       reference !== undefined &&
@@ -1245,36 +1525,46 @@ export const runsRouter = os.router({
           },
         );
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        // Fail closed by default. One relaxation, for an initial
-        // pull-request result whose own exact attempt-marked PR on a
-        // protected target the authoritative read proved: a ready, open PR
-        // with no auto-merge arm yet (a repository's arming workflow can land
-        // after the executor exits). It settles as an ordinary
-        // pull-request result without durable delivery ownership instead of
-        // discarding the deliverable as runner-failed. Read failures,
-        // malformed or missing evidence, corrections and merged-deliverable
-        // claims all stay refused.
-        if (
-          !(error instanceof UnqualifiedDeliveryError) ||
-          deliveryCorrection ||
-          result.summary !== 'pull-request'
+        if (error instanceof ReadyDeliveryRefusal) {
+          // Settle through the same authenticated report transaction. The
+          // rejected artifact never establishes delivery ownership, and only
+          // this attempt's verified PR is retained for diagnosis.
+          const ref = result.ref;
+          result = {
+            ok: false,
+            summary: 'ready-delivery-refused',
+            message: error.reason,
+            ...(error.reason === 'invalid-pr-claim' || ref === undefined
+              ? {}
+              : { ref }),
+          };
+          deliveryRefused = true;
+        } else if (error instanceof DeliveryReadUnavailable) {
+          throw new ORPCError('SERVICE_UNAVAILABLE', {
+            message: 'Delivery evidence temporarily unavailable',
+          });
+        } else if (
+          error instanceof UnqualifiedDeliveryError &&
+          !deliveryCorrection &&
+          result.summary === 'pull-request'
         ) {
+          // The exact ready PR can settle without ownership while its
+          // repository's arming workflow catches up.
           logger.warn(
-            'agent-lcars: ready delivery handoff refused for %s: %s',
+            'agent-lcars: ready delivery handoff not established for %s; settling the PR without delivery ownership: %s',
             run.runId,
-            reason,
+            error.message,
+          );
+        } else {
+          logger.warn(
+            'agent-lcars: ready delivery handoff refused for %s: evidence unavailable or unqualified',
+            run.runId,
           );
           throw new ORPCError('CONFLICT', {
             message:
               'Ready delivery handoff refused; exact review and protected delivery evidence required',
           });
         }
-        logger.warn(
-          'agent-lcars: ready delivery handoff not established for %s; settling the PR without delivery ownership: %s',
-          run.runId,
-          reason,
-        );
       }
     }
     // The whole message goes out of line when it overflows the inline
@@ -1303,7 +1593,12 @@ export const runsRouter = os.router({
       !isRefusal(settled) &&
       settled.run?.credentialPendingResult !== undefined
     ) {
-      return { runId: run.runId, state: 'completion-pending' };
+      return {
+        runId: run.runId,
+        state: deliveryRefused
+          ? 'ready-delivery-refusal-pending'
+          : 'completion-pending',
+      };
     }
     // #1799: this is the route that CREATES the `report-outcome` outbox
     // entry (`orchestrator.report`'s `settle`), but it used to be the
@@ -1357,154 +1652,28 @@ export const runsRouter = os.router({
           });
       }
     }
+    if (dependencyWorkId !== undefined && isRefusal(settled)) {
+      throw new ORPCError('CONFLICT', {
+        message: 'Implementation dependency wait was refused',
+      });
+    }
     return {
       runId: run.runId,
-      state: isRefusal(settled) ? settled.reason : 'finished',
+      state: isRefusal(settled)
+        ? settled.reason
+        : deliveryRefused
+          ? 'ready-delivery-refused'
+          : 'finished',
     };
   }),
 
-  checkoutToken: os.checkoutToken.handler(async ({ input, context }) => {
-    const run = await requireRunToken(context, input.runId);
-    const task =
-      'workId' in run.task
-        ? (await context.store.readTask(run.task))?.task
-        : undefined;
-    if (clawRunSpec(run, task) !== undefined)
-      throw new ORPCError('FORBIDDEN', {
-        message: 'Claw runs have no repository checkout',
-      });
-    const target = anchorTarget(run, task);
+  checkoutToken: os.checkoutToken.handler(({ input, context }) =>
+    mintCheckoutToken(input.runId, context, false),
+  ),
 
-    let profile: JobProfile | undefined;
-    if (run.pipeline === 'goose' || Boolean(run.params?.['jobOccurrence'])) {
-      const jobs = repositoryJobs({
-        store: context.store,
-        orchestrator: context.orchestrator,
-        drain: context.drain,
-      });
-      const id = run.params?.['jobOccurrence'];
-      const occurrence =
-        id === undefined ? undefined : await jobs.deps.store.readOccurrence(id);
-      if (
-        !occurrence ||
-        !('workId' in run.task) ||
-        occurrence.workId !== run.task.workId ||
-        occurrence.definition.repository !== target.repo
-      )
-        throw new ORPCError('FORBIDDEN', {
-          message: 'Not a recipe occurrence',
-        });
-      profile = authorizedRecipeProfile(jobs, occurrence);
-      if (profile.credentialSet) {
-        const service = context.jobCredentials ?? jobSecrets();
-        if (!service || !occurrence.secretSnapshot)
-          throw new ORPCError('CONFLICT', {
-            message: 'Job credentials unavailable',
-          });
-        const credential = await service
-          .github(occurrence, occurrence.secretSnapshot)
-          .catch(async () => {
-            await service.refused(occurrence, 'delivery');
-            throw new ORPCError('CONFLICT', {
-              message:
-                'Selected GitHub credential is unavailable, expired, or has the wrong identity',
-            });
-          });
-        if (credential)
-          return {
-            token: credential.token,
-            expiresAt: credential.expiresAt,
-            refreshAt: credential.refreshAt,
-            repository: target.repo,
-            identity: {
-              login: credential.login,
-              git: profile.gitIdentity ?? {
-                name: credential.login,
-                email: `${credential.login}@users.noreply.github.com`,
-              },
-            },
-          };
-      }
-    }
-
-    const pullRequestAuthor = await pullRequestAuthorGrant(
-      context,
-      target.repo,
-    );
-    if (run.params?.['crossRepo'] !== 'true') {
-      const token = await context.checkoutTokens.expiringTokenFor(target.repo);
-      return {
-        token: token.token,
-        repository: target.repo,
-        expiresAt: token.expiresAt,
-        ...(profile?.gitIdentity ? { gitIdentity: profile.gitIdentity } : {}),
-        ...(pullRequestAuthor ? { pullRequestAuthor } : {}),
-      };
-    }
-
-    // agent-option:cross-repo (#1993): the run's credential covers every
-    // watched repository, not just its own anchor's. One installation
-    // token can never span two GitHub owners (GitHub's own constraint --
-    // each App installation is per-account), so this mints one grant per
-    // distinct owner among `getWatchedRepos()`, each scoped to every
-    // watched repo name under that owner.
-    const namesByOwner = new Map<string, string[]>();
-    const addRepository = (owner: string, name: string) => {
-      const names = namesByOwner.get(owner);
-      if (names === undefined) namesByOwner.set(owner, [name]);
-      else if (!names.includes(name)) names.push(name);
-    };
-    for (const repo of getWatchedRepos()) addRepository(repo.owner, repo.name);
-    // A repository-owned job (docs/repository-jobs.md) is admitted by its
-    // operator profile, not by watched-repo membership, so its anchor may
-    // lie outside `getWatchedRepos()`. The run must still be able to check
-    // out its own source: always cover the anchor in its owner's grant.
-    const slash = target.repo.indexOf('/');
-    if (slash <= 0 || slash === target.repo.length - 1) {
-      // Admission validates the target as "owner/name"; a stored anchor
-      // that is not must never be minted for a guessed owner.
-      throw new ORPCError('INTERNAL_SERVER_ERROR', {
-        message: `checkout token: malformed anchor repository ${JSON.stringify(target.repo)}`,
-      });
-    }
-    const anchorOwner = target.repo.slice(0, slash);
-    addRepository(anchorOwner, target.repo.slice(slash + 1));
-    const grants = await Promise.all(
-      [...namesByOwner.entries()].map(async ([owner, repositories]) => {
-        const token = await context.checkoutTokens.expiringTokenForRepositories(
-          owner,
-          repositories,
-        );
-        return {
-          owner,
-          repositories,
-          token: token.token,
-          expiresAt: token.expiresAt,
-        };
-      }),
-    );
-    const anchorGrant = grants.find((grant) => grant.owner === anchorOwner);
-    if (anchorGrant === undefined) {
-      // Structural guard: the anchor was added to its owner's grant above,
-      // so every mint produces one for `anchorOwner`. This is unreachable
-      // unless the grant list itself is corrupted.
-      throw new ORPCError('INTERNAL_SERVER_ERROR', {
-        message: `checkout token: anchor owner ${JSON.stringify(anchorOwner)} has no grant`,
-      });
-    }
-    // The singular token/repository/expiresAt fields keep meaning exactly
-    // what they meant before this option existed -- the anchor repo's own
-    // credential -- by simply reusing its owner's grant token, so a runner
-    // that never reads `grants` keeps working unmodified.
-    return {
-      token: anchorGrant.token,
-      repository: target.repo,
-      expiresAt: anchorGrant.expiresAt,
-      grants,
-      ...(profile?.gitIdentity ? { gitIdentity: profile.gitIdentity } : {}),
-      ...(pullRequestAuthor ? { pullRequestAuthor } : {}),
-    };
-  }),
+  reviewerCheckoutToken: os.reviewerCheckoutToken.handler(
+    ({ input, context }) => mintCheckoutToken(input.runId, context, true),
+  ),
 
   codexAuth: os.codexAuth.handler(async ({ input, context, errors }) => {
     const { run, repository } = await requireCodexRun(context, input.runId);

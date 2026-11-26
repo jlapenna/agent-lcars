@@ -97,6 +97,7 @@ async function expectResolvedMergeRefusal(
   click: () => Promise<void>,
   message: string,
   number: number,
+  head: string,
   controlledDelayMs: number,
 ) {
   // The production notifications limiter serializes approval and merge at
@@ -117,12 +118,13 @@ async function expectResolvedMergeRefusal(
       return false;
     try {
       const args: unknown = request.postDataJSON();
-      if (!Array.isArray(args) || args.length !== 2) return false;
+      if (!Array.isArray(args) || args.length !== 3) return false;
       const repo = args[0] as { owner?: string; name?: string } | null;
       return (
         repo?.owner === 'supersprinklesracing' &&
         repo?.name === 'sprinkles' &&
-        args[1] === number
+        args[1] === number &&
+        args[2] === head
       );
     } catch {
       return false;
@@ -559,37 +561,34 @@ test.describe('Inbox authorized action journeys', () => {
       await dialog.getByRole('button', { name: label, exact: true }).click();
     };
     for (const rejected of [false, true]) {
+      const refusal = `GitHub rejected ${action}`;
       const message = rejected
-        ? `GitHub rejected ${action}`
+        ? approved
+          ? `Approval recorded for the selected revision.${action === 'approve-rebase' ? ' Squash auto-merge was enabled before the update request.' : ''} ${refusal}`
+          : refusal
         : action === 'merge'
           ? `#${number} merged`
           : action === 'rebase'
             ? `#${number} updated with the base branch`
-            : `#${number} approved, branch updated, auto-merge enabled`;
+            : 'Approval recorded, squash auto-merge enabled, and branch update requested.';
       const configuration = {
         pr: { number, mergeableState, requestedReviewers },
         ...(rejected
-          ? { reject: { method: 'PUT', path: terminalPath, message } }
+          ? { reject: { method: 'PUT', path: terminalPath, message: refusal } }
           : {}),
       };
-      const expectedEffects = [
+      const expectedEffects = (head: string) => [
         ...(approved
           ? [
               {
                 method: 'POST',
                 path: pathFor(`pulls/${number}/reviews`),
-                body: { event: 'APPROVE' },
+                body: { event: 'APPROVE', commit_id: head },
                 rejected: false,
               },
             ]
           : []),
-        {
-          method: 'PUT',
-          path: terminalPath,
-          body: action === 'merge' ? { merge_method: 'squash' } : null,
-          rejected,
-        },
-        ...(action === 'approve-rebase' && !rejected
+        ...(action === 'approve-rebase'
           ? [
               {
                 method: 'POST',
@@ -597,13 +596,24 @@ test.describe('Inbox authorized action journeys', () => {
                 body: expect.objectContaining({
                   variables: {
                     pullRequestId: `PR_e2e_${number}`,
-                    mergeMethod: 'SQUASH',
+                    head,
                   },
                 }),
                 rejected: false,
               },
             ]
           : []),
+        {
+          method: 'PUT',
+          path: terminalPath,
+          body:
+            action === 'merge'
+              ? { merge_method: 'squash', sha: head }
+              : action === 'approve-rebase'
+                ? { expected_head_sha: head }
+                : null,
+          rejected,
+        },
       ];
       // Keep the observed merge allowance until measured product latency is qualified.
       // Merge now waits only for its GitHub mutation and authoritative projection.
@@ -613,12 +623,18 @@ test.describe('Inbox authorized action journeys', () => {
         action !== 'merge' && !rejected ? 'clean' : mergeableState;
       const observeFeedback =
         action === 'merge' && rejected
-          ? (page: Page, request: APIRequestContext, delayMs: number) =>
+          ? (
+              page: Page,
+              request: APIRequestContext,
+              delayMs: number,
+              head: string,
+            ) =>
               expectResolvedMergeRefusal(
                 page,
                 () => click(page, request),
                 message,
                 number,
+                head,
                 delayMs,
               )
           : async (page: Page, request: APIRequestContext) => {
@@ -645,8 +661,12 @@ test.describe('Inbox authorized action journeys', () => {
             requestedReviewerLogins: requestedReviewers,
           });
           const url = await selectItem(page, number);
-          await observeFeedback(page, request, controlledDelayMs);
-          expect(await journal(request)).toEqual(expectedEffects);
+          const before = await request.get(
+            `${GITHUB}/${pathFor(`pulls/${number}`)}`,
+          );
+          const head = (await before.json()).head.sha as string;
+          await observeFeedback(page, request, controlledDelayMs, head);
+          expect(await journal(request)).toEqual(expectedEffects(head));
           const issue = await request.get(
             `${GITHUB}/${pathFor(`issues/${number}`)}`,
           );

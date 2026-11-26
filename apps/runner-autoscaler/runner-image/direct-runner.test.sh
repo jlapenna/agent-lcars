@@ -264,9 +264,13 @@ case "$url" in
     if [ "${FAKE_BRIEF_NO_PIPELINE:-}" = "1" ]; then
       brief_pipeline=''
     fi
+    dependency_capability=''
+    if [ "${FAKE_AGENT_DEPENDENCY_WAIT:-}" = 1 ]; then
+      dependency_capability=',"agentDependencyWait":true'
+    fi
     if [ "${FAKE_ANCHOR:-work}" = "github" ]; then
       cat <<JSON
-{"anchor":{"type":"github","repo":"octo/example","issue":42,"html_url":"https://github.test/octo/example/issues/42"},"work":{"spec":{"title":"GitHub work","description":"Work-projected body","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","runbook":"${FAKE_RUNBOOK:-}","context":"${FAKE_CONTEXT:-}","attemptId":"g1:octo/example#42/r1","generation":1,"intentId":"octo/example#42/r1"}
+{"anchor":{"type":"github","repo":"octo/example","issue":42,"html_url":"https://github.test/octo/example/issues/42"},"work":{"spec":{"title":"GitHub work","description":"Work-projected body","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}}$brief_pipeline$dependency_capability,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","runbook":"${FAKE_RUNBOOK:-}","context":"${FAKE_CONTEXT:-}","attemptId":"g1:octo/example#42/r1","generation":1,"intentId":"octo/example#42/r1"}
 JSON
     elif [ "${FAKE_BRIEF_NO_RESUME:-}" = "1" ]; then
       cat <<JSON
@@ -278,7 +282,7 @@ JSON
 JSON
     fi
     ;;
-  */checkout-token)
+  */checkout-token|*/reviewer-checkout-token)
     if [ "${FAKE_CHECKOUT_TOKEN_FAIL:-}" = "1" ]; then
       echo "fake curl: simulated checkout-token failure" >&2
       exit 22
@@ -292,6 +296,7 @@ JSON
         exit 22
       fi
     fi
+    printf '%s\n' "${url##*/}" >> "$CHECKOUT_TOKEN_REQUEST_LOG.routes"
     token_attempt=1
     [ ! -f "$CHECKOUT_TOKEN_REQUEST_LOG" ] || token_attempt=$(( $(cat "$CHECKOUT_TOKEN_REQUEST_LOG") + 1 ))
     echo "$token_attempt" > "$CHECKOUT_TOKEN_REQUEST_LOG"
@@ -302,7 +307,10 @@ JSON
     # array by exporting FAKE_CHECKOUT_GRANTS_JSON as a literal JSON array;
     # every other scenario leaves it unset, so `grants` is simply absent
     # from the response, exactly like a run without the label.
-    if [ -n "${FAKE_CHECKOUT_IDENTITY_JSON:-}" ]; then
+    if [[ "$url" = */reviewer-checkout-token ]]; then
+      [ "${FAKE_REVIEWER_CHECKOUT:-}" = 1 ] && [ "${FAKE_CHECKOUT_ON_OLD_CONSOLE:-}" != 1 ] || exit 22
+      jq -cn --arg token "$checkout_token" --arg expiresAt "$expires_at" '{$token,$expiresAt,reviewerLogin:"agent-lcars-reviewer[bot]"}'
+    elif [ -n "${FAKE_CHECKOUT_IDENTITY_JSON:-}" ]; then
       echo "{\"token\":\"$checkout_token\",\"expiresAt\":null,\"refreshAt\":\"$expires_at\",\"identity\":$FAKE_CHECKOUT_IDENTITY_JSON}"
     elif [ -n "${FAKE_CHECKOUT_PR_AUTHOR_TOKEN:-}" ]; then
       echo "{\"token\":\"$checkout_token\",\"expiresAt\":\"$expires_at\",\"repository\":\"jlapenna/agent-lcars\",\"pullRequestAuthor\":{\"login\":\"agent-lcars-author[bot]\",\"token\":\"$FAKE_CHECKOUT_PR_AUTHOR_TOKEN\",\"expiresAt\":\"$expires_at\"}}"
@@ -340,6 +348,10 @@ JSON
       # The existing {runId, expiresAt} response is the compatibility surface;
       # a legacy Console with that acknowledged route remains supported.
       startup_body='{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00.000Z"}'
+      if [ "${FAKE_REVIEWER_CHECKOUT:-}" = 1 ] &&
+        grep -qxF 'header = "X-LCARS-Reviewer-Checkout: v1"' <<< "$config_body"; then
+        startup_body="$(jq -c '. + {reviewerLogin:"agent-lcars-reviewer[bot]"}' <<< "$startup_body")"
+      fi
       printf '%s\n%s' "${FAKE_STARTUP_BODY-$startup_body}" "${FAKE_STARTUP_STATUS:-200}"
     else
       [ "${FAKE_HEARTBEAT_FAIL:-}" != 1 ] || exit 22
@@ -351,7 +363,20 @@ JSON
       echo "URL=$url"
       [ -n "$data_binary_file" ] && cat "$data_binary_file"
     } >> "$COMPLETE_LOG"
-    echo '{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","state":"finished"}'
+    case "$FIXTURE_SCENARIO" in
+      completion-delivery-refused)
+        printf '{"runId":"%s","state":"ready-delivery-refused","private":"fixture-private-response"}\n200' "$LCARS_RUN_ID"
+        ;;
+      completion-evidence-unavailable)
+        if grep -q '^write-out = ' <<<"$config_body"; then
+          printf '\n503'
+          exit 22
+        fi
+        ;;
+      *)
+        printf '{"runId":"%s","state":"finished"}\n200' "$LCARS_RUN_ID"
+        ;;
+    esac
     ;;
   *)
     echo "fake curl: unhandled URL $url" >&2
@@ -520,6 +545,9 @@ python3 "$FIXTURE_TIMING_HELPER" workload "${FAKE_WORKER_SLEEP:-}" || exit $?
 if [ -n "${FAKE_WORKER_ELAPSED:-}" ]; then
   read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
   printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_WORKER_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
+fi
+if [ -n "${FAKE_AGENT_DEPENDENCY_WAIT:-}" ]; then
+  printf '%s\n<!-- attempt-claim:%s -->\n' '01J5Z3K9QX8F0N2B4V6C8D1E4J' "$ATTEMPT_ID" > "$AGENT_DEPENDENCY_OUTCOME_FILE"
 fi
 if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
   printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
@@ -734,6 +762,7 @@ if [ "${1:-}" = --pure ] && [ "${2:-}" = export ]; then
 fi
 echo "$@" >> "$OPENCODE_ARGS_LOG"
 printf '%s' "${OPENCODE_CONFIG_CONTENT:-null}" > "$OPENCODE_ENV_LOG.config"
+printf '%s' "${LCARS_REVIEWER_LOGIN:-}" > "$OPENCODE_ENV_LOG.reviewer"
 worker-control-fixture
 printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${GH_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
@@ -1237,6 +1266,28 @@ PY
   if grep -q 'fixture-secret-invalid-duration' "$retained"; then fail 'retained receipt exposed invalid workload input'; fi
   echo "scenario $provider-workload-failed: OK"
 done
+
+# The same exact published PR can be rejected by Console finalization.
+# A durable refusal acknowledgement terminates without the generic EXIT
+# callback, and a transient response gets a bounded diagnostic fallback.
+run_scenario completion-delivery-refused
+[ "$rc" -eq 1 ] || fail "delivery refusal: expected exit 1, got $rc"
+[ "$(grep -c '^URL=' "$COMPLETE_LOG")" -eq 1 ] || fail 'delivery refusal posted a second completion'
+jq -e '.outcome == "pull-request"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail 'delivery refusal did not exercise the published PR path'
+if grep -q 'fixture-private-response' "$scenario_log"; then
+  fail 'delivery refusal exposed the response body'
+fi
+
+run_scenario completion-evidence-unavailable
+[ "$rc" -eq 22 ] || fail "completion unavailable: expected exit 22, got $rc"
+[ "$(grep -c '^URL=' "$COMPLETE_LOG")" -eq 3 ] || fail 'completion unavailable missed its retry or diagnostic failure callback'
+[ "$(grep -c '"outcome":"pull-request"' "$COMPLETE_LOG")" -eq 2 ] ||
+  fail 'completion unavailable did not retry the original outcome'
+jq -e '.outcome == "completion-callback-failed"
+  and .message == "Completion temporarily unavailable (HTTP 503)."
+  and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail 'completion unavailable lost its bounded diagnosis'
 
 # --- Scenario 1: happy path (pull-request outcome) --------------------------
 # `TARGET_REPO` in the fake brief is `octo/example`, not `jlapenna/agent-
@@ -2364,8 +2415,22 @@ export FAKE_MODE=review
 export FAKE_GITHUB_PR=1
 export FAKE_GH_NO_MATCH=1
 export FAKE_GH_MARKER_REVIEW=1
-run_scenario github-review opencode
+run_scenario github-review-old-console opencode
+[ "$rc" -eq 0 ] || fail "github review on old Console: expected exit 0, got $rc"
+[ "$(cat "$OPENCODE_ENV_LOG.reviewer")" = 'agent-lcars[bot]' ] ||
+  fail "github review on old Console: publishing actor was not the fleet App"
+
+FAKE_REVIEWER_CHECKOUT=1 FAKE_CHECKOUT_ON_OLD_CONSOLE=1 run_scenario github-review-mixed-console opencode
+[ "$rc" -ne 0 ] || fail "dedicated checkout unexpectedly succeeded against old Console"
+[ ! -e "$OPENCODE_ENV_LOG.reviewer" ] || fail "provider launched after dedicated checkout was refused"
+[ -s "$CHECKOUT_TOKEN_REQUEST_LOG.routes" ] &&
+  ! grep -vxF reviewer-checkout-token "$CHECKOUT_TOKEN_REQUEST_LOG.routes" ||
+  fail "dedicated review attempted a fleet checkout"
+
+FAKE_REVIEWER_CHECKOUT=1 run_scenario github-review opencode
 unset FAKE_ANCHOR FAKE_MODE FAKE_GITHUB_PR FAKE_GH_NO_MATCH FAKE_GH_MARKER_REVIEW
+[ "$(cat "$OPENCODE_ENV_LOG.reviewer")" = 'agent-lcars-reviewer[bot]' ] ||
+  fail "github review on compatible Console: publishing actor was not the reviewer App"
 
 [ "$rc" -eq 0 ] || fail "github review: expected exit 0, got $rc"
 context_path="$scenario_runner_temp/agent-dispatch/context.json"
@@ -2548,6 +2613,19 @@ grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
   fail "no-deliverable: complete call did not report outcome: no-deliverable ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario no-deliverable: OK"
+
+# A wait receipt on a GitHub issue yields after one provider round. It is
+# submitted through authenticated completion without a GitHub park marker.
+export FAKE_ANCHOR=github FAKE_AGENT_DEPENDENCY_WAIT=1 FAKE_GH_NO_MATCH=1
+run_scenario github-agent-dependency
+unset FAKE_ANCHOR FAKE_AGENT_DEPENDENCY_WAIT FAKE_GH_NO_MATCH
+
+[ "$rc" -eq 0 ] || fail "agent dependency: expected successful handoff"
+[ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 1 ] || fail "agent dependency: launched a correction round"
+jq -e '.outcome == "wait-for-agent" and .outcomeReference == "01J5Z3K9QX8F0N2B4V6C8D1E4J"' \
+  < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "agent dependency: missing validated receipt"
+
+echo "scenario github-agent-dependency: OK"
 
 # --- Scenario 3: brief 401 (expired/invalid run token) ----------------------
 # The very first call (GET .../brief) fails closed. direct-runner.sh must

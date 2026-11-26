@@ -22,16 +22,18 @@ import {
 } from '@/lib/github-actions-oidc';
 import {
   createDispatchTokenProvider,
+  createReviewerTokenProvider,
   DIRECT_RUNNER_PERMISSIONS,
   lazyDispatchTokenProvider,
   ORCHESTRATOR_GITHUB_PERMISSIONS,
-  pullRequestAuthorTokenProvider,
 } from '@/lib/github-app-tokens';
 import { jobSecretsHttp } from '@/lib/job-secrets-http';
 import {
   createOrchestratorRuntime,
   createScheduleStore,
 } from '@/lib/orchestrator-runtime';
+import { publishOutlineSourceJob } from '@/lib/outline-event-source';
+import { outlineEventStore } from '@/lib/outline-event-store';
 import { repositoryJobsHttp } from '@/lib/repository-jobs-http';
 import { createRunsHandler } from '@/lib/runs-router';
 import {
@@ -128,6 +130,22 @@ async function handle(request: Request): Promise<Response> {
         // A run subscribing its Work presents its run token (#3570).
         ...(bearerToken === undefined ? {} : { bearerToken }),
         githubRepositories: controlPlaneRepositories(),
+        ...(process.env.AGENT_LCARS_OUTLINE_WEBHOOK_SECRET
+          ? {
+              outline: {
+                store: outlineEventStore,
+                publish: publishOutlineSourceJob,
+                drain: async () => {
+                  await runtime.drain();
+                },
+                routing: {
+                  store: agentEventSubscriptionStore,
+                  publisher: defaultAgentEventPublisher,
+                  resumeWork: queueWorkEventResume(runtime.orchestrator),
+                },
+              },
+            }
+          : {}),
         readRun: (runId) => runtime.store.readRun(runId),
         store: agentEventSubscriptionStore,
         getSessionDoc: sessionForResume,
@@ -172,6 +190,8 @@ async function handle(request: Request): Promise<Response> {
   const runsResult = await runsHandler.handle(request, {
     prefix: PREFIX,
     context: {
+      reviewerCheckoutV1:
+        request.headers.get('x-lcars-reviewer-checkout') === 'v1',
       ...(bearerToken === undefined ? {} : { bearerToken }),
       ...(principal === undefined ? {} : { principal }),
       store: runtime.store,
@@ -212,8 +232,9 @@ async function handle(request: Request): Promise<Response> {
       checkoutTokens: lazyDispatchTokenProvider(() =>
         createDispatchTokenProvider(process.env, DIRECT_RUNNER_PERMISSIONS),
       ),
-      pullRequestAuthorTokens: () =>
-        pullRequestAuthorTokenProvider(process.env),
+      reviewerTokens: lazyDispatchTokenProvider(() =>
+        createReviewerTokenProvider(process.env),
+      ),
       codexAuth: codexAuthStore('agent-lcars-codex-auth'),
     },
   });

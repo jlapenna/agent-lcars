@@ -2549,49 +2549,34 @@ describe('items routes', () => {
     expect(capped.json.items).toHaveLength(1);
   });
 
-  // Issue #1546: `list` reads a `limit`-bounded page of native tasks
-  // (newest-first by workId) and filters by state AFTERWARD, so an item
-  // that is still running but was created before a run of newer,
-  // already-settled ones is entirely absent from a page sized smaller
-  // than the fleet's native-task history -- no matter what `state` asks
-  // for. `nextCursor` is the fix: a caller who keeps paging with it
-  // reaches every native task, not just the newest `limit` of them.
-  it('reaches a running item beyond the first page only via nextCursor', async () => {
+  it('pages through matching state without loading runs for newer nonmatches', async () => {
     const ctx = context();
-    const OLDEST = '01J5Z3K9QX8F0N2B4V6C8D1E3A';
-    const NEWER1 = '01J5Z3K9QX8F0N2B4V6C8D1E3B';
-    const NEWER2 = '01J5Z3K9QX8F0N2B4V6C8D1E3C';
+    const oldest = '01J5Z3K9QX8F0N2B4V6C8D1E3A';
+    const middle = '01J5Z3K9QX8F0N2B4V6C8D1E3B';
+    const newest = '01J5Z3K9QX8F0N2B4V6C8D1E3C';
 
-    // OLDEST is created first and stays running. NEWER1/NEWER2 are
-    // created after it (greater workId = newer in creation order) and
-    // then settled -- so the two newest native tasks are both canceled,
-    // and OLDEST, the only running one, sits on the page behind them.
-    await call(ctx, 'PUT', `/items/${OLDEST}`, { spec });
-    await call(ctx, 'PUT', `/items/${NEWER1}`, { spec });
-    await call(ctx, 'POST', `/items/${NEWER1}/cancel`);
-    await call(ctx, 'PUT', `/items/${NEWER2}`, { spec });
-    await call(ctx, 'POST', `/items/${NEWER2}/cancel`);
+    for (const id of [oldest, middle, newest]) {
+      await call(ctx, 'PUT', `/items/${id}`, { spec });
+    }
+    await call(ctx, 'POST', `/items/${newest}/cancel`);
 
-    // A page of the 2 newest native tasks (NEWER2, NEWER1) is entirely
-    // canceled, so filtering it by state=running finds nothing on this
-    // page -- even though a running item (OLDEST) exists in the store.
-    const firstPage = await call(ctx, 'GET', '/items?state=running&limit=2');
-    expect(firstPage.json.items).toEqual([]);
-    // The raw page was full (2 native tasks read for a limit of 2), so
-    // more may exist behind it -- a caller must keep paging, not treat
-    // an empty `items` array as "nothing left to find".
-    expect(firstPage.json.nextCursor).toBe(NEWER1);
+    const runs = vi.spyOn(ctx.runtime.store, 'listRunsForTasks');
+    const first = await call(ctx, 'GET', '/items?state=running&limit=1');
+    expect(first.json.items.map((item: { id: string }) => item.id)).toEqual([
+      middle,
+    ]);
+    expect(first.json.nextCursor).toBe(middle);
+    expect(runs).toHaveBeenNthCalledWith(1, [{ workId: middle }]);
 
-    const secondPage = await call(
+    const second = await call(
       ctx,
       'GET',
-      `/items?state=running&limit=2&cursor=${firstPage.json.nextCursor}`,
+      `/items?state=running&limit=1&cursor=${first.json.nextCursor}`,
     );
-    expect(secondPage.json.items.map((i: { id: string }) => i.id)).toEqual([
-      OLDEST,
+    expect(second.json.items.map((item: { id: string }) => item.id)).toEqual([
+      oldest,
     ]);
-    // The store is exhausted: no more native tasks behind OLDEST.
-    expect(secondPage.json.nextCursor).toBeUndefined();
+    expect(runs).toHaveBeenNthCalledWith(2, [{ workId: oldest }]);
   });
 });
 
@@ -3035,30 +3020,14 @@ describe('GET /anchors/github/owner', () => {
     return decidedRun(outcome).runId;
   }
 
-  it.each(['referenced', 'legacy'] as const)(
-    'returns the full %s run issue to a read-only caller',
-    async (storage) => {
-      const ctx = context({ principal: readerOnly });
-      const runId = await admit(ctx, admittedIssue);
-      if (storage === 'legacy') {
-        const task = (await ctx.runtime.store.readTask(anchor))!;
-        const { issueSnapshot: _reference, ...run } =
-          (await ctx.runtime.store.readRun(runId))!;
-        await ctx.runtime.store.apply({
-          expectedRevision: task.revision,
-          decision: {
-            task: task.task,
-            run: { ...run, issue: admittedIssue },
-            outbox: [],
-          },
-        });
-      }
+  it('returns the full referenced run issue to a read-only caller', async () => {
+    const ctx = context({ principal: readerOnly });
+    await admit(ctx, admittedIssue);
 
-      const owner = await call(ctx, 'GET', path);
-      expect(owner.status).toBe(200);
-      expect(owner.json.task.run.issue).toEqual(admittedIssue);
-    },
-  );
+    const owner = await call(ctx, 'GET', path);
+    expect(owner.status).toBe(200);
+    expect(owner.json.task.run.issue).toEqual(admittedIssue);
+  });
 
   it('requires work.operator; reaper, executor, cron and anonymous are refused', async () => {
     for (const principal of [undefined, executorOnly, cronTick, reaperOnly]) {
@@ -3574,9 +3543,12 @@ describe('shared repository authority', () => {
         (await call(ctx, method, `/items/${ID}${suffix}`, body)).status,
       ).toBe(403);
     }
-    const listed = await call(ctx, 'GET', '/items?limit=1');
-    expect(listed.json.items).toEqual([]);
-    expect(listed.json.nextCursor).toBe(ID);
+    for (const filter of ['', '&state=running', '&state=done']) {
+      const listed = await call(ctx, 'GET', `/items?limit=1${filter}`);
+      expect(listed.status).toBe(200);
+      expect(listed.json.items).toEqual([]);
+      expect(listed.json.nextCursor).toBe(ID);
+    }
     expect(await ctx.runtime.store.readTask({ workId: ID })).toEqual(before);
     ctx.principal = {
       ...githubActionsOperator,

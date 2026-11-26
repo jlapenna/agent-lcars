@@ -134,6 +134,25 @@ the completion request may take 10 of them, so a harness that cannot be seen
 to stop is given 12 seconds and its host 3 more before the run is settled
 without them.
 
+### OpenClaw harness memory
+
+The isolated OpenClaw host requires a readable cgroup v2 memory controller and
+a finite container limit. It checks the harness cgroup before launch and
+samples its working set every 100 ms through setup, the turn and cleanup.
+The working set subtracts reclaimable inactive file cache from charged memory.
+It fails the attempt when remaining headroom reaches 20% of the limit or
+512 MiB, whichever is smaller. The threshold is 2176 MiB for a 2688 MiB
+harness. This gives the Gateway, ACP bridge and tools room to stop and accounts
+for native memory, subprocesses and other charges as well as the Node heap.
+
+A guard trip settles Work as `runner-failed` with the measured usage and limit.
+An increase in the kernel's `memory.events` `oom_kill` counter during the
+attempt has its own diagnosis. A sudden allocation can still cross the hard
+limit between samples and kill the host. If the launcher only sees the socket
+disconnect, it records loss of the harness connection with an unconfirmed
+cause. Use Kubernetes container termination status and node logs for that
+case. These failures retain the Work attempt's existing bounded retry policy.
+
 ## Launch sequence
 
 Each step fails the attempt closed with a `runner-failed` completion:

@@ -41,6 +41,7 @@ vi.mock('@mantine/notifications', () => ({
   notifications: { show: vi.fn() },
 }));
 
+const HEAD = 'a'.repeat(40);
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 
 function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
@@ -166,6 +167,7 @@ describe('ItemOverflowMenu', () => {
     renderMenu(
       makeItem({
         kind: 'pr',
+        headSha: HEAD,
         actionTypes: ['review-requested'],
         mergeableState: 'clean',
       }),
@@ -174,7 +176,9 @@ describe('ItemOverflowMenu', () => {
 
     fireEvent.click(screen.getByText('Approve & Merge'));
 
-    await waitFor(() => expect(mergePr).toHaveBeenCalledWith(DEFAULT_REPO, 42));
+    await waitFor(() =>
+      expect(mergePr).toHaveBeenCalledWith(DEFAULT_REPO, 42, HEAD),
+    );
     expect(modals.openConfirmModal).toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'Merge #42?',
@@ -194,6 +198,7 @@ describe('ItemOverflowMenu', () => {
     renderMenu(
       makeItem({
         kind: 'pr',
+        headSha: HEAD,
         actionTypes: ['review-requested'],
         mergeableState: 'clean',
       }),
@@ -217,6 +222,7 @@ describe('ItemOverflowMenu', () => {
     renderMenu(
       makeItem({
         kind: 'pr',
+        headSha: HEAD,
         actionTypes: ['review-requested'],
         mergeableState: 'behind',
       }),
@@ -227,12 +233,13 @@ describe('ItemOverflowMenu', () => {
     fireEvent.click(screen.getByText('Approve & Rebase'));
 
     await waitFor(() =>
-      expect(approveAndRebase).toHaveBeenCalledWith(DEFAULT_REPO, 42),
+      expect(approveAndRebase).toHaveBeenCalledWith(DEFAULT_REPO, 42, HEAD),
     );
     expect(mergePr).not.toHaveBeenCalled();
     expect(notifications.show).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: '#42 approved, branch updated, auto-merge enabled',
+        message:
+          'Approval recorded, squash auto-merge enabled, and branch update requested.',
         color: 'green',
       }),
     );
@@ -242,6 +249,7 @@ describe('ItemOverflowMenu', () => {
     renderMenu(
       makeItem({
         kind: 'pr',
+        headSha: HEAD,
         actionTypes: ['review-requested'],
         mergeableState: 'draft',
         draft: true,
@@ -258,6 +266,7 @@ describe('ItemOverflowMenu', () => {
     renderMenu(
       makeItem({
         kind: 'pr',
+        headSha: HEAD,
         actionTypes: ['review-requested'],
         ...state,
       }),

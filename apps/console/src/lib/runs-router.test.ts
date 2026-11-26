@@ -1,8 +1,11 @@
 import crypto from 'node:crypto';
 
 import {
+  formatAttemptId,
+  formatClaimMarker,
   RUN_MESSAGE_MAX_BYTES,
   RUN_MESSAGE_PREVIEW_MAX,
+  type TrackerIssue,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
@@ -17,6 +20,7 @@ import {
   reserveCredentialOperation,
   type Run,
   runRecoveryDeadline,
+  runSchema,
 } from '@agent-lcars/orchestrator';
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -30,7 +34,10 @@ import { recoverCodexCredentialOperations } from './codex-credential-operations'
 import { codexCentralAuthObject } from './deployment';
 import { TRIAGE_DESCRIPTION } from './fleet-triage-work';
 import { drainOutbox } from './orchestrator-dispatch';
-import { UnqualifiedDeliveryError } from './ready-delivery';
+import {
+  readyDeliveryBinding,
+  UnqualifiedDeliveryError,
+} from './ready-delivery';
 import { agentKey } from './repository-agent-definition';
 import { admitAgentRun } from './repository-agent-runs';
 import type { AgentStore } from './repository-agent-store';
@@ -1153,6 +1160,197 @@ describe('claim', () => {
   });
 });
 
+describe('implementation dependency completion', () => {
+  async function admitChild(
+    orchestrator: Orchestrator,
+    workId: string,
+    principal: string,
+  ) {
+    await orchestrator.request({
+      taskId: { workId },
+      requestId: 'investigate',
+      pipeline: 'claw-investigator',
+      work: {
+        origin: { principal, channel: 'console' },
+        spec: {
+          pipeline: 'claw-investigator',
+          agent: 'octo/example/investigator',
+          priority: 'background',
+          title: 'Investigation',
+          description: 'Collect evidence',
+          sourceKey: 'investigate',
+        },
+      },
+    });
+  }
+
+  async function projectAnchor(store: OrchestratorStore, kind: 'issue' | 'pr') {
+    const anchor = { repo: 'jlapenna/agent-lcars', issue: 3635 };
+    const generation = await store.beginGithubAnchorProjectionRefresh(anchor);
+    await store.applyGithubAnchorProjectionRefresh({
+      anchor,
+      generation,
+      projection: {
+        anchor,
+        kind,
+        state: 'open',
+        title: 'Implementation',
+        body: '',
+        url: `https://github.com/${anchor.repo}/${kind === 'pr' ? 'pull' : 'issues'}/${anchor.issue}`,
+        labels: [],
+        assigneeLogins: [],
+        sourceUpdatedAt: NOW,
+        observedAt: NOW,
+      },
+    });
+  }
+
+  it.each(['repository job', 'pull request', 'unknown GitHub anchor'] as const)(
+    'does not advertise or accept a dependency wait for a %s',
+    async (kind) => {
+      const f = fixture();
+      const runId =
+        kind === 'repository job'
+          ? await seedQueuedRun(f.store, f.orchestrator, {
+              workId: wid('repository-job'),
+              now: NOW,
+              params: { mode: 'implement', jobOccurrence: 'occurrence-id' },
+            })
+          : await seedQueuedGithubRun(f.store, f.orchestrator, 3635);
+      if (kind === 'pull request') await projectAnchor(f.store, 'pr');
+
+      const claim = await call(
+        { ...context, ...f, principal: executorPrincipal(['claude']) },
+        'POST',
+        '/runs/claim',
+        { runner: 'runner-1' },
+      );
+      expect(claim.status).toBe(200);
+      const runContext = {
+        ...context,
+        ...f,
+        bearerToken: (claim.json as { token: string }).token,
+      };
+      const brief = await call(runContext, 'GET', runPath(runId, '/brief'));
+      expect(brief.status).toBe(200);
+      expect(brief.json).not.toHaveProperty('agentDependencyWait');
+
+      const workId = wid('owned-investigator');
+      await admitChild(f.orchestrator, workId, `run:${runId}`);
+      const result = await call(
+        runContext,
+        'POST',
+        runPath(runId, '/complete'),
+        {
+          outcome: 'wait-for-agent',
+          outcomeReference: workId,
+        },
+      );
+      expect(result.status).toBe(409);
+      expect((await f.store.readRun(runId))?.result).toBeUndefined();
+      expect(
+        (await call(runContext, 'GET', runPath(runId, '/brief'))).status,
+      ).toBe(200);
+    },
+  );
+
+  it('accepts only an investigator admitted by this authenticated attempt', async () => {
+    const f = fixture();
+    const runId = await seedQueuedGithubRun(f.store, f.orchestrator, 3635);
+    await projectAnchor(f.store, 'issue');
+    const claim = await call(
+      { ...context, ...f, principal: executorPrincipal(['claude']) },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+    expect(claim.status).toBe(200);
+    const runContext = {
+      ...context,
+      ...f,
+      bearerToken: (claim.json as { token: string }).token,
+    };
+    const brief = await call(runContext, 'GET', runPath(runId, '/brief'));
+    expect(brief.json).toMatchObject({ agentDependencyWait: true });
+    const owned = wid('owned-investigator');
+    const foreign = wid('foreign-investigator');
+    await admitChild(f.orchestrator, owned, `run:${runId}`);
+    await admitChild(f.orchestrator, foreign, 'run:another-attempt');
+    const complete = (workId: string) =>
+      call(runContext, 'POST', runPath(runId, '/complete'), {
+        outcome: 'wait-for-agent',
+        outcomeReference: workId,
+      });
+    expect((await complete(foreign)).status).toBe(404);
+    expect((await complete(wid('unknown-investigator'))).status).toBe(404);
+    expect((await complete(owned)).json).toMatchObject({ state: 'finished' });
+    expect((await f.store.readRun(runId))?.result).toEqual({
+      ok: true,
+      summary: 'waiting-for-agent',
+      dependencyWorkId: owned,
+    });
+    const parent = (await f.store.readRun(runId))!;
+    await f.orchestrator.executorExited(runId, {
+      subject: parent.queue!.claimedBySubject!,
+      runner: 'runner-1',
+      claimFingerprint: parent.queue!.tokenHash!,
+    });
+    const child = (await f.store.listRuns({ workId: owned }))[0]!;
+    await f.orchestrator.report(child.runId, {
+      ok: false,
+      summary: 'agent-failed',
+      message: 'The host returned only partial data.',
+    });
+    const successor = await f.orchestrator.request({
+      taskId: parent.task,
+      requestId: `wait-for-agent/${runId}`,
+      requestSource: 'event',
+      expectedDependency: { runId, workId: owned },
+      pipeline: parent.pipeline,
+      params: {
+        mode: 'implement',
+        context: 'original implementation context',
+        dependencyParentRunId: runId,
+        dependencyChildRunId: child.runId,
+        dependencyState: 'failed',
+      },
+    });
+    expect(successor).not.toHaveProperty('refused');
+    const successorId = successor.run!.runId;
+    await f.store.enqueueRun({ runId: successorId, now: NOW });
+    await f.orchestrator.confirmDispatch(successorId);
+    const newClaim = await call(
+      { ...context, ...f, principal: executorPrincipal(['claude']) },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-2' },
+    );
+    expect(newClaim.status).toBe(200);
+    expect(
+      (await call(runContext, 'GET', runPath(runId, '/brief'))).status,
+    ).toBe(401);
+    const successorBrief = await call(
+      {
+        ...runContext,
+        bearerToken: (newClaim.json as { token: string }).token,
+      },
+      'GET',
+      runPath(successorId, '/brief'),
+    );
+    expect(successorBrief.json).toMatchObject({
+      context: 'original implementation context',
+      agentDependency: {
+        workId: owned,
+        state: 'failed',
+        ok: false,
+        summary: 'agent-failed',
+        report: 'The host returned only partial data.',
+        reportAvailability: 'complete',
+      },
+    });
+  });
+});
+
 describe('claim -> brief -> heartbeat -> complete', () => {
   it('settles the run finished/ok and the item derives done', async () => {
     const { store, orchestrator, now } = fixture();
@@ -1798,8 +1996,21 @@ describe('brief', () => {
 
   it('serves a GitHub issue or pull-request anchor with all direct-runner metadata', async () => {
     const { store, orchestrator, now } = fixture();
+    const taskId = { repo: 'octo/example', issue: 42 };
+    const issue = {
+      reference: { tracker: 'github', ...taskId },
+      identifier: 'octo/example#42',
+      title: 'Admitted issue',
+      description: 'Admitted issue body.',
+      url: 'https://github.com/octo/example/issues/42',
+      state: 'open',
+      updatedAt: '2026-08-26T09:00:00.000Z',
+      labels: [],
+      assignees: [],
+    } satisfies TrackerIssue;
     const outcome = await orchestrator.request({
-      taskId: { repo: 'octo/example', issue: 42 },
+      taskId,
+      issue,
       requestId: 'github-brief',
       pipeline: 'opencode',
       work: {
@@ -1833,6 +2044,13 @@ describe('brief', () => {
       tokenHash: hashRunToken(token),
     });
 
+    expect(outcome.run.issueSnapshot?.id).toBeDefined();
+    await orchestrator.refreshIssue(taskId, {
+      ...issue,
+      description: 'Edited issue body.',
+      updatedAt: NOW,
+    });
+
     const r = await call(
       { store, orchestrator, now, ...context, bearerToken: token },
       'GET',
@@ -1847,6 +2065,7 @@ describe('brief', () => {
         issue: 42,
         html_url: 'https://github.com/octo/example/issues/42',
       },
+      issue,
       pipeline: 'opencode',
       mode: 'review',
       reply: '/opencode review this',
@@ -1859,7 +2078,8 @@ describe('brief', () => {
     expect(r.json).toMatchObject({
       work: {
         spec: {
-          title: 'GitHub brief',
+          title: issue.title,
+          description: issue.description,
           pipeline: 'opencode',
           target: { repo: 'octo/example' },
         },
@@ -3624,6 +3844,72 @@ describe('complete', () => {
     expect(run.result).toBeUndefined();
   });
 
+  it.each([
+    { reason: 'draft-hold', matching: true },
+    { reason: 'invalid-pr-claim', matching: false },
+  ])(
+    'retains $reason across a legacy runner failure callback',
+    async ({ reason, matching }) => {
+      const f = await claimedForCompletion(`work-complete-${reason}`);
+      const marker = formatClaimMarker(
+        formatAttemptId({ intentId: f.runId, generation: 1 }),
+      );
+      const fetchImpl = vi.fn(async () =>
+        Response.json({
+          number: 4,
+          body: matching ? marker : '<!-- attempt-claim:old -->',
+          state: 'open',
+          draft: true,
+          head: { sha: 'a'.repeat(40) },
+          base: { ref: 'main' },
+          user: { login: 'agent-lcars[bot]' },
+          merged: false,
+          merge_commit_sha: null,
+          auto_merge: null,
+        }),
+      );
+      const ctx = {
+        ...f,
+        ...context,
+        bearerToken: f.token,
+        loadReadyDeliveryBinding: (
+          deps: Parameters<typeof readyDeliveryBinding>[0],
+          input: Parameters<typeof readyDeliveryBinding>[1],
+        ) => readyDeliveryBinding({ ...deps, fetchImpl }, input),
+      };
+      const path = runPath(f.runId, '/complete');
+      expect(
+        await call(ctx, 'POST', path, {
+          outcome: 'pull-request',
+          outcomeReference: { kind: 'pull-request', number: 4 },
+          message: 'Worker says the PR is ready',
+        }),
+      ).toEqual({
+        status: 200,
+        json: { runId: f.runId, state: 'ready-delivery-refused' },
+      });
+      expect(fetchImpl).toHaveBeenCalledOnce();
+
+      await call(ctx, 'POST', path, {
+        outcome: 'runner-failed',
+        outcomeReference: null,
+        message: 'Runner setup or finalization failed (exit 22).',
+      });
+
+      const run = (await f.store.readRun(f.runId))!;
+      expect(run.state).toBe('finished');
+      expect(run.result).toEqual({
+        ok: false,
+        summary: 'ready-delivery-refused',
+        message: reason,
+        ...(matching
+          ? { ref: 'https://github.com/jlapenna/agent-lcars/pull/4' }
+          : {}),
+      });
+      expect((await f.store.readTask(run.task))!.task.delivery).toBeUndefined();
+    },
+  );
+
   it('settles an initial PR whose ready handoff is not yet qualified, without delivery ownership', async () => {
     const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
@@ -3741,132 +4027,199 @@ describe('checkoutToken', () => {
     expect(JSON.stringify(body)).not.toContain(runToken);
   });
 
-  describe('pull-request author App (#3522)', () => {
-    async function claimedRun(work: string) {
+  it.each([
+    { crossRepo: false, reviewerCheckoutV1: false },
+    { crossRepo: true, reviewerCheckoutV1: false },
+    { crossRepo: false, reviewerCheckoutV1: true },
+    { crossRepo: true, reviewerCheckoutV1: true },
+  ])(
+    'selects the review checkout App for $reviewerCheckoutV1 (crossRepo=$crossRepo)',
+    async ({ crossRepo, reviewerCheckoutV1 }) => {
       const { store, orchestrator, now } = fixture();
       const runId = await seedQueuedRun(store, orchestrator, {
-        workId: wid(work),
+        workId: wid('review-checkout'),
         now: NOW,
+        params: { mode: 'review', ...(crossRepo ? { crossRepo: 'true' } : {}) },
       });
-      const runToken = mintRunToken();
+      const bearer = mintRunToken();
       await store.claimQueuedRun({
         pipelines: ['claude'],
         now: NOW,
-        claimedBy: 'runner-1',
-        claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
-        tokenHash: hashRunToken(runToken),
+        claimedBy: 'review-runner',
+        claimedBySubject: 'executor@example.com',
+        tokenHash: hashRunToken(bearer),
       });
-      return { store, orchestrator, now, runId, runToken };
-    }
-    const expiresAt = '2026-08-26T10:53:21.000Z';
-    const checkoutTokens = {
-      tokenFor: async () => 'ghs_checkout',
-      expiringTokenFor: async () => ({ token: 'ghs_checkout', expiresAt }),
-      expiringTokenForRepositories: async () => ({
-        token: 'ghs_checkout',
-        expiresAt,
-      }),
-    };
-
-    it("returns the author App's token for the anchor repository", async () => {
-      const { store, orchestrator, now, runId, runToken } = await claimedRun(
-        'work-pr-author-token',
-      );
-      const authorTokenFor = vi.fn(async (repo: string) => ({
-        token: `ghs_author-for-${repo}`,
+      const expiresAt = '2026-08-26T10:53:21.000Z';
+      const reviewer = {
+        tokenFor: vi.fn(async () => 'review-token'),
+        expiringTokenFor: vi.fn(async () => ({
+          token: 'review-token',
+          expiresAt,
+        })),
+        expiringTokenForRepositories: vi.fn(async () => ({
+          token: 'review-token',
+          expiresAt,
+        })),
+      };
+      const fleetMint = vi.fn(async () => ({
+        token: 'fleet-token',
         expiresAt,
       }));
-      const r = await call(
-        {
-          store,
-          orchestrator,
-          now,
-          tokens: context.tokens,
-          checkoutTokens,
-          pullRequestAuthorTokens: () => ({
-            tokenFor: async (repo) => (await authorTokenFor(repo)).token,
-            expiringTokenFor: authorTokenFor,
-            expiringTokenForRepositories: async () => {
-              throw new Error('not used');
-            },
-          }),
-          codexAuth: context.codexAuth,
-          bearerToken: runToken,
+      const checkoutContext = {
+        ...context,
+        store,
+        orchestrator,
+        now,
+        bearerToken: bearer,
+        reviewerTokens: reviewer,
+        reviewerCheckoutV1,
+        checkoutTokens: {
+          tokenFor: async () => 'fleet-token',
+          expiringTokenFor: fleetMint,
+          expiringTokenForRepositories: fleetMint,
         },
-        'GET',
-        runPath(runId, '/checkout-token'),
+      };
+      for (const path of ['/checkout-token', '/reviewer-checkout-token']) {
+        const premature = await call(
+          checkoutContext,
+          'GET',
+          runPath(runId, path),
+        );
+        expect(premature.status).toBe(409);
+      }
+      expect(fleetMint).not.toHaveBeenCalled();
+      expect(reviewer.expiringTokenFor).not.toHaveBeenCalled();
+      expect(reviewer.expiringTokenForRepositories).not.toHaveBeenCalled();
+      const heartbeatPath = runPath(runId, '/heartbeat');
+      const startup = await call(checkoutContext, 'POST', heartbeatPath);
+      expect(startup.status).toBe(200);
+      const login = reviewerCheckoutV1
+        ? 'agent-lcars-reviewer[bot]'
+        : undefined;
+      expect((startup.json as { reviewerLogin?: string }).reviewerLogin).toBe(
+        login,
       );
+
+      // A fleet heartbeat models the startup acknowledged by old Console.
+      // A later capability header cannot upgrade that in-flight review.
+      const renewalContext = {
+        ...checkoutContext,
+        reviewerCheckoutV1: !reviewerCheckoutV1,
+      };
+      const later = await call(renewalContext, 'POST', heartbeatPath);
+      expect(later.status).toBe(200);
+      expect((later.json as { reviewerLogin?: string }).reviewerLogin).toBe(
+        login,
+      );
+      const selectedPath = runPath(
+        runId,
+        reviewerCheckoutV1 ? '/reviewer-checkout-token' : '/checkout-token',
+      );
+      const otherPath = runPath(
+        runId,
+        reviewerCheckoutV1 ? '/checkout-token' : '/reviewer-checkout-token',
+      );
+      const wrongRoute = await call(renewalContext, 'GET', otherPath);
+      expect(wrongRoute.status).toBe(409);
+      expect(fleetMint).not.toHaveBeenCalled();
+      expect(reviewer.expiringTokenFor).not.toHaveBeenCalled();
+      expect(reviewer.expiringTokenForRepositories).not.toHaveBeenCalled();
+      const beforeCheckout = runSchema.parse(await store.readRun(runId));
+      const r = await call(renewalContext, 'GET', selectedPath);
       expect(r.status).toBe(200);
-      expect(authorTokenFor).toHaveBeenCalledWith('jlapenna/agent-lcars');
-      const body = r.json as { token: string; pullRequestAuthor?: unknown };
-      expect(body.token).toBe('ghs_checkout');
-      expect(body.pullRequestAuthor).toEqual({
-        login: 'agent-lcars-author[bot]',
-        token: 'ghs_author-for-jlapenna/agent-lcars',
-        expiresAt,
+      expect(r.json).toMatchObject({
+        token: reviewerCheckoutV1 ? 'review-token' : 'fleet-token',
       });
-    });
+      expect(r.json).not.toHaveProperty('identity');
+      expect((r.json as { reviewerLogin?: string }).reviewerLogin).toBe(
+        reviewerCheckoutV1 ? 'agent-lcars-reviewer[bot]' : undefined,
+      );
+      expect(fleetMint.mock.calls.length > 0).toBe(!reviewerCheckoutV1);
+      expect(reviewer.expiringTokenFor.mock.calls).toEqual(
+        reviewerCheckoutV1 && !crossRepo ? [['jlapenna/agent-lcars']] : [],
+      );
+      expect(reviewer.expiringTokenForRepositories.mock.calls.length > 0).toBe(
+        reviewerCheckoutV1 && crossRepo,
+      );
+      const body = r.json as { token: string; grants?: { token: string }[] };
+      expect((body.grants?.length ?? 0) > 0).toBe(crossRepo);
+      expect(
+        body.grants?.every((grant) => grant.token === body.token) ?? true,
+      ).toBe(true);
+      const renewed = await call(renewalContext, 'GET', selectedPath);
+      expect(renewed).toEqual(r);
+      // Checkout and renewal do not alter the startup binding.
+      expect(await store.readRun(runId)).toEqual(beforeCheckout);
+      expect(fleetMint.mock.calls.length > 0).toBe(!reviewerCheckoutV1);
+      expect(
+        reviewer.expiringTokenFor.mock.calls.length +
+          reviewer.expiringTokenForRepositories.mock.calls.length >
+          0,
+      ).toBe(reviewerCheckoutV1);
+    },
+  );
 
-    it('still returns the checkout token when the author App key is malformed', async () => {
-      const { store, orchestrator, now, runId, runToken } = await claimedRun(
-        'work-pr-author-bad-key',
-      );
-      const r = await call(
-        {
-          store,
-          orchestrator,
-          now,
-          tokens: context.tokens,
-          checkoutTokens,
-          pullRequestAuthorTokens: () => {
-            throw new Error('GitHub App private key is not a valid PEM');
-          },
-          codexAuth: context.codexAuth,
-          bearerToken: runToken,
+  it.each(['absent', 'failed'])(
+    'refuses a review checkout when reviewer credentials are %s',
+    async (failure) => {
+      const { store, orchestrator, now } = fixture();
+      const runId = await seedQueuedRun(store, orchestrator, {
+        workId: wid('review-refusal'),
+        now: NOW,
+        params: { mode: 'review' },
+      });
+      const bearer = mintRunToken();
+      await store.claimQueuedRun({
+        pipelines: ['claude'],
+        now: NOW,
+        claimedBy: 'review-runner',
+        claimedBySubject: 'executor@example.com',
+        tokenHash: hashRunToken(bearer),
+      });
+      const failed = vi.fn(async () => {
+        throw new Error('reviewer mint refused');
+      });
+      const fleetMint = vi.fn(async () => ({
+        token: 'fleet-token',
+        expiresAt: NOW,
+      }));
+      const checkoutContext = {
+        ...context,
+        store,
+        orchestrator,
+        now,
+        bearerToken: bearer,
+        reviewerCheckoutV1: true,
+        ...(failure === 'failed'
+          ? {
+              reviewerTokens: {
+                tokenFor: failed,
+                expiringTokenFor: failed,
+                expiringTokenForRepositories: failed,
+              },
+            }
+          : {}),
+        checkoutTokens: {
+          tokenFor: async () => 'fleet-token',
+          expiringTokenFor: fleetMint,
+          expiringTokenForRepositories: fleetMint,
         },
-        'GET',
-        runPath(runId, '/checkout-token'),
+      };
+      const startup = await call(
+        checkoutContext,
+        'POST',
+        runPath(runId, '/heartbeat'),
       );
-      expect(r.status).toBe(200);
-      const body = r.json as { token: string; pullRequestAuthor?: unknown };
-      expect(body.token).toBe('ghs_checkout');
-      expect(body.pullRequestAuthor).toBeUndefined();
-    });
-
-    it('still returns the checkout token when the author App cannot mint', async () => {
-      const { store, orchestrator, now, runId, runToken } = await claimedRun(
-        'work-pr-author-missing',
-      );
+      expect(startup.status).toBe(200);
       const r = await call(
-        {
-          store,
-          orchestrator,
-          now,
-          tokens: context.tokens,
-          checkoutTokens,
-          pullRequestAuthorTokens: () => ({
-            tokenFor: async () => {
-              throw new Error('not installed');
-            },
-            expiringTokenFor: async () => {
-              throw new Error('not installed');
-            },
-            expiringTokenForRepositories: async () => {
-              throw new Error('not installed');
-            },
-          }),
-          codexAuth: context.codexAuth,
-          bearerToken: runToken,
-        },
+        checkoutContext,
         'GET',
-        runPath(runId, '/checkout-token'),
+        runPath(runId, '/reviewer-checkout-token'),
       );
-      expect(r.status).toBe(200);
-      const body = r.json as { token: string; pullRequestAuthor?: unknown };
-      expect(body.token).toBe('ghs_checkout');
-      expect(body.pullRequestAuthor).toBeUndefined();
-    });
-  });
+      expect(r.status).toBe(failure === 'absent' ? 409 : 500);
+      expect(fleetMint).not.toHaveBeenCalled();
+    },
+  );
 
   // #1993: `agent-option:cross-repo` -- one grant per fleet owner among
   // `getWatchedRepos()`, minted through `expiringTokenForRepositories`.

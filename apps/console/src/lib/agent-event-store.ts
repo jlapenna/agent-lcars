@@ -4,6 +4,8 @@ import { required } from '@agent-lcars/util-server';
 import { type AgentEventSubscription } from '@agent-lcars/work';
 import { Firestore } from '@google-cloud/firestore';
 
+import { OUTLINE_AGENT_DOCUMENTS } from './outline-event-store';
+
 /**
  * Event subscriptions the router delivers to (#3538). One document per
  * subscription in the dispatch database's `agentEventSubscriptions`
@@ -39,12 +41,25 @@ export interface AgentEventSubscriptionStore {
   listForKey(key: string): Promise<StoredAgentEventSubscription[]>;
   /** A source prefix, used to find subscribed PRs affected by a base push. */
   listForKeyPrefix(prefix: string): Promise<StoredAgentEventSubscription[]>;
+  /** Undefined when only legacy history may be available. */
+  outlineFallbackEligible(documentId: string): Promise<boolean | undefined>;
   /** Whether a document was removed. */
   delete(id: string): Promise<boolean>;
   /** Records that `eventId` was published for the subscription, or removes
    * the subscription when that event ended it. A subscription removed in
    * the meantime stays removed. */
-  settleRouted(id: string, eventId: string, ended: boolean): Promise<void>;
+  settleRouted(
+    id: string,
+    eventId: string,
+    ended: boolean,
+    undeliverable?: boolean,
+  ): Promise<void>;
+}
+
+function outlineDocumentId(subscription: AgentEventSubscription) {
+  return subscription.source === 'outline:doc'
+    ? subscription.key.slice('outline:doc:'.length)
+    : undefined;
 }
 
 function remember(
@@ -92,7 +107,17 @@ export class FirestoreAgentEventSubscriptionStore implements AgentEventSubscript
   async create(subscription: AgentEventSubscription) {
     const ref = this.collection().doc(subscription.id);
     try {
-      await ref.create(toDocument(subscription));
+      const batch = this.firestore().batch();
+      batch.create(ref, toDocument(subscription));
+      // A new registration supersedes fallback from a prior registration.
+      const documentId = outlineDocumentId(subscription);
+      if (documentId !== undefined)
+        batch.set(
+          this.outlineDocument(documentId),
+          { fallbackEligible: false },
+          { merge: true },
+        );
+      await batch.commit();
       return { subscription, created: true };
     } catch (error) {
       if (!isAlreadyExists(error)) throw error;
@@ -147,26 +172,57 @@ export class FirestoreAgentEventSubscriptionStore implements AgentEventSubscript
     return result.docs.map((doc) => doc.data() as StoredAgentEventSubscription);
   }
 
+  private outlineDocument(documentId: string) {
+    return this.firestore().collection(OUTLINE_AGENT_DOCUMENTS).doc(documentId);
+  }
+
+  async outlineFallbackEligible(documentId: string) {
+    const snapshot = await this.outlineDocument(documentId).get();
+    const value: unknown = snapshot.get('fallbackEligible');
+    return typeof value === 'boolean' ? value : undefined;
+  }
+
   async delete(id: string) {
     const ref = this.collection().doc(id);
     return this.firestore().runTransaction(async (transaction) => {
       const snapshot = await transaction.get(ref);
       if (!snapshot.exists) return false;
+      const documentId = outlineDocumentId(
+        snapshot.data() as StoredAgentEventSubscription,
+      );
+      if (documentId !== undefined)
+        transaction.set(
+          this.outlineDocument(documentId),
+          { fallbackEligible: false },
+          { merge: true },
+        );
       transaction.delete(ref);
       return true;
     });
   }
 
-  async settleRouted(id: string, eventId: string, ended: boolean) {
+  async settleRouted(
+    id: string,
+    eventId: string,
+    ended: boolean,
+    undeliverable = false,
+  ) {
     const ref = this.collection().doc(id);
     await this.firestore().runTransaction(async (transaction) => {
       const snapshot = await transaction.get(ref);
       if (!snapshot.exists) return;
+      const current = snapshot.data() as StoredAgentEventSubscription;
       if (ended) {
+        const documentId = outlineDocumentId(current);
+        if (documentId !== undefined)
+          transaction.set(
+            this.outlineDocument(documentId),
+            { fallbackEligible: undeliverable },
+            { merge: true },
+          );
         transaction.delete(ref);
         return;
       }
-      const current = snapshot.data() as StoredAgentEventSubscription;
       transaction.update(ref, {
         routedEventIds: remember(current.routedEventIds, eventId),
       });
@@ -177,6 +233,7 @@ export class FirestoreAgentEventSubscriptionStore implements AgentEventSubscript
 /** The same contract in memory, for tests and the hermetic console. */
 export class MemoryAgentEventSubscriptionStore implements AgentEventSubscriptionStore {
   readonly documents = new Map<string, StoredAgentEventSubscription>();
+  private readonly outlineFallback = new Map<string, boolean>();
 
   async create(subscription: AgentEventSubscription) {
     const existing = this.documents.get(subscription.id);
@@ -186,6 +243,8 @@ export class MemoryAgentEventSubscriptionStore implements AgentEventSubscription
       subscription.id,
       structuredClone(toDocument(subscription)),
     );
+    const documentId = outlineDocumentId(subscription);
+    if (documentId !== undefined) this.outlineFallback.set(documentId, false);
     return { subscription, created: true };
   }
 
@@ -232,14 +291,30 @@ export class MemoryAgentEventSubscriptionStore implements AgentEventSubscription
       .map((doc) => structuredClone(doc));
   }
 
+  async outlineFallbackEligible(documentId: string) {
+    return this.outlineFallback.get(documentId);
+  }
+
   async delete(id: string) {
+    const current = this.documents.get(id);
+    if (!current) return false;
+    const documentId = outlineDocumentId(current);
+    if (documentId !== undefined) this.outlineFallback.set(documentId, false);
     return this.documents.delete(id);
   }
 
-  async settleRouted(id: string, eventId: string, ended: boolean) {
+  async settleRouted(
+    id: string,
+    eventId: string,
+    ended: boolean,
+    undeliverable = false,
+  ) {
     const current = this.documents.get(id);
     if (current === undefined) return;
     if (ended) {
+      const documentId = outlineDocumentId(current);
+      if (documentId !== undefined)
+        this.outlineFallback.set(documentId, undeliverable);
       this.documents.delete(id);
       return;
     }

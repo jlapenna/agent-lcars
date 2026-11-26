@@ -47,6 +47,28 @@ describe('createFirestoreStore', () => {
     fakeFirestore = new FakeFirestore({}, { mutable: true });
   });
 
+  it('updates spend while preserving reported cost omitted from a later write', async () => {
+    const store = createFirestoreStore({ projectId: 'test-project' });
+    await store.upsertSession(sessionWrite({ totalCostUsd: 2.5 }));
+
+    await store.upsertSession(
+      sessionWrite({
+        tokens: {
+          inputTokens: 100,
+          outputTokens: 50,
+          cacheCreationTokens: 20,
+          cacheReadTokens: 50,
+        },
+      }),
+    );
+
+    const snap = await fakeFirestore
+      .collection('sessions')
+      .doc('session-1')
+      .get();
+    expect(snap.data()?.['spend']).toEqual({ tokens: 180, costUsd: 2.5 });
+  });
+
   it('writes expireAt as a native Firestore Timestamp, not the ISO string', async () => {
     const store = createFirestoreStore({ projectId: 'test-project' });
 

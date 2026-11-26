@@ -22,7 +22,8 @@ export interface InboundDelivery {
 /**
  * Where an undeliverable delivery goes next. The source's fallback (a reply
  * in an Outline thread, say) is wired in a later slice; until then this
- * only records it. A failure here is logged and does not hold the message.
+ * only records it. A failure here releases the message for retry, preserving
+ * the source's fallback contract across a lost response or transport failure.
  */
 export type UndeliverableHandler = (
   delivery: AgentEventDelivery,
@@ -205,8 +206,8 @@ export class DeliveryAgent {
       return 'retried';
     }
 
-    deps.delivered.record(delivery.deliveryId, deps.now());
     if (result.kind === 'delivered') {
+      deps.delivered.record(delivery.deliveryId, deps.now());
       const latencySeconds =
         (deps.now() - message.publishTime.getTime()) / 1000;
       deps.metrics.observeLatency(latencySeconds);
@@ -238,7 +239,11 @@ export class DeliveryAgent {
         error: error instanceof Error ? error.name : 'error',
         ...fields(delivery),
       });
+      deps.metrics.count('retried');
+      await settle(message.nack, deps.log, 'nack');
+      return 'retried';
     }
+    deps.delivered.record(delivery.deliveryId, deps.now());
     return this.finish(message, 'undeliverable');
   }
 

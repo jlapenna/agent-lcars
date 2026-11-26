@@ -550,7 +550,7 @@ function advanceSourceRevision(decision: Decision, now: string): Decision {
     now,
     taskId: run.task,
     task: resetLossBudgets(decision.task),
-    issue: superseded ? decision.task.issue : run.issue,
+    issue: superseded ? decision.task.issue : undefined,
     issueSnapshot: superseded ? undefined : run.issueSnapshot,
     requestId: superseded ? desired.key : `retry:${run.runId}`,
     requestSource: superseded ? 'caller' : 'auto-retry',
@@ -595,7 +595,7 @@ function mintRun(input: {
     input;
   const runCount = task.runCount + 1;
   const runId = `${taskKey(taskId)}/r${runCount}`;
-  const issue = Object.hasOwn(input, 'issue') ? input.issue : task.issue;
+  const issue = input.issue;
   const newIssueSnapshot =
     input.issueSnapshot === undefined && issue !== undefined
       ? prepareIssueSnapshot(issue)
@@ -768,6 +768,7 @@ export function renewLease(input: {
   /** Existing authenticated queue token hash; omitted only by internal operations. */
   claimFingerprint?: string;
   providerProcessStarted?: boolean;
+  firstHeartbeatNote?: string;
 }): Decision | Refusal {
   const { now, task, run } = input;
   if (
@@ -800,6 +801,22 @@ export function renewLease(input: {
             },
           }
         : {}),
+      ...(input.firstHeartbeatNote !== undefined &&
+      input.claimFingerprint !== undefined &&
+      run.queue?.state === 'claimed' &&
+      run.queue.firstHeartbeatAt === undefined
+        ? {
+            events: [
+              ...run.events,
+              {
+                at: now,
+                to: run.state,
+                by: 'executor' as const,
+                note: input.firstHeartbeatNote,
+              },
+            ],
+          }
+        : {}),
       leaseExpiresAt: runLeaseExpiresAt(now),
       updatedAt: now,
     },
@@ -808,7 +825,7 @@ export function renewLease(input: {
       input.claimFingerprint !== undefined &&
       run.queue?.state === 'claimed' &&
       run.queue.providerProcessStartedAt === undefined &&
-      (run.issueSnapshot ?? run.issue)?.reference.tracker === 'linear' &&
+      run.issueSnapshot?.reference.tracker === 'linear' &&
       run.sourceRevision === undefined
         ? [
             {
@@ -894,7 +911,7 @@ export function reportResult(input: {
   if (
     pending !== undefined &&
     (pending.claimFingerprint !== run.queue?.tokenHash ||
-      (['ok', 'summary', 'ref', 'message'] as const).some(
+      (['ok', 'summary', 'ref', 'message', 'dependencyWorkId'] as const).some(
         (key) => pending.result[key] !== result[key],
       ) ||
       JSON.stringify(pending.result.relatedRefs) !==
@@ -1253,7 +1270,6 @@ function settleLostAndRetry(
     now: input.now,
     taskId: lostRun.task,
     task: lost.task,
-    issue: lostRun.issue,
     issueSnapshot: lostRun.issueSnapshot,
     requestId: `retry:${lostRun.runId}`,
     requestSource: 'auto-retry',
@@ -1311,10 +1327,14 @@ export function executorExitedAndRetry(input: {
 
 /** Codex keeps its claim after settlement: server credential cleanup is
  * authorized by the original claim, so ordinary Codex executor exits never
- * retire it. Repository job occurrences (`jobOccurrence`) retire once any
- * reserved Codex cleanup finishes (`retireSettledClaim` / `credential-operation`). */
+ * retire it. Repository jobs and dependency waits need physical-exit proof
+ * and retire once any reserved Codex cleanup finishes. */
 function retiresOnExit(run: Run): boolean {
-  return run.pipeline !== 'codex' || Boolean(run.params?.['jobOccurrence']);
+  return (
+    run.pipeline !== 'codex' ||
+    Boolean(run.params?.['jobOccurrence']) ||
+    run.result?.dependencyWorkId !== undefined
+  );
 }
 
 /** The claimant executor observed the worker of an already settled run exit.
@@ -1424,6 +1444,10 @@ export function retireUnclaimedQueue(run: Run): Run {
     : run;
 }
 
+export function agentDependencyEntryId(runId: string): string {
+  return `wait-for-agent/${runId}`;
+}
+
 /** Shared tail of every settle path. Events that arrived while this run held
  * the Work are handed to the drain now that the lock is released; if another
  * run took the lock in the same decision, that run's settlement hands them on
@@ -1433,7 +1457,13 @@ function settle(releasedTask: Task, settledRun: Run, now: string): Decision {
     task: releasedTask,
     run: retireUnclaimedQueue(settledRun),
     outbox: [
-      outcomeEntry(settledRun, now),
+      settledRun.state === 'finished' && settledRun.result?.dependencyWorkId
+        ? {
+            ...outcomeEntry(settledRun, now),
+            entryId: agentDependencyEntryId(settledRun.runId),
+            kind: 'wait-for-agent',
+          }
+        : outcomeEntry(settledRun, now),
       ...((releasedTask.eventResumes?.pending.length ?? 0) > 0 &&
       releasedTask.closedAt === undefined
         ? [
@@ -1652,6 +1682,7 @@ export function admitEventResume(input: {
       updatedAt: now,
     },
     requestId,
+    issue: task.issue,
     requestSource: 'event',
     pipeline: input.pipeline,
     priority: input.priority,

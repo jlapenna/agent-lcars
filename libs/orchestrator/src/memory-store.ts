@@ -19,6 +19,7 @@ import type {
   RequestSource,
   Run,
   RunMessageOverflow,
+  TaskDerived,
   TaskId,
   WorkRevision,
 } from './model';
@@ -807,6 +808,7 @@ export class MemoryStore implements OrchestratorStore {
   async listNativeTasks(
     limit?: number,
     before?: string,
+    state?: TaskDerived['state'],
   ): Promise<VersionedTask[]> {
     // Newest first, matching `FirestoreStore`: `workId` is a ULID, so
     // descending lexicographic order on it is descending creation order.
@@ -821,7 +823,10 @@ export class MemoryStore implements OrchestratorStore {
       .filter(
         (item): item is { entry: VersionedTask; workId: string } =>
           item.workId !== undefined &&
-          (before === undefined || item.workId < before),
+          (before === undefined || item.workId < before) &&
+          (state === undefined ||
+            item.entry.derived === undefined ||
+            item.entry.derived.state === state),
       )
       .sort((a, b) => b.workId.localeCompare(a.workId))
       .map(({ entry }) => entry);

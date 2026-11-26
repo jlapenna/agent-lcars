@@ -1368,28 +1368,49 @@ export class FirestoreStore implements OrchestratorStore {
   async listNativeTasks(
     limit?: number,
     before?: string,
+    state?: TaskDerived['state'],
   ): Promise<VersionedTask[]> {
-    // The `orderBy` IS the filter. Firestore excludes any document that
-    // lacks the ordered field entirely, and a GitHub-anchored task
-    // document stores `task.task.repo`/`task.task.issue` with no
-    // `workId` -- so ordering by `task.task.workId` returns exactly the
-    // native anchors. Served by the automatic single-field index: no
-    // composite index, and (crucially) no new persisted discriminator
-    // field, which would have meant rewriting every existing task
-    // document before this query could be trusted.
-    //
-    // `desc`: `workId` is a ULID, so lexicographic order on it is creation
-    // order -- descending puts the newest task first, still served by that
-    // same automatic single-field index (Firestore indexes both
-    // directions), and `limit` bounds the read itself rather than reading
-    // every native task ever created just to slice it down after.
-    let query = this.#tasks.orderBy('task.task.workId', 'desc');
-    // `startAfter` on a single orderBy'd field takes the field's value
-    // directly (no document snapshot needed) and returns strictly older
-    // entries than it in this same order -- exactly "the page after the
-    // one that ended in `before`".
-    if (before !== undefined) query = query.startAfter(before);
-    const snapshot = await query.limit(limit ?? 200).get();
+    // GitHub anchors have no workId and are excluded by this ordering.
+    const native = this.#tasks.orderBy('task.task.workId', 'desc');
+    const page = (query: Query) =>
+      (before === undefined ? query : query.startAfter(before)).limit(
+        limit ?? 200,
+      );
+    if (state !== undefined) {
+      try {
+        const snapshot = await this.#firestore.runTransaction(
+          async (tx) => {
+            // An older writer can replace a task document without its derived
+            // fields even after backfill. Counting the tasks with the ordered
+            // field checks coverage using only index entries. Use the same
+            // snapshot for both counts and the page so a concurrent replacement
+            // cannot invalidate the coverage decision.
+            const total = await tx.get(this.#tasks.count());
+            const projected = await tx.get(
+              this.#tasks.orderBy('derived.state').count(),
+            );
+            return tx.get(
+              total.data().count === projected.data().count
+                ? page(native.where('derived.state', '==', state))
+                : page(native),
+            );
+          },
+          { readOnly: true },
+        );
+        return snapshot.docs.map((doc) => taskDocSchema.parse(doc.data()));
+      } catch (error) {
+        // The source and the production composite index roll out separately.
+        // Keep serving the raw page until Firestore can execute the query.
+        if (
+          !(error instanceof Error) ||
+          !('code' in error) ||
+          error.code !== 9 ||
+          !error.message.includes('requires an index')
+        )
+          throw error;
+      }
+    }
+    const snapshot = await page(native).get();
     return snapshot.docs.map((doc) => taskDocSchema.parse(doc.data()));
   }
 

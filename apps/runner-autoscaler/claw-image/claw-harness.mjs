@@ -65,6 +65,92 @@ const ACP_DRAIN_MS = 100;
 const MAX_ACP_LINE_BYTES = 20 * 1024 * 1024;
 const MAX_FRAME_BYTES = 48 * 1024 * 1024;
 
+// Reserve room for the host, ACP bridge and child processes to stop before
+// the kernel's hard limit. At 2688 MiB this trips at 2176 MiB: the incident
+// Gateway reached ~2160 MiB anonymous RSS and a separate child used ~297 MiB.
+const MIB = 1024 ** 2;
+const MEMORY_SAMPLE_MS = 100;
+
+async function harnessMemoryCgroup() {
+  const membership = await readFile('/proc/self/cgroup', 'utf8');
+  const group = /^0::(\/[^\n]*)/m.exec(membership)?.[1];
+  if (group === undefined) throw new Error('missing unified cgroup');
+  const root = '/sys/fs/cgroup';
+  // The mount may expose the full hierarchy or just this container.
+  for (const path of new Set([join(root, group), root])) {
+    const members = await readFile(join(path, 'cgroup.procs'), 'utf8').catch(
+      () => '',
+    );
+    if (members.split('\n').includes(String(process.pid))) return path;
+  }
+  throw new Error('harness cgroup not visible');
+}
+
+async function watchHarnessMemory(cgroup, controller, signal) {
+  const unavailable = () =>
+    new ClawFailure(
+      'OpenClaw harness memory guard requires readable cgroup v2 counters and a finite memory limit',
+    );
+  const read = (path, key) => readFile(join(path, key), 'utf8');
+  const counter = (value) => {
+    const parsed = Number(value?.trim());
+    if (!/^\d+$/.test(value?.trim()) || !Number.isSafeInteger(parsed))
+      throw unavailable();
+    return parsed;
+  };
+  const oomKills = async (path) =>
+    counter(/^oom_kill (\d+)$/m.exec(await read(path, 'memory.events'))?.[1]);
+  let path;
+  let limit;
+  let initialKills;
+  try {
+    path = await cgroup();
+    limit = counter(await read(path, 'memory.max'));
+    if (limit === 0) throw unavailable();
+    initialKills = await oomKills(path);
+  } catch {
+    throw unavailable();
+  }
+  const threshold = limit - Math.min(512 * MIB, Math.floor(limit / 5));
+  let timer;
+  const check = async () => {
+    if (signal.aborted) return;
+    try {
+      const killed = await oomKills(path);
+      if (killed > initialKills) {
+        controller.abort(
+          new ClawFailure(
+            'OpenClaw harness cgroup recorded a kernel OOM kill (memory.events oom_kill increased)',
+          ),
+        );
+        return;
+      }
+      const current = counter(await read(path, 'memory.current'));
+      const inactiveFile = counter(
+        /^inactive_file (\d+)$/m.exec(await read(path, 'memory.stat'))?.[1],
+      );
+      // The kernel can reclaim inactive file cache under pressure.
+      const used = Math.max(0, current - inactiveFile);
+      if (used >= threshold)
+        controller.abort(
+          new ClawFailure(
+            `OpenClaw harness memory guard stopped the turn at ${Math.ceil(used / MIB)} MiB (threshold ${Math.floor(threshold / MIB)} MiB, limit ${Math.floor(limit / MIB)} MiB); reduce the Gateway or tool working set`,
+          ),
+        );
+    } catch {
+      controller.abort(unavailable());
+    }
+  };
+  const sample = async () => {
+    await check();
+    if (!signal.aborted)
+      timer = setTimeout(() => void sample(), MEMORY_SAMPLE_MS).unref();
+  };
+  signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
+  await sample();
+  return check;
+}
+
 // The harnesses this image carries (Dockerfile). Each entry prepares what
 // its harness needs and returns the ACP agent to run on stdio: its command,
 // an environment when it needs more than the zone's, the `auth` method to
@@ -162,7 +248,7 @@ export async function prepareWorkspace(agentDir, workRoot) {
  * launcher has gone and everything the harness started has been stopped. */
 export function serveHarness(
   stream,
-  { harnesses = HARNESSES, env = process.env } = {},
+  { harnesses = HARNESSES, env = process.env, memoryCgroup } = {},
 ) {
   const openclaw =
     env.OPENCLAW_BIN || '/opt/openclaw/node_modules/.bin/openclaw';
@@ -176,10 +262,24 @@ export function serveHarness(
   let child;
   let exited = Promise.resolve();
   let finish;
+  let checkMemory;
+  const memory = new AbortController();
+  const runSignal = AbortSignal.any([gone.signal, memory.signal]);
+  memory.signal.addEventListener(
+    'abort',
+    () => {
+      if (child) stopGroup(child, 0);
+    },
+    { once: true },
+  );
 
   const launch = async (name) => {
     if (typeof name !== 'string' || !Object.hasOwn(harnesses, name))
       throw new ClawFailure(`this image carries no ${name} harness`);
+    if (name === 'openclaw' && memoryCgroup) {
+      checkMemory = await watchHarnessMemory(memoryCgroup, memory, runSignal);
+      memory.signal.throwIfAborted();
+    }
     const definitionDir = join(workRoot, 'agent');
     // What the harness and the agent's tools run with: the zone's secret
     // environment and nothing of the launcher's.
@@ -199,11 +299,12 @@ export function serveHarness(
       stageWorkspace: () => prepareWorkspace(definitionDir, workRoot),
       openclaw,
       env: agentEnv,
-      signal: gone.signal,
+      signal: runSignal,
     });
     // Stops whatever the harness started and names any reason it has to
     // refuse the turn's result. It runs exactly once, on every path.
     finish = harness.finish;
+    memory.signal.throwIfAborted();
     if (gone.signal.aborted) throw new ClawFailure('claw run was cancelled');
     const started = spawn(harness.command, harness.args, {
       env: harness.env ?? agentEnv,
@@ -216,6 +317,7 @@ export function serveHarness(
       started.once('error', failed);
     });
     child = started;
+    if (memory.signal.aborted) stopGroup(started, 0);
     // The agent's output waits while the launcher is behind, so what this
     // process holds of it stays bounded however fast the agent writes: the
     // bound on one line is no bound on all of them.
@@ -276,8 +378,10 @@ export function serveHarness(
     await exited;
     const run = finish;
     finish = undefined;
-    if (run === undefined) return {};
-    const verdict = await run(turn);
+    await checkMemory?.();
+    const verdict = await run?.(memory.signal.aborted ? undefined : turn);
+    await checkMemory?.();
+    if (memory.signal.aborted) return { refused: memory.signal.reason.message };
     return typeof verdict === 'string' ? { refused: verdict } : (verdict ?? {});
   };
 
@@ -289,7 +393,9 @@ export function serveHarness(
     if (frame.claw === 'launch') {
       try {
         write({ claw: 'ready', ...(await launch(frame.harness)) });
-      } catch (error) {
+      } catch (cause) {
+        await checkMemory?.();
+        const error = memory.signal.reason ?? cause;
         if (!(error instanceof ClawFailure) && !gone.signal.aborted)
           console.error(error);
         write({
@@ -381,7 +487,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const server = createServer({ allowHalfOpen: true }, (socket) => {
     // One launcher, one turn: nothing else may connect afterwards.
     server.close();
-    void serveHarness(socket).then(() =>
+    void serveHarness(socket, { memoryCgroup: harnessMemoryCgroup }).then(() =>
       console.log('claw harness: launcher disconnected'),
     );
   });

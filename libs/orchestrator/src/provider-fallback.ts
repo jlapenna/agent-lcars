@@ -70,7 +70,8 @@ function successor(input: {
   const next = requestRun({
     now: input.now,
     task: input.settled.task,
-    issue: previous.issue,
+    // A fallback inherits the predecessor snapshot, including its absence.
+    issue: undefined,
     issueSnapshot: previous.issueSnapshot,
     taskId: previous.task,
     activeRun: undefined,
