@@ -18,6 +18,13 @@ export function outlineJobHandler(deps: {
 }): (message: InboundDelivery) => Promise<DeliveryOutcome> {
   const failed = new Set<string>();
   const active = new Map<string, Promise<void>>();
+  const held = new Map<symbol, number>();
+  const refreshHeld = () => {
+    deps.metrics.outlineInFlight = held.size;
+    deps.metrics.outlineOldestPending = held.size
+      ? Math.floor(Math.min(...held.values()) / 1000)
+      : 0;
+  };
   return async (message) => {
     if (message.attributes.source !== 'outline') return deps.deliver(message);
     let job;
@@ -53,6 +60,9 @@ export function outlineJobHandler(deps: {
       deps.metrics.outlineSourcesFailed = failed.size;
       return 'duplicate';
     }
+    const holding = Symbol();
+    held.set(holding, message.publishTime.getTime());
+    refreshHeld();
     try {
       if (!deps.source) throw new Error('Outline source is not configured');
       // One actual handler per source id; concurrent Pub/Sub redelivery waits
@@ -87,6 +97,9 @@ export function outlineJobHandler(deps: {
       });
       await message.nack();
       return 'retried';
+    } finally {
+      held.delete(holding);
+      refreshHeld();
     }
   };
 }

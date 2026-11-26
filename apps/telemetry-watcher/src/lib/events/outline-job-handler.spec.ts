@@ -86,12 +86,20 @@ describe('Outline jobs share the existing authenticated pull', () => {
         }),
     );
     const run = outlineJobHandler(f.deps);
-    const first = run(f.message());
-    const second = run(f.message());
+    const early = f.message();
+    early.publishTime = new Date(5000);
+    const later = f.message();
+    later.publishTime = new Date(6000);
+    const first = run(early);
+    const second = run(later);
+    expect(f.metrics.outlineInFlight).toBe(2);
+    expect(f.metrics.outlineOldestPending).toBe(5);
     expect(f.handle).toHaveBeenCalledOnce();
     release();
     await Promise.all([first, second]);
     expect(f.handle).toHaveBeenCalledOnce();
+    expect(f.metrics.outlineInFlight).toBe(0);
+    expect(f.metrics.outlineOldestPending).toBe(0);
   });
   it('keeps missing source configuration distinct from successful idle work', async () => {
     const f = fixture();

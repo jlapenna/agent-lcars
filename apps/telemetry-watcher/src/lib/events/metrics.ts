@@ -41,6 +41,8 @@ const PREFIX = 'lcars_events_agent';
 
 export class DeliveryMetrics {
   outlineConfigured = 0;
+  outlineInFlight = 0;
+  outlineOldestPending = 0;
   outlineSourcesFailed = 0;
   outlineJobs = 0;
   outlineErrors = 0;
@@ -120,6 +122,16 @@ export class DeliveryMetrics {
       'outline_configured',
       'Trusted Outline API source configured on this host; zero is disabled.',
       this.outlineConfigured,
+    );
+    gauge(
+      'outline_in_flight',
+      'Held Outline jobs including queue, debounce, API and report waits; zero is idle.',
+      this.outlineInFlight,
+    );
+    gauge(
+      'outline_oldest_pending_timestamp_seconds',
+      'Oldest held Outline publication; zero when no job is held.',
+      this.outlineOldestPending,
     );
     gauge(
       'outline_sources_failed',

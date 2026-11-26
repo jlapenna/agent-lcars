@@ -694,3 +694,10 @@ failed source jobs, successful work, errors and last success. An old last-succes
 timestamp alone is idle, not failure. Source enqueue failures use the deployed
 `lcars-agent-events`/`enqueue`/`failed` alert contract. Complete the owning
 Homelab dashboard, loaded rules and Loki verification before activation.
+
+The native worker permits two complete Outline jobs at once, including API
+reads and report/fallback waits, while preserving per-document ordering. Queued
+jobs retain identifiers rather than document bodies. Held-job count and oldest
+held publication timestamp cover queueing, debounce, API, report and ack/nack
+waits; both return to zero when empty. Progress alerts must distinguish an old
+backlog that is completing jobs from one that is stalled.
