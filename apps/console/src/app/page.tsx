@@ -35,8 +35,10 @@ import { getNativeInboxEvidence } from '../lib/native-inbox';
 import { derivePrimaryAction } from '../lib/primary-action';
 import { buildQueueView } from '../lib/queue-view';
 import { readTimings } from '../lib/read-timings';
+import { repositoryJobs } from '../lib/repository-jobs-runtime';
 import { indexSessionsByRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
+import { getArchiveSpendToday } from '../lib/session-archive';
 import { filterSessionsForRepo } from '../lib/session-repo-filter';
 import { fleetTokenRate, TOKEN_RATE_READ_FAILED } from '../lib/token-rate';
 import { getTokenRateSnapshot } from '../lib/token-rate-data';
@@ -79,7 +81,7 @@ import { ConsoleWorkspace } from './console-workspace';
 import { DataFreshness } from './data-freshness';
 import { decisionRows } from './decision-rows';
 import { DeckInboxSummary } from './deck-inbox-summary';
-import { formatRelativeTime } from './format';
+import { formatCost, formatRelativeTime } from './format';
 import { inboxCardAgent, inboxCardMetadata } from './inbox-card';
 import { LiveDashboard } from './live-dashboard';
 import { MergedLastDay } from './merged-last-day';
@@ -200,6 +202,26 @@ async function getParkedWork(
   }
 }
 
+async function getJobsReadout() {
+  try {
+    const { principal, runtime } = await workContext();
+    if (
+      !principal?.scopes.has('work.operator') ||
+      !principal.pipelines.includes('goose')
+    ) {
+      return { detail: 'Goose operator grant required' };
+    }
+    const jobs = await repositoryJobs(runtime).listFor(principal);
+    return {
+      count: jobs.length,
+      detail: `${jobs.filter((job) => job.enabled).length} enabled · all permitted repos`,
+    };
+  } catch (error) {
+    logger.error('agent-lcars: Bridge jobs summary unavailable:', error);
+    return { detail: 'Job registry unavailable' };
+  }
+}
+
 /** Agents in the Bridge's repository scope and view. */
 function agentsScopedHref(
   repo: string | undefined,
@@ -261,6 +283,8 @@ async function IndexBody({
     nativeInbox,
     autoscaler,
     tokenRateSnapshot,
+    jobs,
+    spend,
   ] = await Promise.all([
     timings.time('queue', getCachedQueueItems()),
     activityRead,
@@ -284,6 +308,14 @@ async function IndexBody({
     ),
     timings.time('autoscaler', getAutoscalerStatuses()),
     timings.time('tokenRate', getTokenRateSnapshot()),
+    timings.time('jobs', getJobsReadout()),
+    timings.time(
+      'spendToday',
+      getArchiveSpendToday(repoFilterKey).catch((error: unknown) => {
+        logger.error('agent-lcars: Bridge spend summary unavailable:', error);
+        return undefined;
+      }),
+    ),
   ]);
   timings.log();
   // Deduped: independent authoritative reads can fail independently, and
@@ -542,6 +574,24 @@ async function IndexBody({
             detail: nativeInbox.available
               ? 'Decisions waiting'
               : 'Native decisions unavailable',
+          },
+          {
+            id: 'jobs',
+            label: 'Jobs',
+            href: '/jobs',
+            value: jobs.count ?? '—',
+            detail: jobs.detail,
+          },
+          {
+            id: 'costs',
+            label: 'Costs',
+            href: repoFilterKey
+              ? `/costs?${new URLSearchParams({ repo: repoFilterKey })}`
+              : '/costs',
+            value: spend ? formatCost(spend.todayUsd) : '—',
+            detail: spend
+              ? `Known spend today (UTC)${spend.todayEstimated ? ' · est.' : ''}`
+              : 'Spend unavailable',
           },
         ]}
       />
