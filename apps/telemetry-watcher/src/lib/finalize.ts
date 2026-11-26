@@ -13,6 +13,7 @@ import {
 } from '@agent-lcars/telemetry';
 import * as fs from 'fs';
 
+import { reduceCodexChildTranscript } from './codex-child-transcript';
 import { discoverAcrossRoots, discoverTranscriptFiles } from './discover';
 import { resolveGitBranch as defaultResolveGitBranch } from './git-branch';
 import { applyGitContext } from './git-context';
@@ -238,7 +239,7 @@ export async function finalizeSidecar(
 
     for (const summary of summaries) {
       try {
-        await finalizeSummary(summary, content, root.adapter, {
+        const shipped = await finalizeSummary(summary, content, root.adapter, {
           config,
           store,
           resolveGitBranch,
@@ -250,7 +251,7 @@ export async function finalizeSidecar(
           exists,
           readFile,
         });
-        shippedCount++;
+        if (shipped) shippedCount++;
       } catch (error) {
         const message = `agent-lcars-telemetry-watcher: finalize failed to build session ${summary.sessionId} from ${file}, skipping`;
         logger.warn(message, error);
@@ -304,14 +305,8 @@ async function finalizeSummary(
     exists: (filePath: string) => boolean;
     readFile: (filePath: string) => string;
   },
-): Promise<void> {
+): Promise<boolean> {
   const { config, store } = deps;
-  const finalSummary = await applyGitContext(
-    summary,
-    deps.resolveGitBranch,
-    deps.resolveGitRepo,
-  );
-
   let transcriptGcsUri: string | undefined;
   if (config.transcriptsBucket) {
     // A function of the watch root's own declared adapter, not a hardcoded
@@ -337,6 +332,23 @@ async function finalizeSummary(
       annotateWarning(`${message}: ${error}`);
     }
   }
+
+  if (adapter === 'codex' && summary.parentSessionId) {
+    const owned = reduceCodexChildTranscript(
+      () => rawContent.split('\n'),
+      summary.sessionId,
+      summary.parentSessionId,
+    );
+    // Keep the child's exact archive even if verified child usage is missing.
+    // A fork's inherited transcript cannot establish its own spend or deliverables.
+    if (!owned) return false;
+    summary = owned;
+  }
+  const finalSummary = await applyGitContext(
+    summary,
+    deps.resolveGitBranch,
+    deps.resolveGitRepo,
+  );
 
   // The resumable sibling of the sanitized transcript above (spec decision
   // 3, decided 2026-09-04, resumable-conversations plan 4). Discovery only
@@ -424,9 +436,11 @@ async function finalizeSummary(
         transcriptGcsUri ? ` with transcript at ${transcriptGcsUri}` : ''
       }`,
     );
+    return true;
   } catch (error) {
     const message = `agent-lcars-telemetry-watcher: finalize failed to upsert session ${summary.sessionId}`;
     logger.warn(message, error);
     annotateWarning(`${message}: ${error}`);
+    return false;
   }
 }

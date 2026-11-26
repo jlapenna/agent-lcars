@@ -29,6 +29,8 @@ import type {
   JobOccurrence,
   JobStore,
 } from './repository-job-store';
+import type { WorkPrincipal } from './work-auth';
+import { scopedWorkGrant } from './work-authorization';
 
 /** Executor Pod runtime limits (2h, 50m for recipes) never exceed the run
  * lease; the placement allowance keeps the bound conservative. */
@@ -96,6 +98,14 @@ function stoppedOnProviderLimit(
 
 export class RepositoryJobs {
   constructor(readonly deps: RepositoryJobsDeps) {}
+
+  async listFor(principal: WorkPrincipal): Promise<CatalogJob[]> {
+    const granted = scopedWorkGrant(principal, this.deps.granted);
+    return (await this.deps.store.list()).filter((job) =>
+      granted(principal.principal, job.repository),
+    );
+  }
+
   authorize(
     definition: JobDefinition,
     principal: string,

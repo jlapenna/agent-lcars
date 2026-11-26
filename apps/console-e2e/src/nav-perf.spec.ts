@@ -262,7 +262,15 @@ test('@navperf Bridge summaries wrap and signal a slow navigation on phones', as
   await expect(agents).toBeVisible();
 
   const details = summaries.locator('.lcars-readout__detail');
-  await expect(details).toHaveCount(4);
+  await expect(details).toHaveCount(6);
+  await expect(summaries.getByRole('link', { name: /^Jobs/ })).toHaveAttribute(
+    'href',
+    '/jobs',
+  );
+  await expect(summaries.getByRole('link', { name: /^Costs/ })).toHaveAttribute(
+    'href',
+    '/costs',
+  );
   expect(
     await details.evaluateAll((elements) =>
       elements
@@ -284,23 +292,20 @@ test('@navperf Bridge summaries wrap and signal a slow navigation on phones', as
       };
     }),
   );
-  expect(cells).toHaveLength(4);
-  // 2x2 grid at 390px: row 1 (Agents, Shuttlebay) and row 2 (Inbox, Work)
-  // align column-for-column, drop the leading column's divider on both rows,
-  // and size every readout figure identically.
-  const [agentsCell, shuttlebayCell, inboxCell, workCell] = cells;
-  expect(agentsCell?.top).toBe(shuttlebayCell?.top);
-  expect(inboxCell?.top).toBe(workCell?.top);
-  expect(inboxCell?.top).toBeGreaterThan(
-    agentsCell?.top ?? Number.POSITIVE_INFINITY,
-  );
-  expect(agentsCell?.left).toBe(inboxCell?.left);
-  expect(shuttlebayCell?.left).toBe(workCell?.left);
-  expect(agentsCell?.paddingLeft).toBe(inboxCell?.paddingLeft);
-  expect(agentsCell?.borderLeftColor).toBe('rgba(0, 0, 0, 0)');
-  expect(inboxCell?.borderLeftColor).toBe('rgba(0, 0, 0, 0)');
-  expect(shuttlebayCell?.borderLeftColor).not.toBe('rgba(0, 0, 0, 0)');
-  expect(workCell?.borderLeftColor).not.toBe('rgba(0, 0, 0, 0)');
+  expect(cells).toHaveLength(6);
+  // All three two-column rows align at 390px.
+  for (const start of [0, 2, 4]) {
+    const left = cells[start]!;
+    const right = cells[start + 1]!;
+    expect(left.top).toBe(right.top);
+    expect(left.left).toBe(cells[0]!.left);
+    expect(right.left).toBe(cells[1]!.left);
+    expect(left.paddingLeft).toBe(cells[0]!.paddingLeft);
+    expect(left.borderLeftColor).toBe('rgba(0, 0, 0, 0)');
+    expect(right.borderLeftColor).not.toBe('rgba(0, 0, 0, 0)');
+  }
+  expect(cells[2]!.top).toBeGreaterThan(cells[0]!.top);
+  expect(cells[4]!.top).toBeGreaterThan(cells[2]!.top);
   expect(new Set(cells.map((cell) => cell.valueFontSize)).size).toBe(1);
 
   const label = agents.locator('.lcars-readout__label');

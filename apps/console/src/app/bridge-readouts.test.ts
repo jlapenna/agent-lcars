@@ -270,6 +270,9 @@ describe('bridgeDestinationReadouts', () => {
     inboxHref: '/inbox?repo=jlapenna%2Fagent-lcars',
     decisionCount: 2,
     nativeInboxAvailable: true,
+    jobs: { count: 8, detail: '6 enabled · all permitted repos' },
+    costsHref: '/costs?repo=jlapenna%2Fagent-lcars',
+    spend: { todayUsd: 24.6, todayEstimated: false },
     workHref: '/work?repo=jlapenna%2Fagent-lcars',
     work: {
       authorized: true,
@@ -280,13 +283,15 @@ describe('bridgeDestinationReadouts', () => {
     },
   };
 
-  it('builds the four linked destination summaries including Work', () => {
+  it('builds the six linked destination summaries including Work', () => {
     const readouts = bridgeDestinationReadouts(healthyDestinations);
     expect(readouts.map((r) => r.id)).toEqual([
       'agents',
       'shuttlebay',
       'inbox',
       'work',
+      'jobs',
+      'costs',
     ]);
     expect(readouts[3]).toEqual({
       id: 'work',

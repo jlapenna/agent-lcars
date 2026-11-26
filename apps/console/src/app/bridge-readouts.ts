@@ -504,6 +504,9 @@ export interface BridgeDestinationReadoutsInput {
   inboxHref: string;
   decisionCount: number;
   nativeInboxAvailable: boolean;
+  jobs: { count?: number; detail: string };
+  spend?: { todayUsd: number; todayEstimated: boolean };
+  costsHref: string;
   workHref: string;
   work: {
     authorized: boolean;
@@ -516,8 +519,7 @@ export interface BridgeDestinationReadoutsInput {
 }
 
 /**
- * The Bridge's destination-summary row (design/fleet-console.html): four
- * linked summaries (Agents, Shuttlebay, Inbox, Work) drawn solely from reads
+ * Linked destination summaries for the Bridge, drawn solely from reads
  * the Bridge already holds. Any failed or unauthorized source reports `—`
  * rather than zero.
  */
@@ -570,6 +572,22 @@ export function bridgeDestinationReadouts(
         : !input.work.authorized
           ? 'Work grant required'
           : `Stopped work · ${input.work.eventCount}${input.work.eventWindowed ? '+' : ''} event-driven`,
+    },
+    {
+      id: 'jobs',
+      label: 'Jobs',
+      href: '/jobs',
+      value: input.jobs.count ?? UNAVAILABLE,
+      detail: input.jobs.detail,
+    },
+    {
+      id: 'costs',
+      label: 'Costs',
+      href: input.costsHref,
+      value: input.spend ? formatCost(input.spend.todayUsd) : UNAVAILABLE,
+      detail: input.spend
+        ? `Known spend today (UTC)${input.spend.todayEstimated ? ' · est.' : ''}`
+        : 'Spend unavailable',
     },
   ];
 }

@@ -375,6 +375,26 @@ export async function getArchiveTokenTotal(days: number): Promise<number> {
   return docs.reduce((sum, doc) => sum + totalTokens(doc.tokens), 0);
 }
 
+/** Known session spend since UTC midnight, with the Costs ledger's valuation. */
+export async function getArchiveSpendToday(repo?: string) {
+  const now = new Date();
+  const midnight = new Date(now);
+  midnight.setUTCHours(0, 0, 0, 0);
+  const docs = await readArchiveDocs(
+    { activeSince: midnight.toISOString() },
+    1,
+  );
+  const scoped = repo
+    ? docs.filter((doc) => doc.repo && repoKey(doc.repo) === repo)
+    : docs;
+  const { todayUsd, todayEstimated } = aggregateSpendByRepository(
+    scoped,
+    now.getTime(),
+    1,
+  );
+  return { todayUsd, todayEstimated };
+}
+
 export async function getSessionArchive(
   query: SessionArchiveQuery,
   options: {
