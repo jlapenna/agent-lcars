@@ -3912,6 +3912,34 @@ export function runOrchestratorStoreContract(
         expect(native[0]?.revision).toBe(1);
       });
 
+      it('filters native state before applying the page limit and cursor', async () => {
+        const { store, orchestrator } = await fixture();
+        const older = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3A' };
+        const newer = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3B' };
+        for (const taskId of [older, newer]) {
+          const requested = await orchestrator.request({
+            taskId,
+            requestId: taskId.workId,
+            pipeline: 'claude',
+            work: { origin: { principal: 'user:jlapenna' } },
+          });
+          if (isRefusal(requested)) throw new Error(requested.reason);
+          if (taskId === older) {
+            await orchestrator.report(decidedRun(requested).runId, {
+              ok: true,
+            });
+          }
+        }
+        const github = await started(orchestrator, 'req-github');
+        await orchestrator.report(github.run.runId, { ok: true });
+
+        const first = await store.listNativeTasks(1, undefined, 'done');
+        expect(first.map((entry) => entry.task.task)).toEqual([older]);
+        expect(await store.listNativeTasks(1, older.workId, 'done')).toEqual(
+          [],
+        );
+      });
+
       it('orders newest-first and honors a limit', async () => {
         const { store, orchestrator } = await fixture();
         // Ascending ULIDs, requested in ascending order -- "newest" here

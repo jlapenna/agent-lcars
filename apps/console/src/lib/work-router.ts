@@ -357,10 +357,17 @@ export const workRouter = os.router({
     const tasks = await context.runtime.store.listNativeTasks(
       input.limit,
       input.cursor,
+      // Keep cursor boundaries independent of inaccessible task states.
+      context.principal.sourceRepository === undefined
+        ? input.state
+        : undefined,
     );
-    const native = tasks.flatMap(({ task }) =>
+    const native = tasks.flatMap(({ task, derived }) =>
       isWorkAnchor(task.task) &&
-      mayAccessStoredWork(context.principal, task.work)
+      mayAccessStoredWork(context.principal, task.work) &&
+      (input.state === undefined ||
+        derived === undefined ||
+        derived.state === input.state)
         ? [{ workId: task.task.workId, task }]
         : [],
     );
@@ -383,10 +390,10 @@ export const workRouter = os.router({
             .at(-1)
         : undefined;
 
-    // Two passes on purpose. Filtering needs derived state, which needs
-    // each item's runs -- but the session join reads a *different*
-    // database, so it runs only over the items that survive the filters
-    // and the limit rather than over every native task ever created.
+    // A raw page may include unprojected rows after a rollback. On that path,
+    // stored state still avoids loading runs for known nonmatches. Derive
+    // state from runs for legacy rows and recheck it for every returned view.
+    // The session join only runs for items that pass all filters.
     //
     // Tasks are persisted in the current strict shape. A corrupt record is
     // a data-integrity failure, not a reason to silently omit work from a

@@ -8,7 +8,12 @@ import { FirestoreStore } from './firestore-store';
 import { readRunIssue } from './issue-snapshot';
 import { MemoryScheduleStore } from './memory-schedule-store';
 import { MemoryStore } from './memory-store';
-import { outboxEntrySchema, type QueuePriority, taskSchema } from './model';
+import {
+  outboxEntrySchema,
+  type QueuePriority,
+  taskKey,
+  taskSchema,
+} from './model';
 import { Orchestrator } from './orchestrator';
 import {
   runOrchestratorStoreContract,
@@ -174,6 +179,58 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
       expect((await snapshots.get()).size).toBe(1);
       expect((await snapshot.get()).updateTime).toEqual(original.updateTime);
       expect((await store.readTask(taskId))?.task.issue).toEqual(issue);
+    } finally {
+      await firestore.terminate();
+    }
+  });
+
+  it('falls back to raw native pages after an older writer replaces a task projection', async () => {
+    const collectionPrefix = `native-state-rollback-${crypto.randomUUID()}-`;
+    const projectId = 'demo-orchestrator';
+    const host = emulatorHost ?? 'localhost:8080';
+    const firestore = new Firestore({ projectId, host, ssl: false });
+    const store = new FirestoreStore({
+      projectId,
+      databaseId: '(default)',
+      collectionPrefix,
+      emulatorHost: host,
+    });
+    const older = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3A' };
+    const newer = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3B' };
+    try {
+      const orchestrator = new Orchestrator(store, {
+        now: () => '2026-08-15T12:00:00.000Z',
+      });
+      for (const taskId of [older, newer]) {
+        const requested = await orchestrator.request({
+          taskId,
+          requestId: taskId.workId,
+          pipeline: 'claude',
+          work: { origin: { principal: 'user:jlapenna' } },
+        });
+        if (isRefusal(requested)) throw new Error(requested.reason);
+        if (taskId === older)
+          await orchestrator.report(decidedRun(requested).runId, { ok: true });
+      }
+
+      const [indexed] = await store.listNativeTasks(1, undefined, 'done');
+      expect(indexed.task.task).toEqual(older);
+      const { task, revision } = indexed;
+      await firestore
+        .collection(`${collectionPrefix}tasks`)
+        .doc(encodeURIComponent(taskKey(older)))
+        .set({ task, revision });
+
+      const [first] = await store.listNativeTasks(1, undefined, 'done');
+      expect(first.task.task).toEqual(newer);
+      const [second] = await store.listNativeTasks(1, newer.workId, 'done');
+      expect(second.task.task).toEqual(older);
+      expect(second.derived).toBeUndefined();
+
+      expect(await store.refreshTaskDerived(older)).toBe(true);
+      expect(await store.listNativeTasks(1, undefined, 'done')).toEqual([
+        indexed,
+      ]);
     } finally {
       await firestore.terminate();
     }
