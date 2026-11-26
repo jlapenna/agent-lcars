@@ -911,7 +911,7 @@ export function reportResult(input: {
   if (
     pending !== undefined &&
     (pending.claimFingerprint !== run.queue?.tokenHash ||
-      (['ok', 'summary', 'ref', 'message'] as const).some(
+      (['ok', 'summary', 'ref', 'message', 'dependencyWorkId'] as const).some(
         (key) => pending.result[key] !== result[key],
       ) ||
       JSON.stringify(pending.result.relatedRefs) !==
@@ -1327,10 +1327,14 @@ export function executorExitedAndRetry(input: {
 
 /** Codex keeps its claim after settlement: server credential cleanup is
  * authorized by the original claim, so ordinary Codex executor exits never
- * retire it. Repository job occurrences (`jobOccurrence`) retire once any
- * reserved Codex cleanup finishes (`retireSettledClaim` / `credential-operation`). */
+ * retire it. Repository jobs and dependency waits need physical-exit proof
+ * and retire once any reserved Codex cleanup finishes. */
 function retiresOnExit(run: Run): boolean {
-  return run.pipeline !== 'codex' || Boolean(run.params?.['jobOccurrence']);
+  return (
+    run.pipeline !== 'codex' ||
+    Boolean(run.params?.['jobOccurrence']) ||
+    run.result?.dependencyWorkId !== undefined
+  );
 }
 
 /** The claimant executor observed the worker of an already settled run exit.
@@ -1433,6 +1437,10 @@ export function updateTaskWork(input: {
   return { task: { ...task, work, updatedAt: now }, outbox: [] };
 }
 
+export function agentDependencyEntryId(runId: string): string {
+  return `wait-for-agent/${runId}`;
+}
+
 /** Shared tail of every settle path. Events that arrived while this run held
  * the Work are handed to the drain now that the lock is released; if another
  * run took the lock in the same decision, that run's settlement hands them on
@@ -1442,7 +1450,13 @@ function settle(releasedTask: Task, settledRun: Run, now: string): Decision {
     task: releasedTask,
     run: settledRun,
     outbox: [
-      outcomeEntry(settledRun, now),
+      settledRun.state === 'finished' && settledRun.result?.dependencyWorkId
+        ? {
+            ...outcomeEntry(settledRun, now),
+            entryId: agentDependencyEntryId(settledRun.runId),
+            kind: 'wait-for-agent',
+          }
+        : outcomeEntry(settledRun, now),
       ...((releasedTask.eventResumes?.pending.length ?? 0) > 0 &&
       releasedTask.closedAt === undefined
         ? [

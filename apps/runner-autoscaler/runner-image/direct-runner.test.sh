@@ -264,9 +264,13 @@ case "$url" in
     if [ "${FAKE_BRIEF_NO_PIPELINE:-}" = "1" ]; then
       brief_pipeline=''
     fi
+    dependency_capability=''
+    if [ "${FAKE_AGENT_DEPENDENCY_WAIT:-}" = 1 ]; then
+      dependency_capability=',"agentDependencyWait":true'
+    fi
     if [ "${FAKE_ANCHOR:-work}" = "github" ]; then
       cat <<JSON
-{"anchor":{"type":"github","repo":"octo/example","issue":42,"html_url":"https://github.test/octo/example/issues/42"},"work":{"spec":{"title":"GitHub work","description":"Work-projected body","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","runbook":"${FAKE_RUNBOOK:-}","context":"${FAKE_CONTEXT:-}","attemptId":"g1:octo/example#42/r1","generation":1,"intentId":"octo/example#42/r1"}
+{"anchor":{"type":"github","repo":"octo/example","issue":42,"html_url":"https://github.test/octo/example/issues/42"},"work":{"spec":{"title":"GitHub work","description":"Work-projected body","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}}$brief_pipeline$dependency_capability,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","runbook":"${FAKE_RUNBOOK:-}","context":"${FAKE_CONTEXT:-}","attemptId":"g1:octo/example#42/r1","generation":1,"intentId":"octo/example#42/r1"}
 JSON
     elif [ "${FAKE_BRIEF_NO_RESUME:-}" = "1" ]; then
       cat <<JSON
@@ -541,6 +545,9 @@ python3 "$FIXTURE_TIMING_HELPER" workload "${FAKE_WORKER_SLEEP:-}" || exit $?
 if [ -n "${FAKE_WORKER_ELAPSED:-}" ]; then
   read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
   printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_WORKER_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
+fi
+if [ -n "${FAKE_AGENT_DEPENDENCY_WAIT:-}" ]; then
+  printf '%s\n<!-- attempt-claim:%s -->\n' '01J5Z3K9QX8F0N2B4V6C8D1E4J' "$ATTEMPT_ID" > "$AGENT_DEPENDENCY_OUTCOME_FILE"
 fi
 if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
   printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
@@ -2606,6 +2613,19 @@ grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
   fail "no-deliverable: complete call did not report outcome: no-deliverable ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario no-deliverable: OK"
+
+# A wait receipt on a GitHub issue yields after one provider round. It is
+# submitted through authenticated completion without a GitHub park marker.
+export FAKE_ANCHOR=github FAKE_AGENT_DEPENDENCY_WAIT=1 FAKE_GH_NO_MATCH=1
+run_scenario github-agent-dependency
+unset FAKE_ANCHOR FAKE_AGENT_DEPENDENCY_WAIT FAKE_GH_NO_MATCH
+
+[ "$rc" -eq 0 ] || fail "agent dependency: expected successful handoff"
+[ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 1 ] || fail "agent dependency: launched a correction round"
+jq -e '.outcome == "wait-for-agent" and .outcomeReference == "01J5Z3K9QX8F0N2B4V6C8D1E4J"' \
+  < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "agent dependency: missing validated receipt"
+
+echo "scenario github-agent-dependency: OK"
 
 # --- Scenario 3: brief 401 (expired/invalid run token) ----------------------
 # The very first call (GET .../brief) fails closed. direct-runner.sh must

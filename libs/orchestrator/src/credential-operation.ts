@@ -128,13 +128,15 @@ export function changeCredentialOperation(input: {
                 ? withoutMutation
                 : { ...op, recoverAfter: credentialRecoverAfter(now) },
         };
-  // An executor-loss event is already physical-exit evidence. Recipes keep
-  // the original claim only until its exact credential cleanup is proven;
-  // retiring it now lets the job reconcile without another exit callback.
+  // An executor-loss event is already physical-exit evidence. Recipes and
+  // dependency waits keep the original claim until its exact credential
+  // cleanup is proven, then retire it without another exit callback.
   if (
     change.kind === 'finish' &&
     op.kind === 'cleanup' &&
-    (next.pipeline === 'goose' || Boolean(next.params?.['jobOccurrence'])) &&
+    (next.pipeline === 'goose' ||
+      Boolean(next.params?.['jobOccurrence']) ||
+      next.result?.dependencyWorkId !== undefined) &&
     !isLive(next.state) &&
     next.events.at(-1)?.by === 'executor' &&
     (next.state === 'lost' ||

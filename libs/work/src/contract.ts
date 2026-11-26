@@ -97,6 +97,7 @@ export const outcomeReferenceSchema = z.discriminatedUnion('kind', [
 
 const runResultSchema = z.strictObject({
   ok: z.boolean(),
+  dependencyWorkId: workIdSchema.optional(),
   summary: z.string().max(4_096).optional(),
   ref: z.string().max(1_024).optional(),
   /** Additional exact deliverable, e.g. the blocker comment beside a partial PR. */
@@ -1253,6 +1254,20 @@ const runBriefSharedSchema = {
   attemptId: z.string(),
   generation: z.number().int().positive(),
   intentId: z.string(),
+  /** This Console accepts an authenticated investigator dependency wait. */
+  agentDependencyWait: z.literal(true).optional(),
+  /** Terminal evidence for this successor's exact admitted dependency. */
+  agentDependency: z
+    .strictObject({
+      workId: workIdSchema,
+      state: z.enum(['done', 'failed', 'canceled', 'parked', 'unavailable']),
+      runId: runIdSchema.optional(),
+      ok: z.boolean().optional(),
+      summary: z.string().optional(),
+      report: z.string().optional(),
+      reportAvailability: z.enum(['complete', 'partial', 'unavailable']),
+    })
+    .optional(),
   // Present iff the run's params carried a resume request. The same shape the
   // old hosted `work` input carried, so one provider adapter can consume it.
   resume: z

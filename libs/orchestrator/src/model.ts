@@ -318,6 +318,11 @@ export type RunMessageOverflow = z.infer<typeof runMessageOverflowSchema>;
 
 export const runResultSchema = z.strictObject({
   ok: z.boolean(),
+  /** An authenticated implementation yielded for its admitted agent Work. */
+  dependencyWorkId: z
+    .string()
+    .regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u)
+    .optional(),
   summary: z.string().max(4_096).optional(),
   /** e.g. a PR URL; opaque to the orchestrator. */
   ref: z.string().max(1_024).optional(),
@@ -792,6 +797,7 @@ const outboxEntryBaseSchema = z.strictObject({
     'publish-issue-start',
     'agent-event',
     'event-resume',
+    'wait-for-agent',
   ]),
   task: taskIdSchema,
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
