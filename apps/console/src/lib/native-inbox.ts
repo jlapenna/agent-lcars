@@ -17,8 +17,10 @@ import {
   nativeReportRun,
   REPORT_INBOX_WINDOW_MS,
 } from '../app/inbox-card';
+import { agentEventSubscriptionStore } from './agent-event-store';
 import { readHandoffActions } from './handoff-summary-work';
 import { shareInFlight } from './in-flight';
+import { readNativeEventWait } from './native-event-wait';
 import type { WorkPrincipal } from './work-auth';
 import { forbiddenReason } from './work-mint';
 
@@ -182,9 +184,21 @@ async function cardFor(
   )
     return undefined;
   const latest = work.runs.at(-1);
+  let waitingOnEvent;
+  try {
+    waitingOnEvent = await readNativeEventWait(
+      store,
+      agentEventSubscriptionStore,
+      work,
+    );
+  } catch {
+    // Unavailable subscription evidence must not hide a human decision.
+    logger.warn('agent-lcars: native event wait read unavailable');
+  }
+  if (waitingOnEvent && work.id !== selectedItemKey) return undefined;
   let humanNeededActions = latest?.result?.humanNeededActions;
   try {
-    if (latest !== undefined && work.state === 'parked')
+    if (latest !== undefined && work.state === 'parked' && !waitingOnEvent)
       humanNeededActions = await readHandoffActions(store, latest);
   } catch {
     logger.warn('agent-lcars: human-needed summary read unavailable');
@@ -193,6 +207,7 @@ async function cardFor(
   // replies must not create a second attempt of an effectful occurrence.
   if (work.spec.pipeline === 'goose') return undefined;
   return {
+    waitingOnEvent,
     humanNeededActions,
     // A card shows the whole report or question, never the preview.
     work: {
@@ -210,7 +225,10 @@ async function cardFor(
       ],
     },
     kind: report ? 'report' : 'decision',
-    queued: !closedSource && (work.state === 'parked' || freshReport),
+    queued:
+      !closedSource &&
+      !waitingOnEvent &&
+      (work.state === 'parked' || freshReport),
     // A follow-up on a report starts a new round, as a reply to a park does.
     canReply:
       !closedSource &&
