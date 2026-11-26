@@ -16,6 +16,7 @@ const doc = '00000000-0000-4000-8000-000000000003';
 const eventId = '00000000-0000-4000-8000-000000000004';
 const comment = '00000000-0000-4000-8000-000000000005';
 const fallback = '00000000-0000-4000-8000-000000000006';
+const fallbackJobId = '00000000-0000-5000-8000-000000000006';
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 const baseline = (
   text: string,
@@ -301,7 +302,7 @@ describe('Outline trusted API source', () => {
     );
     await f.source.handle({
       type: 'outline-fallback',
-      id: fallback,
+      id: fallbackJobId,
       documentId: doc,
       parentCommentId: comment,
     });
@@ -322,9 +323,10 @@ describe('Outline trusted API source', () => {
     });
     await f.source.handle({
       type: 'outline-fallback',
-      id: fallback,
+      id: fallbackJobId,
       documentId: doc,
     });
+    expect(f.api.comment).toHaveBeenCalledWith(fallback);
     expect(f.api.createComment).not.toHaveBeenCalled();
   });
 });

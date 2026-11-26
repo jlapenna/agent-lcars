@@ -83,7 +83,10 @@ export class OutlineSource {
     if (job.type === 'outline-fallback') {
       if (!agentCreated)
         throw new Error('Outline fallback document is not agent-created');
-      const existing = await deps.api.comment(job.id);
+      // Outline's Comment model requires UUIDv4. Keep the job's identity and
+      // use its same deterministic bits for both comment reads and writes.
+      const commentId = `${job.id.slice(0, 14)}4${job.id.slice(15)}`;
+      const existing = await deps.api.comment(commentId);
       if (existing) {
         if (existing.documentId !== id || existing.createdBy.id !== me.id)
           throw new Error('Outline fallback comment identity mismatch');
@@ -99,7 +102,7 @@ export class OutlineSource {
       // Outline accepts a caller-generated comment UUID. A lost response can
       // be recovered by comments.info with this same id before writing again.
       await deps.api.createComment({
-        id: job.id,
+        id: commentId,
         documentId: id,
         ...(parentCommentId ? { parentCommentId } : {}),
         text: OUTLINE_FALLBACK_COMMENT,

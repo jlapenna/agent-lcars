@@ -43,7 +43,7 @@ export const outlineSourceJobSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('outline-fallback'),
-    /** Stable UUID used as the Outline comment id across retries. */
+    /** Stable job UUID from which the host derives the Outline comment UUIDv4. */
     id: z.uuid(),
     documentId: z.uuid(),
     parentCommentId: z.uuid().optional(),
