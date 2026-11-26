@@ -128,7 +128,7 @@ const reader = os.use(async ({ context, next }) => {
 });
 
 /** The issue-owner query alone also accepts `work.reader` (#2502): the
- *  read-only interactive-session identity, which no other gate admits.
+ *  an ownership-only scope that grants no other Work operation.
  *  Deliberately not `work.reaper` -- that caller needs item reads for
  *  session expiry, never CLI session telemetry. */
 const ownerReader = os.use(async ({ context, next }) => {

@@ -145,7 +145,7 @@ describe('grant scopes', () => {
     ).toThrow();
   });
 
-  it('commits only issue-owner and cost-assessment read scopes for work-reader', () => {
+  it('grants interactive CLI coding-work operations and cost reads to work-reader', () => {
     const config = parseYaml(
       readFileSync(
         path.join(import.meta.dirname, '../../apphosting.yaml'),
@@ -160,7 +160,8 @@ describe('grant scopes', () => {
     expect(resolvePrincipal(subject, grants)).toMatchObject({
       principal: 'svc:work-reader',
       subjects: [subject],
-      scopes: ['work.reader', 'costs.reader'],
+      pipelines: ['claude', 'codex', 'opencode', 'agy'],
+      scopes: ['work.reader', 'costs.reader', 'work.operator'],
     });
     // No other grant names the reader, and no other grant uses its scope.
     expect(
