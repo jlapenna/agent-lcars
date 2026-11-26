@@ -145,7 +145,13 @@ review and comment-quality guidance applies.
      internal state, or pre-existing behavior outside the change).
      Zero validated findings is a normal, valid outcome.
 
-5. **Tools and failures.** Use tools available to this provider; upstream's
+5. **Tools and failures.** The dedicated reviewer App has Actions read
+   access. If an infrastructure check needs a rerun that the review credential
+   cannot perform, record the check and the limitation in the review body and
+   submit the head-bound source verdict. Leave the rerun to an authorized
+   workflow or actor. Required checks continue to gate merge. See the
+   [shared rerun procedure](../index.md#8-ci-reruns-and-the-bot-push--action_required-platform-fact).
+   Use tools available to this provider; upstream's
    `allowed-tools` frontmatter does not configure this dispatch. Preserve real
    tool, access, and verification failures. Follow shared protocol §4: missing
    access or a required maintainer action can PARK with its structured park

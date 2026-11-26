@@ -237,11 +237,16 @@ trap report_early_failure EXIT
 # startup fence and claim authority; HTTP success alone, a brief read, or OS
 # spawn cannot establish accepted startup. Do not retry an unknown result into
 # expensive execution, or log a response that may contain private diagnostics.
+reviewer_checkout=""
+if [ "$MODE" = review ]; then
+  reviewer_checkout=v1
+fi
 EARLY_FAILURE_MESSAGE='Worker startup heartbeat was not acknowledged; provider work was not started. Inspect executor retirement/recovery for settlement.'
 if ! startup_response="$(curl -sS --config - 2>/dev/null <<CURLCFG
 url = "$RUNS_API/heartbeat"
 request = "POST"
 header = "$AUTH_HEADER"
+header = "X-LCARS-Reviewer-Checkout: $reviewer_checkout"
 $CURL_TIMEOUT_CONFIG
 write-out = "\n%{http_code}"
 CURLCFG
@@ -259,6 +264,19 @@ if [ "$startup_status" != 200 ] || ! jq -se --arg runId "$LCARS_RUN_ID" '
 ' >/dev/null 2>&1 <<<"$startup_body"; then
   echo 'FATAL: worker startup heartbeat refused or acknowledgement invalid' >&2
   exit 1
+fi
+checkout_endpoint=checkout-token
+if [ "$MODE" = review ]; then
+  if ! LCARS_REVIEWER_LOGIN="$(jq -er '
+    (.reviewerLogin // "agent-lcars[bot]") |
+    select(. == "agent-lcars[bot]" or . == "agent-lcars-reviewer[bot]")
+  ' <<<"$startup_body")"; then
+    echo 'FATAL: worker startup returned an unknown reviewer identity' >&2
+    exit 1
+  fi
+  if [ "$LCARS_REVIEWER_LOGIN" = "agent-lcars-reviewer[bot]" ]; then
+    checkout_endpoint=reviewer-checkout-token
+  fi
 fi
 unset startup_response startup_status startup_body
 EARLY_FAILURE_MESSAGE=''
@@ -312,18 +330,12 @@ mkdir -m 700 "$CHECKOUT_OWNERS_DIR"
 PR_AUTHOR_TOKEN_FILE="$CHECKOUT_CREDENTIAL_DIR/pr-author-token"
 CHECKOUT_REPOSITORY_FILE="$CHECKOUT_CREDENTIAL_DIR/repository"
 
-reviewer_checkout=""
-if [ "$MODE" = review ]; then
-  reviewer_checkout=v1
-fi
-
 refresh_checkout_token() {
   local response_reviewer_login
   checkout_response="$CHECKOUT_CREDENTIAL_DIR/response.$$"
   if ! curl -sf --config - >"$checkout_response" <<CURLCFG
-url = "$RUNS_API/checkout-token"
+url = "$RUNS_API/$checkout_endpoint"
 header = "$AUTH_HEADER"
-header = "X-LCARS-Reviewer-Checkout: $reviewer_checkout"
 $CURL_TIMEOUT_CONFIG
 CURLCFG
   then
@@ -332,8 +344,8 @@ CURLCFG
   fi
   response_reviewer_login="$(jq -er '(.reviewerLogin // "agent-lcars[bot]") | strings | select(length > 0)' "$checkout_response")" ||
     { rm -f -- "$checkout_response"; return 1; }
-  # A rollback cannot replace the dedicated App with the fleet App mid-review.
-  if [ "$MODE" = review ] && [ -n "${LCARS_REVIEWER_LOGIN:-}" ] &&
+  # Validate every grant against the identity acknowledged at startup.
+  if [ "$MODE" = review ] &&
     [ "$response_reviewer_login" != "$LCARS_REVIEWER_LOGIN" ]; then
     rm -f -- "$checkout_response"
     echo "GitHub checkout renewal refused: reviewer identity changed" >&2
@@ -393,20 +405,13 @@ CURLCFG
   jq -c '.identity.git // .gitIdentity // null' "$checkout_response" > "$CHECKOUT_CREDENTIAL_DIR/git-identity.json.$$"
   mv -f -- "$CHECKOUT_CREDENTIAL_DIR/git-identity.json.$$" "$CHECKOUT_CREDENTIAL_DIR/git-identity.json"
   rm -f -- "$checkout_response"
-  if [ "$MODE" = review ]; then
-    LCARS_REVIEWER_LOGIN="$response_reviewer_login"
-    # A review started on the old Console keeps its actor after Console upgrades.
-    if [ "$LCARS_REVIEWER_LOGIN" = 'agent-lcars[bot]' ]; then
-      reviewer_checkout=""
-    fi
-  fi
+
 }
 
 # A claimed run must not be lost to one transient console error: the first
 # credential request retries with backoff, like checkout_refresh_loop does for
 # renewals. A persistent failure (for example a rejected run token) still
 # fails the run once the bounded attempts are exhausted.
-unset LCARS_REVIEWER_LOGIN
 checkout_attempt=1
 checkout_attempts="${CHECKOUT_TOKEN_BOOTSTRAP_ATTEMPTS:-4}"
 checkout_retry_seconds="${CHECKOUT_TOKEN_BOOTSTRAP_RETRY_SECONDS:-5}"

@@ -61,16 +61,24 @@ not approve a head that carries `status:needs-human` or `status:blocked`, a
 change request, an open trusted review thread, or a dismissed LCARS review.
 A commit from anyone else ends the exemption and the PR is reviewed normally.
 
-Runners that advertise `X-LCARS-Reviewer-Checkout: v1` can authenticate reviews
-as the dedicated `agent-lcars-reviewer` App, with read access to source, issues
-and CI plus pull-request write access. Automatic dependency approvals also use
-that App. Missing credentials for a negotiated reviewer checkout refuse the run.
-Legacy runners keep using the fleet App during rollout. Console records the App
-chosen at the first checkout before the review workload starts and uses that
-binding for later requests. The binding uses an executor event note so an older
-Console can still read the run after a rollback. The runner rejects an actor
-change on renewal. If rollback restores fleet App credentials for an in-flight
-dedicated review, retry the review after restoring the compatible Console.
+Compatible runners advertise `X-LCARS-Reviewer-Checkout: v1` on the startup
+heartbeat. Console atomically records the dedicated App binding with the first
+accepted heartbeat, using an executor event that older releases can read.
+Reviews started on an older Console or by a legacy runner stay on the fleet
+App for the whole claim. Later heartbeats and checkout requests cannot change
+that choice. The startup acknowledgement selects the checkout endpoint for
+both the initial grant and renewals. Dedicated reviews use an endpoint absent
+from older Console releases and fail closed if the endpoint or the dedicated
+credentials are unavailable.
+
+Before rolling back to a Console that predates reviewer binding, stop
+QueueExecutor from starting new runs and let active dedicated reviews settle,
+or cancel them and verify their run leases are no longer live. Keep new
+claims paused through the cutover. If canceling, also verify the workers have
+stopped, since already-issued GitHub grants can outlive the LCARS lease.
+Resume claims after rollback and request fresh reviews for interrupted heads.
+The dedicated App has source, issue, and Actions read access and pull-request
+write access. Automatic dependency approvals also use it.
 After both components are deployed, `/review` requests a fresh review on the
 same head if a legacy self-review comment left a PR waiting for approval. A later
 dedicated approval supersedes an older self-review block on that head. GitHub

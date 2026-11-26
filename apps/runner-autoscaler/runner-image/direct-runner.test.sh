@@ -278,7 +278,7 @@ JSON
 JSON
     fi
     ;;
-  */checkout-token)
+  */checkout-token|*/reviewer-checkout-token)
     if [ "${FAKE_CHECKOUT_TOKEN_FAIL:-}" = "1" ]; then
       echo "fake curl: simulated checkout-token failure" >&2
       exit 22
@@ -292,6 +292,7 @@ JSON
         exit 22
       fi
     fi
+    printf '%s\n' "${url##*/}" >> "$CHECKOUT_TOKEN_REQUEST_LOG.routes"
     token_attempt=1
     [ ! -f "$CHECKOUT_TOKEN_REQUEST_LOG" ] || token_attempt=$(( $(cat "$CHECKOUT_TOKEN_REQUEST_LOG") + 1 ))
     echo "$token_attempt" > "$CHECKOUT_TOKEN_REQUEST_LOG"
@@ -302,8 +303,8 @@ JSON
     # array by exporting FAKE_CHECKOUT_GRANTS_JSON as a literal JSON array;
     # every other scenario leaves it unset, so `grants` is simply absent
     # from the response, exactly like a run without the label.
-    if [ "${FAKE_REVIEWER_CHECKOUT:-}" = 1 ] &&
-      grep -qxF 'header = "X-LCARS-Reviewer-Checkout: v1"' <<< "$config_body"; then
+    if [[ "$url" = */reviewer-checkout-token ]]; then
+      [ "${FAKE_REVIEWER_CHECKOUT:-}" = 1 ] && [ "${FAKE_CHECKOUT_ON_OLD_CONSOLE:-}" != 1 ] || exit 22
       jq -cn --arg token "$checkout_token" --arg expiresAt "$expires_at" '{$token,$expiresAt,reviewerLogin:"agent-lcars-reviewer[bot]"}'
     elif [ -n "${FAKE_CHECKOUT_IDENTITY_JSON:-}" ]; then
       echo "{\"token\":\"$checkout_token\",\"expiresAt\":null,\"refreshAt\":\"$expires_at\",\"identity\":$FAKE_CHECKOUT_IDENTITY_JSON}"
@@ -343,6 +344,10 @@ JSON
       # The existing {runId, expiresAt} response is the compatibility surface;
       # a legacy Console with that acknowledged route remains supported.
       startup_body='{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00.000Z"}'
+      if [ "${FAKE_REVIEWER_CHECKOUT:-}" = 1 ] &&
+        grep -qxF 'header = "X-LCARS-Reviewer-Checkout: v1"' <<< "$config_body"; then
+        startup_body="$(jq -c '. + {reviewerLogin:"agent-lcars-reviewer[bot]"}' <<< "$startup_body")"
+      fi
       printf '%s\n%s' "${FAKE_STARTUP_BODY-$startup_body}" "${FAKE_STARTUP_STATUS:-200}"
     else
       [ "${FAKE_HEARTBEAT_FAIL:-}" != 1 ] || exit 22
@@ -2372,6 +2377,13 @@ run_scenario github-review-old-console opencode
 [ "$rc" -eq 0 ] || fail "github review on old Console: expected exit 0, got $rc"
 [ "$(cat "$OPENCODE_ENV_LOG.reviewer")" = 'agent-lcars[bot]' ] ||
   fail "github review on old Console: publishing actor was not the fleet App"
+
+FAKE_REVIEWER_CHECKOUT=1 FAKE_CHECKOUT_ON_OLD_CONSOLE=1 run_scenario github-review-mixed-console opencode
+[ "$rc" -ne 0 ] || fail "dedicated checkout unexpectedly succeeded against old Console"
+[ ! -e "$OPENCODE_ENV_LOG.reviewer" ] || fail "provider launched after dedicated checkout was refused"
+[ -s "$CHECKOUT_TOKEN_REQUEST_LOG.routes" ] &&
+  ! grep -vxF reviewer-checkout-token "$CHECKOUT_TOKEN_REQUEST_LOG.routes" ||
+  fail "dedicated review attempted a fleet checkout"
 
 FAKE_REVIEWER_CHECKOUT=1 run_scenario github-review opencode
 unset FAKE_ANCHOR FAKE_MODE FAKE_GITHUB_PR FAKE_GH_NO_MATCH FAKE_GH_MARKER_REVIEW

@@ -3786,12 +3786,53 @@ describe('checkoutToken', () => {
           expiringTokenForRepositories: fleetMint,
         },
       };
-      const beforeCheckout = runSchema.parse(await store.readRun(runId));
-      const r = await call(
-        checkoutContext,
-        'GET',
-        runPath(runId, '/checkout-token'),
+      for (const path of ['/checkout-token', '/reviewer-checkout-token']) {
+        const premature = await call(
+          checkoutContext,
+          'GET',
+          runPath(runId, path),
+        );
+        expect(premature.status).toBe(409);
+      }
+      expect(fleetMint).not.toHaveBeenCalled();
+      expect(reviewer.expiringTokenFor).not.toHaveBeenCalled();
+      expect(reviewer.expiringTokenForRepositories).not.toHaveBeenCalled();
+      const heartbeatPath = runPath(runId, '/heartbeat');
+      const startup = await call(checkoutContext, 'POST', heartbeatPath);
+      expect(startup.status).toBe(200);
+      const login = reviewerCheckoutV1
+        ? 'agent-lcars-reviewer[bot]'
+        : undefined;
+      expect((startup.json as { reviewerLogin?: string }).reviewerLogin).toBe(
+        login,
       );
+
+      // A fleet heartbeat models the startup acknowledged by old Console.
+      // A later capability header cannot upgrade that in-flight review.
+      const renewalContext = {
+        ...checkoutContext,
+        reviewerCheckoutV1: !reviewerCheckoutV1,
+      };
+      const later = await call(renewalContext, 'POST', heartbeatPath);
+      expect(later.status).toBe(200);
+      expect((later.json as { reviewerLogin?: string }).reviewerLogin).toBe(
+        login,
+      );
+      const selectedPath = runPath(
+        runId,
+        reviewerCheckoutV1 ? '/reviewer-checkout-token' : '/checkout-token',
+      );
+      const otherPath = runPath(
+        runId,
+        reviewerCheckoutV1 ? '/checkout-token' : '/reviewer-checkout-token',
+      );
+      const wrongRoute = await call(renewalContext, 'GET', otherPath);
+      expect(wrongRoute.status).toBe(409);
+      expect(fleetMint).not.toHaveBeenCalled();
+      expect(reviewer.expiringTokenFor).not.toHaveBeenCalled();
+      expect(reviewer.expiringTokenForRepositories).not.toHaveBeenCalled();
+      const beforeCheckout = runSchema.parse(await store.readRun(runId));
+      const r = await call(renewalContext, 'GET', selectedPath);
       expect(r.status).toBe(200);
       expect(r.json).toMatchObject({
         token: reviewerCheckoutV1 ? 'review-token' : 'fleet-token',
@@ -3812,18 +3853,10 @@ describe('checkoutToken', () => {
       expect(
         body.grants?.every((grant) => grant.token === body.token) ?? true,
       ).toBe(true);
-      const renewed = await call(
-        { ...checkoutContext, reviewerCheckoutV1: !reviewerCheckoutV1 },
-        'GET',
-        runPath(runId, '/checkout-token'),
-      );
+      const renewed = await call(renewalContext, 'GET', selectedPath);
       expect(renewed).toEqual(r);
-      const { events, ...stored } = runSchema.parse(await store.readRun(runId));
-      const { events: priorEvents, ...priorFields } = beforeCheckout;
-      // A strict reader from before the cutover accepts the same run fields
-      // and an additional event in the existing history.
-      expect(stored).toEqual(priorFields);
-      expect(events).toHaveLength(priorEvents.length + 1);
+      // Checkout and renewal do not alter the startup binding.
+      expect(await store.readRun(runId)).toEqual(beforeCheckout);
       expect(fleetMint.mock.calls.length > 0).toBe(!reviewerCheckoutV1);
       expect(
         reviewer.expiringTokenFor.mock.calls.length +
@@ -3857,31 +3890,38 @@ describe('checkoutToken', () => {
         token: 'fleet-token',
         expiresAt: NOW,
       }));
-      const r = await call(
-        {
-          ...context,
-          store,
-          orchestrator,
-          now,
-          bearerToken: bearer,
-          reviewerCheckoutV1: true,
-          ...(failure === 'failed'
-            ? {
-                reviewerTokens: {
-                  tokenFor: failed,
-                  expiringTokenFor: failed,
-                  expiringTokenForRepositories: failed,
-                },
-              }
-            : {}),
-          checkoutTokens: {
-            tokenFor: async () => 'fleet-token',
-            expiringTokenFor: fleetMint,
-            expiringTokenForRepositories: fleetMint,
-          },
+      const checkoutContext = {
+        ...context,
+        store,
+        orchestrator,
+        now,
+        bearerToken: bearer,
+        reviewerCheckoutV1: true,
+        ...(failure === 'failed'
+          ? {
+              reviewerTokens: {
+                tokenFor: failed,
+                expiringTokenFor: failed,
+                expiringTokenForRepositories: failed,
+              },
+            }
+          : {}),
+        checkoutTokens: {
+          tokenFor: async () => 'fleet-token',
+          expiringTokenFor: fleetMint,
+          expiringTokenForRepositories: fleetMint,
         },
+      };
+      const startup = await call(
+        checkoutContext,
+        'POST',
+        runPath(runId, '/heartbeat'),
+      );
+      expect(startup.status).toBe(200);
+      const r = await call(
+        checkoutContext,
         'GET',
-        runPath(runId, '/checkout-token'),
+        runPath(runId, '/reviewer-checkout-token'),
       );
       expect(r.status).toBe(failure === 'absent' ? 409 : 500);
       expect(fleetMint).not.toHaveBeenCalled();

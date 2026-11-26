@@ -19370,6 +19370,9 @@
                     },
                     "expiresAt": {
                       "type": "string"
+                    },
+                    "reviewerLogin": {
+                      "type": "string"
                     }
                   },
                   "required": ["runId", "expiresAt"],
@@ -20277,6 +20280,179 @@
       "get": {
         "operationId": "getRunCheckoutToken",
         "summary": "Mint a short-lived GitHub token for a claimed run's target repo",
+        "tags": ["runs"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": ["string", "null"]
+                    },
+                    "repository": {
+                      "type": "string"
+                    },
+                    "reviewerLogin": {
+                      "type": "string"
+                    },
+                    "refreshAt": {
+                      "type": "string"
+                    },
+                    "identity": {
+                      "type": "object",
+                      "properties": {
+                        "login": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9-]{1,39}$"
+                        },
+                        "git": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "email": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["name", "email"],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": ["login", "git"],
+                      "additionalProperties": false
+                    },
+                    "gitIdentity": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["name", "email"],
+                      "additionalProperties": false
+                    },
+                    "grants": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "owner": {
+                            "type": "string"
+                          },
+                          "repositories": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "token": {
+                            "type": "string"
+                          },
+                          "expiresAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "owner",
+                          "repositories",
+                          "token",
+                          "expiresAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["token", "expiresAt", "repository"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired run token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Recipe occurrence or execution profile refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Worker generation or credential refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "runToken": []
+          }
+        ]
+      }
+    },
+    "/runs/{runId}/reviewer-checkout-token": {
+      "get": {
+        "operationId": "getRunReviewerCheckoutToken",
+        "summary": "Mint a GitHub token for a run bound to the reviewer App",
         "tags": ["runs"],
         "parameters": [
           {
