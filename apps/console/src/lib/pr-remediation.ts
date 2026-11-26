@@ -96,6 +96,37 @@ function isDependencyQualificationRun(run: Run): boolean {
   return run.requestId.startsWith(DEPENDENCY_QUALIFICATION_REQUEST_PREFIX);
 }
 
+function hasSuccessfulDependencyQualification(runs: readonly Run[]): boolean {
+  const byId = new Map<string, Run>(runs.map((run) => [run.runId, run]));
+  return runs.some((run) => {
+    if (run.result?.ok !== true || run.result.summary === 'park') return false;
+
+    const visited = new Set<string>();
+    let attempt: Run | undefined = run;
+    while (attempt !== undefined && !visited.has(attempt.runId)) {
+      if (isDependencyQualificationRun(attempt)) return true;
+      visited.add(attempt.runId);
+
+      // A retry can inherit fallback metadata. Follow its immediate parent
+      // first so a chain of retries still reaches the qualifying request.
+      if (
+        attempt.requestSource === 'auto-retry' &&
+        attempt.requestId.startsWith('retry:')
+      ) {
+        attempt = byId.get(attempt.requestId.slice('retry:'.length));
+      } else if (
+        attempt.requestSource === 'provider-fallback' &&
+        attempt.providerFallback !== undefined
+      ) {
+        attempt = byId.get(attempt.providerFallback.originalRunId);
+      } else {
+        return false;
+      }
+    }
+    return false;
+  });
+}
+
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 
 export interface PrRemediationDeps {
@@ -1499,9 +1530,7 @@ async function reconcilePullRequestRemediationOnce(
   const recoveringMissingDependencyReview =
     options?.trigger === 'open-sweep' &&
     snapshot.reviewDecision === 'REVIEW_REQUIRED' &&
-    runsForApproval.some(
-      (run) => isDependencyQualificationRun(run) && run.result?.ok === true,
-    );
+    hasSuccessfulDependencyQualification(runsForApproval);
   if (
     (recoveringMissingDependencyReview ||
       (options?.afterRun?.result?.ok === true &&

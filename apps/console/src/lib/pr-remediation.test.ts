@@ -1217,61 +1217,102 @@ describe('automatic pull-request review & conflict remediation', () => {
       ).toEqual([]);
     });
 
-    it('recovers a missed independent review once per qualified head during the sweep', async () => {
-      const f = createFixture();
-      f.setPr(REPO, 4040, draft());
-      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
-      await f.orchestrator.report(`${REPO}#4040/r1`, { ok: true });
-      f.setPr(
-        REPO,
-        4040,
-        draft({
-          isDraft: false,
-          headRefOid: HEAD_2,
-          reviewDecision: 'REVIEW_REQUIRED',
-        }),
-      );
-      const generation =
-        await f.store.beginGithubAnchorProjectionRefresh(anchor);
-      await f.store.applyGithubAnchorProjectionRefresh({
-        anchor,
-        generation,
-        projection: {
+    it.each(['direct', 'provider fallback', 'auto-retry'] as const)(
+      'recovers a missed independent review once per head after %s qualification',
+      async (path) => {
+        const f = createFixture();
+        f.setPr(REPO, 4040, draft());
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor);
+        const original = await f.store.readActiveRun(anchor);
+        if (original === undefined) throw new Error('Expected qualification');
+        if (path === 'provider fallback') {
+          await f.orchestrator.report(original.runId, {
+            ok: false,
+            summary: 'provider-limit',
+          });
+        }
+        if (path === 'auto-retry') {
+          const claimFingerprint = hashRunToken(mintRunToken());
+          const claimant = {
+            subject: 'executor@example.com',
+            runner: 'qualification-runner',
+            claimFingerprint,
+          };
+          const claim = await f.store.claimQueuedRun({
+            pipelines: [original.pipeline],
+            now: f.now(),
+            claimedBy: claimant.runner,
+            claimedBySubject: claimant.subject,
+            tokenHash: claimFingerprint,
+          });
+          if (claim?.runId !== original.runId) {
+            throw new Error('Expected to claim the original qualification');
+          }
+          await f.orchestrator.executorExited(original.runId, claimant);
+        }
+        const qualified = await f.store.readActiveRun(anchor);
+        expect(qualified?.requestSource).toBe(
+          path === 'direct'
+            ? 'caller'
+            : path === 'auto-retry'
+              ? 'auto-retry'
+              : 'provider-fallback',
+        );
+        if (qualified === undefined) throw new Error('Expected qualification');
+        await f.orchestrator.report(qualified.runId, { ok: true });
+        f.setPr(
+          REPO,
+          4040,
+          draft({
+            isDraft: false,
+            headRefOid: HEAD_2,
+            reviewDecision: 'REVIEW_REQUIRED',
+          }),
+        );
+        const generation =
+          await f.store.beginGithubAnchorProjectionRefresh(anchor);
+        await f.store.applyGithubAnchorProjectionRefresh({
           anchor,
-          kind: 'pr',
-          state: 'open',
-          draft: false,
-          mergedAt: null,
-          title: 'Ready dependency update',
-          body: '',
-          url: `https://github.com/${REPO}/pull/4040`,
-          author: 'renovate[bot]',
-          labels: ['bot:renovate'],
-          assigneeLogins: [],
-          sourceUpdatedAt: T0,
-          observedAt: T0,
-          reviewRequirement: 'required',
-        },
-      });
+          generation,
+          projection: {
+            anchor,
+            kind: 'pr',
+            state: 'open',
+            draft: false,
+            mergedAt: null,
+            title: 'Ready dependency update',
+            body: '',
+            url: `https://github.com/${REPO}/pull/4040`,
+            author: 'renovate[bot]',
+            labels: ['bot:renovate'],
+            assigneeLogins: [],
+            sourceUpdatedAt: T0,
+            observedAt: T0,
+            reviewRequirement: 'required',
+          },
+        });
 
-      await reconcileOpenPullRequestRemediations(
-        f.remediationDeps,
-        Date.now() + 60_000,
-      );
-      const review = await f.store.readActiveRun(anchor);
-      expect(review).toMatchObject({
-        requestId: `pr-rereview:4040:${HEAD_2.slice(0, 16)}`,
-        params: { mode: 'review' },
-      });
-      if (review === undefined) throw new Error('Expected a recovery review');
-      await f.orchestrator.report(review.runId, { ok: true });
-      await reconcileOpenPullRequestRemediations(
-        f.remediationDeps,
-        Date.now() + 60_000,
-      );
+        await reconcileOpenPullRequestRemediations(
+          f.remediationDeps,
+          Date.now() + 60_000,
+        );
+        const review = await f.store.readActiveRun(anchor);
+        expect(review).toMatchObject({
+          requestId: `pr-rereview:4040:${HEAD_2.slice(0, 16)}`,
+          params: { mode: 'review' },
+        });
+        if (review === undefined) throw new Error('Expected a recovery review');
+        await f.orchestrator.report(review.runId, { ok: true });
+        await reconcileOpenPullRequestRemediations(
+          f.remediationDeps,
+          Date.now() + 60_000,
+        );
 
-      expect(await f.store.listRuns(anchor)).toHaveLength(2);
-    });
+        expect(await f.store.listRuns(anchor)).toHaveLength(
+          path === 'direct' ? 2 : 3,
+        );
+      },
+    );
 
     it('qualifies a ready dependency update whose finished checks fail', async () => {
       const f = createFixture();
