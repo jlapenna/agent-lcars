@@ -7,7 +7,14 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 
 import type { Run } from './model';
-import type { OrchestratorStore } from './store';
+
+export interface IssueSnapshotReader {
+  readIssueSnapshot(id: string): Promise<TrackerIssue | undefined>;
+  /** A bounded set of unique snapshot IDs for a single detail view. */
+  readIssueSnapshots(
+    ids: readonly string[],
+  ): Promise<Map<string, TrackerIssue>>;
+}
 
 export function prepareIssueSnapshot(input: unknown) {
   const issue = trackerIssueSchema.parse(input);
@@ -29,7 +36,7 @@ export function prepareIssueSnapshot(input: unknown) {
 }
 
 export async function readRunIssue(
-  store: Pick<OrchestratorStore, 'readIssueSnapshot'>,
+  store: Pick<IssueSnapshotReader, 'readIssueSnapshot'>,
   run: Run,
 ): Promise<TrackerIssue | undefined> {
   if (run.issueSnapshot === undefined) return run.issue;
@@ -41,7 +48,7 @@ export async function readRunIssue(
 }
 
 export async function readRunIssues(
-  store: Pick<OrchestratorStore, 'readIssueSnapshots'>,
+  store: Pick<IssueSnapshotReader, 'readIssueSnapshots'>,
   runs: readonly Run[],
 ): Promise<Map<string, TrackerIssue>> {
   const ids = new Set(

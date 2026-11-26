@@ -1,12 +1,12 @@
 import type {
   IssueReference,
   RunEvidence,
-  TrackerIssue,
   TrackerIssueProjection,
 } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
 import type { Decision, Refusal } from './decide';
+import type { IssueSnapshotReader } from './issue-snapshot';
 import type {
   LifecycleMetricRead,
   LifecycleMetricRecords,
@@ -254,7 +254,7 @@ export interface RunRef {
   updatedAt: string;
 }
 
-export interface OrchestratorStore {
+export interface OrchestratorStore extends IssueSnapshotReader {
   readTrackerIssue(
     reference: IssueReference,
   ): Promise<TrackerIssueProjection | undefined>;
@@ -311,12 +311,6 @@ export interface OrchestratorStore {
   /** Store a run's whole final message out of line, as the chunks
    * `splitRunMessage` produced. Content-addressed by `overflow.sha256` and
    * idempotent; never changes the run document. */
-  readIssueSnapshot(id: string): Promise<TrackerIssue | undefined>;
-  /** A bounded set of unique snapshot IDs for a single detail view. */
-  readIssueSnapshots(
-    ids: readonly string[],
-  ): Promise<Map<string, TrackerIssue>>;
-
   writeRunMessage(input: {
     runId: string;
     overflow: RunMessageOverflow;
