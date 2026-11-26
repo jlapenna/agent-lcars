@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { SessionDoc, SessionWrite } from './types';
 import {
   sessionSpendForWrite,
   sessionSpendFromStored,
   storedTokenUsage,
 } from './session-spend';
+import { SessionDoc, SessionWrite } from './types';
 
 const USAGE = {
   inputTokens: 1_000,
