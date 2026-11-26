@@ -605,7 +605,11 @@ describe('dispatched worker policy', () => {
     expect(verdict({ tool_name: 'execute', tool_input: { code: '1+1' } })).toBe(
       'deny',
     );
-    for (const moveTool of ['opencode.session_move', 'opencode_session_move']) {
+    for (const moveTool of [
+      'opencode.session.move',
+      'opencode.session_move',
+      'opencode_session_move',
+    ]) {
       expect(
         verdict({
           tool_name: moveTool,

@@ -669,6 +669,7 @@ function evaluate(input, context, dependencies = {}) {
   if (/^automation[_.]/.test(toolName))
     return decision('deny', 'Automations are disabled in dispatched workers.');
   if (
+    toolName === 'opencode.session.move' ||
     toolName === 'opencode.session_move' ||
     toolName === 'opencode_session_move'
   )
