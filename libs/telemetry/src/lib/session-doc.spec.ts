@@ -7,6 +7,7 @@ import {
   ISSUE_AGENT_SESSION_RETENTION_DAYS,
   parseSessionDoc,
 } from './session-doc';
+import { sessionSpendForWrite } from './session-spend';
 import { SessionSummary } from './types';
 
 function baseSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
@@ -64,6 +65,24 @@ describe('buildSessionDoc', () => {
     );
 
     expect(write.clearFields).toContain('resolvedModel');
+    expect(
+      sessionSpendForWrite(write, {
+        model: 'homelab/default',
+        resolvedModel: 'claude-opus-5',
+      }),
+    ).toEqual({ tokens: 30, costUsd: 0 });
+    expect(
+      sessionSpendForWrite(
+        buildSessionWrite(
+          baseSummary({
+            model: 'homelab/default',
+            resolvedModel: 'claude-opus-5',
+          }),
+          'live',
+        ),
+        undefined,
+      ).costUsd,
+    ).toBeGreaterThan(0);
   });
 
   it('builds a cli doc with only cli-relevant optional fields', () => {

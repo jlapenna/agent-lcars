@@ -110,6 +110,25 @@ resource "google_firestore_index" "sessions_source_repo_last_activity" {
   }
 }
 
+# A range on lastActivityAt with a sum on a materialized spend field
+# requires a composite index. Keep both in the sessions writers' database.
+resource "google_firestore_index" "sessions_spend" {
+  for_each    = toset(["spend.tokens", "spend.costUsd"])
+  project     = var.project_id
+  database    = google_firestore_database.default.name
+  collection  = "sessions"
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "lastActivityAt"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = each.value
+    order      = "ASCENDING"
+  }
+}
+
 # Telemetry writers stamp `expireAt` and readers assume Firestore deletes the
 # document after it (libs/telemetry session retention, the runner
 # autoscaler's `runner-status` snapshots), but no TTL policy existed: on

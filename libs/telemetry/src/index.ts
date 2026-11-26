@@ -9,6 +9,7 @@ export * from './lib/runner-capture';
 export * from './lib/session-doc';
 export * from './lib/session-event';
 export * from './lib/session-event-write';
+export * from './lib/session-spend';
 export * from './lib/session-status-annotation';
 export * from './lib/session-title-annotation';
 export * from './lib/session-title-selection';

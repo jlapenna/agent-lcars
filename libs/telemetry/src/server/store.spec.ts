@@ -119,6 +119,7 @@ describe('agent-telemetry store', () => {
       expect(snap.exists).toBe(true);
       expect(snap.data()).toEqual({
         ...doc,
+        spend: { tokens: 0, costUsd: 0 },
         expireAt: Timestamp.fromDate(new Date(doc.expireAt as string)),
         writtenAt: expect.anything(),
       });

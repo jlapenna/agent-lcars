@@ -325,6 +325,9 @@ interface BaseSessionDoc {
   expireAt?: string;
   /** See {@link SessionSummary.totalCostUsd}. */
   totalCostUsd?: number;
+  /** Indexable totals materialized by session writers. Unpriced sessions add
+   * zero to the dollar sum. Use the original pricing inputs for coverage. */
+  spend?: { tokens: number; costUsd: number };
   /** See {@link SessionSummary.result} / {@link SessionResult}. */
   result?: SessionResult;
 }

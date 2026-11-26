@@ -4,6 +4,7 @@ import {
   SESSION_WRITTEN_AT_FIELD,
   type SessionDoc,
   type SessionEventV1,
+  sessionSpendForWrite,
   type SessionWrite,
   sessionWriteForEvent,
 } from '@agent-lcars/telemetry';
@@ -103,7 +104,10 @@ export function createHookEventWriter(
             const write = sessionWriteForEvent(event, parseStored(stored), now);
             if (!write) return 'invalid' as const;
             observer = write.doc.observer;
-            payload = hookEventPayload(write);
+            payload = {
+              ...hookEventPayload(write),
+              spend: sessionSpendForWrite(write, stored),
+            };
           } catch {
             // Deterministic: retrying this event can never succeed.
             return 'invalid' as const;
