@@ -178,14 +178,6 @@ function DispatchRow({
         <PipelineBadge pipeline={run.pipeline} />
       </td>
       <td className="ops-cell-clip">
-        <BridgePaneLink
-          mobileHref={actionHref}
-          paneHref={selectHref ?? actionHref}
-          className="ops-ref"
-          data-testid="current-run-primary-action"
-        >
-          {runRef(run, item)}
-        </BridgePaneLink>
         {selectHref ? (
           <RowTitle
             text={title}
@@ -201,16 +193,26 @@ function DispatchRow({
             {title}
           </Anchor>
         )}
-        {runHref && (
-          <Anchor
-            size="xs"
-            className="ops-subtle-link"
-            href={`${runHref}#run-${encodeURIComponent(run.id)}`}
+        <div className="ops-dispatch-links">
+          <BridgePaneLink
+            mobileHref={actionHref}
+            paneHref={selectHref ?? actionHref}
+            className="ops-ref"
+            data-testid="current-run-primary-action"
           >
-            Task/run
-          </Anchor>
-        )}
-        <RunLogLink run={run} />
+            {runRef(run, item)}
+          </BridgePaneLink>
+          {runHref && (
+            <Anchor
+              size="xs"
+              className="ops-subtle-link"
+              href={`${runHref}#run-${encodeURIComponent(run.id)}`}
+            >
+              Task/run
+            </Anchor>
+          )}
+          <RunLogLink run={run} />
+        </div>
       </td>
       <td>
         <PhaseBlocks run={run} />
@@ -224,7 +226,7 @@ function DispatchRow({
         </div>
       </td>
       {showRunner && (
-        <td className="ops-mono-dim ops-wrap">
+        <td className="ops-dispatch-runner ops-mono-dim ops-wrap">
           {run.queue?.claimedBy ?? UNAVAILABLE}
         </td>
       )}
@@ -277,6 +279,7 @@ function DispatchRow({
 
 export function ActiveDispatchesPanel({
   liveRuns,
+  footer,
   itemsByRunId = {},
   sessionsByRunId = {},
   selectHrefFor,
@@ -286,6 +289,7 @@ export function ActiveDispatchesPanel({
   updatedAt,
 }: {
   liveRuns: AgentRun[];
+  footer?: ReactNode;
   /** When these runs were read: the mockup's `updated 4 s ago`. */
   updatedAt?: string;
   itemsByRunId?: Record<string, RunItemRef>;
@@ -325,7 +329,7 @@ export function ActiveDispatchesPanel({
       {liveRuns.length === 0 ? (
         <p className="ops-empty">No agent runs queued or running.</p>
       ) : (
-        <table className="ops-table">
+        <table className="ops-table ops-dispatch-table">
           <thead>
             <tr>
               <th>Agent</th>
@@ -396,6 +400,7 @@ export function ActiveDispatchesPanel({
           })}
         </table>
       )}
+      {footer}
     </OpsPanel>
   );
 }
@@ -680,9 +685,11 @@ export function DecisionInboxPanel({
 /** Interactive sessions in flight (FE-BR-3), in the same panel language. */
 export function CliSessionsPanel({
   sessions,
+  footer,
   selectHrefFor,
 }: {
   sessions: CliSession[];
+  footer?: ReactNode;
   selectHrefFor?: (session: CliSession) => string;
 }) {
   return (
@@ -706,6 +713,7 @@ export function CliSessionsPanel({
           ))}
         </div>
       )}
+      {footer}
     </OpsPanel>
   );
 }

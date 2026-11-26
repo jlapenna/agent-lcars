@@ -4359,6 +4359,17 @@ td.costs-repo-spend__num {
   font-size: 0.6875rem;
 }
 
+.ops-dispatch-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 8px;
+}
+
+.ops-dispatch-links .ops-subtle-link {
+  margin-right: 0;
+}
+
 .ops-diagnosis {
   display: block;
   margin-top: 2px;
@@ -4765,6 +4776,47 @@ td.costs-repo-spend__num {
     min-width: 44px;
     min-height: 44px;
     align-items: center;
+  }
+
+  .ops-dispatch-table tr:not(.ops-group-head) {
+    align-items: center;
+    row-gap: 4px;
+    padding-block: 6px;
+  }
+
+  .bridge-frame > .bridge-workspace {
+    padding-inline: 12px;
+  }
+
+  .ops-dispatch-table td {
+    min-inline-size: 0;
+  }
+
+  .ops-dispatch-table td.ops-num {
+    grid-area: 3 / 2;
+  }
+
+  .ops-dispatch-table td:is(.ops-budget-cell, .ops-dispatch-runner),
+  .ops-dispatch-table .ops-group-head td {
+    grid-column: 1 / -1;
+    width: auto;
+  }
+
+  .ops-dispatch-table .ops-cell-clip :is(.ops-item-title, .bridge-row-select) {
+    align-content: center;
+    margin-top: 0;
+    padding-block: 2px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .ops-dispatch-links .ops-ref {
+    display: inline-flex;
+    align-items: center;
+    min-inline-size: 44px;
+    padding-block: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .ops-panel__meta {
