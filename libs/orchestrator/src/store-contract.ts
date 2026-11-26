@@ -201,7 +201,9 @@ export function runOrchestratorStoreContract(
 
       clock.advanceMinutes(180);
       const { retried } = await orchestrator.sweepExpired();
-      const [retryInfo] = retried;
+      const retryInfo = retried.find(
+        ({ lostRunId }) => lostRunId === first.runId,
+      );
       assert(retryInfo);
       const retry = await store.readRun(retryInfo.newRunId);
       assert(retry);
@@ -214,7 +216,11 @@ export function runOrchestratorStoreContract(
         ]),
       );
 
-      await orchestrator.report(retry.runId, { ok: true, summary: 'done' });
+      const settled = await orchestrator.report(retry.runId, {
+        ok: true,
+        summary: 'done',
+      });
+      if (isRefusal(settled)) throw new Error(settled.reason);
       const next = await orchestrator.request({
         ...input,
         requestId: 'new-turn',
