@@ -497,6 +497,7 @@ resource "google_secret_manager_secret" "runtime" {
     "AGENT_LCARS_PUSH_VAPID",
     "AGENT_LCARS_LINEAR_API_KEY",
     "AGENT_LCARS_LINEAR_WEBHOOK_SECRET",
+    "AGENT_LCARS_OUTLINE_WEBHOOK_SECRET",
   ])
   secret_id = each.value
   replication {
@@ -870,4 +871,19 @@ resource "google_billing_budget" "monthly" {
     content { threshold_percent = threshold_rules.value }
   }
   depends_on = [google_project_service.services]
+}
+
+# Outline's signed receiver has no Outline API credential. Only this
+# signing-secret container is cloud-owned; the host keeps its existing API key.
+resource "google_secret_manager_secret_iam_member" "outline_viewer" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime["AGENT_LCARS_OUTLINE_WEBHOOK_SECRET"].secret_id
+  role      = "roles/secretmanager.viewer"
+  member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+resource "google_secret_manager_secret_iam_member" "outline_version_manager" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime["AGENT_LCARS_OUTLINE_WEBHOOK_SECRET"].secret_id
+  role      = "roles/secretmanager.secretVersionManager"
+  member    = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-firebaseapphosting.iam.gserviceaccount.com"
 }
