@@ -1580,6 +1580,19 @@ else
     AGENT_PROMPT="$AGENT_PROMPT
 In the procedure receipt, cite the packaged upstream revision $review_revision."
   fi
+  case "$(tr -d '\r\n' < "$opencode_version_file")" in
+    v1.*|1.*) ;;
+    *)
+      # Inline config takes precedence over the checked-out project's config.
+      OPENCODE_CONFIG_CONTENT=$(jq -ces '
+        if length == 1 and (.[0] == null or (.[0] | type == "object"))
+        then (.[0] // {}) | .automations = false
+        else error("OpenCode inline config must be one JSON object")
+        end
+      ' <<< "${OPENCODE_CONFIG_CONTENT:-null}")
+      export OPENCODE_CONFIG_CONTENT
+      ;;
+  esac
   worker_policy_bootstrap "$OPENCODE_CONFIG"
   activate_hook_telemetry
   # OpenCode has
