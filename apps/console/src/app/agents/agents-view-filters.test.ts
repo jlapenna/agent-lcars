@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
+import { parseSessionArchiveQuery } from '@/lib/session-archive';
+
 import {
   agentsViewHref,
+  cliSessionsArchiveHref,
   matchesAgentsRun,
   matchesAgentsSession,
   matchesClaimedAgent,
@@ -111,4 +114,30 @@ describe('agentsViewHref', () => {
       '/agents?agent=codex&window=24h&q=oom',
     );
   });
+});
+
+describe('cliSessionsArchiveHref', () => {
+  it.each([
+    ['claude', 'claude-code'],
+    ['codex', 'codex'],
+    ['opencode', 'opencode'],
+    ['agy', 'antigravity'],
+    [undefined, undefined],
+  ] as const)(
+    'preserves the Bridge agent filter %s in the archive',
+    (pipeline, agent) => {
+      const href = cliSessionsArchiveHref('jlapenna/agent-lcars', pipeline);
+      const url = new URL(href, 'https://console.example');
+      const query = parseSessionArchiveQuery(
+        Object.fromEntries(url.searchParams),
+      );
+
+      expect(url.pathname).toBe('/sessions');
+      expect(query).toMatchObject({
+        source: 'cli',
+        repo: { owner: 'jlapenna', name: 'agent-lcars' },
+      });
+      expect(query.agent).toBe(agent);
+    },
+  );
 });

@@ -54,6 +54,7 @@ import {
 import {
   AGENTS_WINDOWS,
   type AgentsViewFilters,
+  cliSessionsArchiveHref,
   matchesAgentsRun,
   matchesAgentsSession,
   matchesClaimedAgent,
@@ -464,9 +465,6 @@ async function IndexBody({
   const workHref = repoFilterKey
     ? `/work?${new URLSearchParams({ repo: repoFilterKey })}`
     : '/work';
-  const sessionsQuery = new URLSearchParams({ source: 'cli' });
-  if (repoFilterKey) sessionsQuery.set('repo', repoFilterKey);
-  if (view.agent) sessionsQuery.set('agent', view.agent);
 
   return (
     <ConsoleWorkspace
@@ -632,7 +630,7 @@ async function IndexBody({
               sessions={filteredCliSessions.filter(isActiveCliSession)}
               footer={
                 <Anchor
-                  href={`/sessions?${sessionsQuery}`}
+                  href={cliSessionsArchiveHref(repoFilterKey, view.agent)}
                   size="sm"
                   className="operations-more-link"
                 >
