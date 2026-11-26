@@ -81,6 +81,7 @@ import { ConsoleWorkspace } from './console-workspace';
 import { DataFreshness } from './data-freshness';
 import { decisionRows } from './decision-rows';
 import { DeckInboxSummary } from './deck-inbox-summary';
+import { SPEND_READ_FAILED } from './fleet-readouts';
 import { formatCost, formatRelativeTime } from './format';
 import { inboxCardAgent, inboxCardMetadata } from './inbox-card';
 import { LiveDashboard } from './live-dashboard';
@@ -218,7 +219,10 @@ async function getJobsReadout() {
     };
   } catch (error) {
     logger.error('agent-lcars: Bridge jobs summary unavailable:', error);
-    return { detail: 'Job registry unavailable' };
+    return {
+      detail: 'Job registry unavailable',
+      warning: 'Job registry unavailable (repository jobs read failed).',
+    };
   }
 }
 
@@ -328,6 +332,8 @@ async function IndexBody({
       ...nativeInbox.warnings,
       ...autoscaler.warnings,
       ...(tokenRateSnapshot ? [] : [TOKEN_RATE_READ_FAILED]),
+      ...(jobs.warning ? [jobs.warning] : []),
+      ...(spend === undefined ? [SPEND_READ_FAILED] : []),
     ]),
   );
 
