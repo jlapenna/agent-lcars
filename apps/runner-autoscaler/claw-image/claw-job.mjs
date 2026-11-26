@@ -445,10 +445,12 @@ export function harnessChannel(stream) {
   let exit;
   let gone = false;
   const closed = new Promise((done) => stream.once('close', done));
-  const left = (code) => {
+  const disconnected =
+    'the harness host connection was lost (cause unconfirmed)';
+  const left = (code, error) => {
     if (exit !== undefined) return;
-    exit = { code };
-    onExit?.(code);
+    exit = { code, error };
+    onExit?.(code, error);
   };
   readLines(
     stream,
@@ -478,7 +480,7 @@ export function harnessChannel(stream) {
   // A host that goes away has taken the harness with it.
   void closed.then(() => {
     gone = true;
-    left(null);
+    left(null, disconnected);
     for (const reply of replies.splice(0)) reply(undefined);
   });
   const ask = (frame, { signal, timeoutMs } = {}) =>
@@ -527,6 +529,7 @@ export function harnessChannel(stream) {
         };
       if (reply?.claw === 'failed' && typeof reply.message === 'string')
         throw new ClawFailure(reply.message.slice(0, 500));
+      if (gone) throw new ClawFailure(disconnected);
       // The host's own unexpected failure, already on its stderr.
       throw new Error('the harness host could not start the harness');
     },
@@ -538,10 +541,10 @@ export function harnessChannel(stream) {
     onOversize: (listener) => {
       onOversize = listener;
     },
-    /** Calls `listener` once, with the agent's exit code, when the agent and
-     * everything in its process group have gone. */
+    /** Calls `listener` once, with the agent's exit code after its process
+     * group stops, or an error when the host connection is lost. */
     onExit: (listener) => {
-      if (exit !== undefined) listener(exit.code);
+      if (exit !== undefined) listener(exit.code, exit.error);
       else onExit = listener;
     },
     end: () => write({ claw: 'end' }),
@@ -557,7 +560,8 @@ export function harnessChannel(stream) {
         { claw: 'finish', turn },
         { signal, timeoutMs: HOST_FINISH_MS },
       ).catch(() => undefined);
-      if (reply?.claw !== 'finished') return { unreported: true };
+      if (reply?.claw !== 'finished')
+        return gone ? { refused: disconnected } : { unreported: true };
       if (reply.failed === true) {
         if (typeof reply.message === 'string')
           throw new ClawFailure(reply.message.slice(0, 500));
@@ -779,7 +783,8 @@ export function acpTurn(
     // process group have gone, so nothing of the harness still runs while
     // the launcher checks the settings it could change and settles.
     let stopping;
-    const exited = (code) => {
+    const exited = (code, error) => {
+      if (error !== undefined) turn.error ??= error;
       clearTimeout(stopping);
       signal?.removeEventListener('abort', onAbort);
       for (const waiter of pending.values())
