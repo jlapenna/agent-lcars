@@ -138,7 +138,8 @@ function renderWorkspace(
 }
 
 it('reloads recent messages when the same session parks on a new run', async () => {
-  vi.spyOn(globalThis, 'fetch')
+  const fetchPreview = vi
+    .spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(
       Response.json({ messages: [{ role: 'assistant', text: 'First park' }] }),
     )
@@ -165,6 +166,10 @@ it('reloads recent messages when the same session parks on a new run', async () 
     </MantineProvider>,
   );
   expect(await screen.findByText('Second park')).toBeInTheDocument();
+  expect(fetchPreview.mock.calls.map(([url]) => url)).toEqual([
+    '/api/sessions/resumed-session/transcript?view=recent-messages&runId=first-run',
+    '/api/sessions/resumed-session/transcript?view=recent-messages&runId=second-run',
+  ]);
   expect(screen.queryByText('First park')).toBeNull();
 });
 

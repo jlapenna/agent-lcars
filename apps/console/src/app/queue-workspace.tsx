@@ -354,12 +354,11 @@ export function QueueWorkspace({
       cards.find((card) => inboxCardKey(card) === inboxCardKey(draftCard)) ??
       draftCard)
     : currentCard;
-  const trajectory = selectedCard?.trajectorySessionId && (
+  const trajectoryRunId = selectedCard && inboxDecisionRunId(selectedCard);
+  const trajectory = trajectoryRunId && selectedCard?.trajectorySessionId && (
     <DecisionTrajectory
-      key={JSON.stringify([
-        inboxDecisionRunId(selectedCard),
-        selectedCard.trajectorySessionId,
-      ])}
+      key={JSON.stringify([trajectoryRunId, selectedCard.trajectorySessionId])}
+      runId={trajectoryRunId}
       sessionId={selectedCard.trajectorySessionId}
     />
   );

@@ -1,5 +1,9 @@
 import { logger } from '@agent-lcars/logging';
-import type { SessionDoc } from '@agent-lcars/telemetry';
+import {
+  resumeObjectPath,
+  type SessionDoc,
+  transcriptObjectPath,
+} from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   getSessionDoc,
@@ -89,6 +93,40 @@ export async function GET(
   }
 
   if (request.nextUrl.searchParams.get('view') === 'recent-messages') {
+    const runId = request.nextUrl.searchParams.get('runId');
+    if (
+      !runId ||
+      doc.source !== 'issue-agent' ||
+      doc.runId !== runId ||
+      !doc.transcriptGcsUri
+    ) {
+      return NextResponse.json(
+        { error: 'Transcript unavailable for this run' },
+        { status: 404, headers: NO_STORE_HEADERS },
+      );
+    }
+
+    // A resumed session can retain a prior URI when the new upload fails.
+    // Check the selected archive's object path as well as the session's run.
+    const objectPath =
+      target.agent === 'opencode' &&
+      target.transcriptGcsUri === doc.resumeGcsUri
+        ? resumeObjectPath
+        : transcriptObjectPath;
+    const expectedPath = objectPath({
+      runId,
+      adapter: doc.agent,
+      sessionId: doc.sessionId,
+    });
+    const actualPath = /^gs:\/\/[^/]+\/(.+)$/u.exec(
+      target.transcriptGcsUri,
+    )?.[1];
+    if (actualPath !== expectedPath) {
+      return NextResponse.json(
+        { error: 'Transcript unavailable for this run' },
+        { status: 404, headers: NO_STORE_HEADERS },
+      );
+    }
     try {
       const preview = await getSessionTrajectoryPreview(target);
       return NextResponse.json(preview, { headers: NO_STORE_HEADERS });

@@ -5,7 +5,13 @@ import { useEffect, useState } from 'react';
 
 import type { SessionTrajectoryPreview } from '../lib/session-transcript';
 
-export function DecisionTrajectory({ sessionId }: { sessionId: string }) {
+export function DecisionTrajectory({
+  runId,
+  sessionId,
+}: {
+  runId: string;
+  sessionId: string;
+}) {
   const [preview, setPreview] = useState<
     SessionTrajectoryPreview | 'unavailable'
   >();
@@ -13,7 +19,8 @@ export function DecisionTrajectory({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(`/api${sessionHref}/transcript?view=recent-messages`, {
+    const query = new URLSearchParams({ view: 'recent-messages', runId });
+    void fetch(`/api${sessionHref}/transcript?${query}`, {
       signal: controller.signal,
     })
       .then(async (response) => {
@@ -25,7 +32,7 @@ export function DecisionTrajectory({ sessionId }: { sessionId: string }) {
         if (!controller.signal.aborted) setPreview('unavailable');
       });
     return () => controller.abort();
-  }, [sessionHref]);
+  }, [runId, sessionHref]);
 
   return (
     <Stack gap="xs" component="section">
