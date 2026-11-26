@@ -280,6 +280,88 @@ describe('finalizeSidecar', () => {
     });
   });
 
+  it.each([
+    [false, true],
+    [true, true],
+    [false, false],
+  ])(
+    'keeps the parent archive when a Codex fork replays parent metadata (child first: %s, verified usage: %s)',
+    async (childFirst, verifiedUsage) => {
+      const { store, upserts } = createFakeStore();
+      const { uploadTranscript, uploads } = createFakeUploader();
+      const dir = '/home/runner/.codex/sessions';
+      const child =
+        JSON.stringify({
+          type: 'session_meta',
+          payload: {
+            id: 'child',
+            forked_from_id: 'codex-runner-session',
+            source: {
+              subagent: {
+                thread_spawn: { parent_thread_id: 'codex-runner-session' },
+              },
+            },
+          },
+        }) +
+        '\n' +
+        [
+          CODEX_TRANSCRIPT,
+          JSON.stringify({
+            type: 'event_msg',
+            payload: { type: 'thread_settings_applied', thread_id: 'child' },
+          }),
+          JSON.stringify({
+            type: 'token_usage_record',
+            payload: {
+              thread_id: 'child',
+              thread_token_usage: {
+                input_tokens: 11,
+                cached_input_tokens: 2,
+                output_tokens: 3,
+              },
+            },
+          }),
+        ]
+          .slice(0, verifiedUsage ? 3 : 1)
+          .join('\n');
+      const files = new Map([
+        [dir + '/parent.jsonl', CODEX_TRANSCRIPT],
+        [dir + '/child.jsonl', child],
+      ]);
+      const paths = [...files.keys()];
+      if (childFirst) paths.reverse();
+      await finalizeSidecar({
+        config: baseConfig({ runId: '42', transcriptsBucket: 'test' }),
+        store,
+        uploadTranscript,
+        discover: (root) => paths.filter((p) => p.startsWith(root)),
+        readFile: (p) => files.get(p)!,
+        resolveGitBranch: async () => undefined,
+        resolveGitRepo: async () => undefined,
+      });
+      expect(uploads.map((u) => [u.object, u.contents])).toEqual(
+        expect.arrayContaining([
+          ['runs/42/codex/codex-runner-session.jsonl', CODEX_TRANSCRIPT],
+          ['runs/42/codex/child.jsonl', child],
+        ]),
+      );
+      expect(uploads).toHaveLength(2);
+      const childDoc = upserts.find((doc) => doc.sessionId === 'child');
+      expect(childDoc).toEqual(
+        verifiedUsage
+          ? expect.objectContaining({
+              parentSessionId: 'codex-runner-session',
+              tokens: expect.objectContaining({
+                inputTokens: 9,
+                cacheReadTokens: 2,
+                outputTokens: 3,
+              }),
+            })
+          : undefined,
+      );
+    },
+  );
+
   it('archives a Codex transcript under the codex/ prefix, not claude-code/ (Bug 1, #645)', async () => {
     const { store, upserts } = createFakeStore();
     const { uploadTranscript, uploads } = createFakeUploader();

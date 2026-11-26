@@ -219,6 +219,11 @@ describe('runner resume subcommand', () => {
   it('threads --agent codex and --codex-home through to resumeTranscript', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-resume-'));
     const codexHome = path.join(tmp, 'codex-home');
+    const transcript =
+      JSON.stringify({
+        type: 'session_meta',
+        payload: { id: '019fb1be-238c-77d2-a0b2-14961c202368' },
+      }) + '\n';
     const printed = await _runRunnerResumeForTesting(
       [
         '--agent',
@@ -232,7 +237,7 @@ describe('runner resume subcommand', () => {
         '--codex-home',
         codexHome,
       ],
-      { download: async () => '{"type":"session_meta"}\n' },
+      { download: async () => transcript },
     );
     const expected = path.join(
       codexHome,
@@ -240,7 +245,7 @@ describe('runner resume subcommand', () => {
       'rollout-1970-01-01T00-00-00-019fb1be-238c-77d2-a0b2-14961c202368.jsonl',
     );
     expect(printed).toBe(expected);
-    expect(fs.readFileSync(expected, 'utf8')).toBe('{"type":"session_meta"}\n');
+    expect(fs.readFileSync(expected, 'utf8')).toBe(transcript);
   });
 
   // Defaults to claude-code so every existing production call site (none

@@ -204,10 +204,9 @@ export const codexAdapter: TranscriptAdapter = {
       const lineType = asString(raw['type']);
       const payloadType = asString(payload['type']);
       if (lineType === 'session_meta') {
-        sessionId =
-          asString(payload['id']) ??
-          asString(payload['session_id']) ??
-          sessionId;
+        // A fork replays its parent's metadata after its own header.
+        if (sessionId) continue;
+        sessionId = asString(payload['id']) ?? asString(payload['session_id']);
         cwd = asString(payload['cwd']) ?? cwd;
         parentSessionId = spawningThread(payload) ?? parentSessionId;
       } else if (lineType === 'turn_context') {

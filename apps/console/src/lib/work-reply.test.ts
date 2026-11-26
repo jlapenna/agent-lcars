@@ -93,6 +93,22 @@ describe('selectResumeSession', () => {
     );
   });
 
+  it('selects the root even when its Codex child has a newer archive', () => {
+    const root = session({
+      agent: 'codex',
+      sessionId: 'root',
+      lastActivityAt: '2026-09-01T00:00:00Z',
+    });
+    const child = session({
+      agent: 'codex',
+      sessionId: 'child',
+      parentSessionId: 'root',
+      lastActivityAt: '2026-09-02T00:00:00Z',
+    });
+    expect(selectResumeSession([root, child], runIds, 'codex')).toBe(root);
+    expect(selectResumeSession([child], runIds, 'codex')).toBeUndefined();
+  });
+
   it('selects an antigravity session for an agy reply using transcriptGcsUri', () => {
     const doc = session({
       agent: 'antigravity',
