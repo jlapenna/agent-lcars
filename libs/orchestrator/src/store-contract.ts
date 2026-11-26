@@ -4255,6 +4255,7 @@ export function runOrchestratorStoreContract(
         ]);
         const stored = await store.readRun(run.runId);
         if (stored?.state === 'canceled') {
+          expect(stored.queue?.state).toBe('retired');
           expect(cancellation).not.toHaveProperty('refused');
           expect(claim).toBeUndefined();
         } else {
