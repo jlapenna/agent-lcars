@@ -109,11 +109,13 @@ export function NativeDecisionRow({
 
 export function NativeDecisionDetail({
   card,
+  trajectory,
   replyToWorkItem,
   onReplyAdmitted,
   onReplyDraftChange,
 }: {
   card: NativeDecisionCard;
+  trajectory?: React.ReactNode;
   replyToWorkItem?: ReplyAction;
   onReplyAdmitted?: (message: string) => void;
   onReplyDraftChange?: (hasDraft: boolean) => void;
@@ -233,6 +235,7 @@ export function NativeDecisionDetail({
       <Anchor component={Link} href={`/work/${work.anchor.workId}`}>
         Full history
       </Anchor>
+      {trajectory}
       {replyToWorkItem && (canReply || text || pending) ? (
         <>
           <Textarea

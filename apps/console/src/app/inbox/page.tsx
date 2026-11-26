@@ -26,7 +26,12 @@ import { ConsoleWorkspace } from '../console-workspace';
 import { DataFreshness } from '../data-freshness';
 import { DecisionInbox } from '../decision-inbox';
 import { formatRelativeTime } from '../format';
-import { inboxCardKey, inboxCardMetadata } from '../inbox-card';
+import {
+  type InboxCard,
+  inboxCardKey,
+  inboxCardMetadata,
+  inboxDecisionRunId,
+} from '../inbox-card';
 import { InboxNotificationsWatch } from '../inbox-notifications';
 import { LiveDashboard } from '../live-dashboard';
 import { NavSuspense } from '../nav-suspense';
@@ -102,6 +107,24 @@ async function InboxBody({
     ...nativeCards.filter((card) => card.queued),
   ].filter((card) => matchesFilter(inboxCardMetadata(card).repo));
 
+  const trajectoryRunIds = new Set(
+    (selectedCard ? [selectedCard] : selectedItemKey ? [] : decisionCards)
+      .map(inboxDecisionRunId)
+      .filter((id): id is string => id !== undefined),
+  );
+  const missingRuns = [...trajectoryRunIds]
+    .filter((id) => !sessionsByRunId.has(id))
+    .map((id) => ({ id }));
+  const olderSessions = missingRuns.length
+    ? (await getRunnerSessionsByRunId(missingRuns)).sessionsByRunId
+    : undefined;
+  function withTrajectory<T extends InboxCard>(card: T): T {
+    const runId = inboxDecisionRunId(card);
+    if (!runId || !trajectoryRunIds.has(runId)) return card;
+    const session = sessionsByRunId.get(runId) ?? olderSessions?.get(runId);
+    return session ? { ...card, trajectorySessionId: session.sessionId } : card;
+  }
+
   const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);
 
   return (
@@ -119,9 +142,9 @@ async function InboxBody({
             sessions: snapshotStartedAt,
           },
         }}
-        yourQueue={decisionCards}
+        yourQueue={decisionCards.map(withTrajectory)}
         replyToWorkItem={replyToWorkItem}
-        selectedCard={selectedCard}
+        selectedCard={selectedCard && withTrajectory(selectedCard)}
         selectedItemKey={selectedItemKey}
         mobileDataFreshness={
           <DataFreshness

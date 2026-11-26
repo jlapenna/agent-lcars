@@ -9,6 +9,7 @@ import { actionTypeMeta, queueReasonFor } from './queue-reason';
 
 export interface NativeDecisionCard {
   decisionSummary?: ReactNode;
+  trajectorySessionId?: string;
   humanNeededActions?: RunResult['humanNeededActions'];
   work: WorkSummary & { anchor: { workId: string } };
   /** `decision` waits on a human answer; `report` is a finished read-only
@@ -65,9 +66,7 @@ export function inboxCardSignature(card: InboxCard): string {
     // Bound to the report's own run: only a new report brings back a
     // dismissed one, not later bookkeeping on the item.
     if (report) return [report.runId, report.updatedAt, 'report'].join('|');
-    const parked = [...card.work.runs]
-      .reverse()
-      .find((run) => run.result?.summary === 'park');
+    const parked = nativeDecisionRun(card.work);
     return [
       card.work.updatedAt,
       parked?.runId ?? '',
@@ -99,12 +98,23 @@ export function nativeCardText(card: NativeDecisionCard): string {
   );
 }
 
+export function nativeDecisionRun(work: NativeWork) {
+  return work.runs.findLast((run) => run.result?.summary === 'park');
+}
+
+export function inboxDecisionRunId(card: InboxCard): string | undefined {
+  return 'work' in card
+    ? card.kind === 'decision'
+      ? nativeDecisionRun(card.work)?.runId
+      : undefined
+    : card.item.decisionRunId;
+}
+
 export function nativeDecisionQuestion(
   work: NativeDecisionCard['work'],
 ): string {
   return (
-    [...work.runs].reverse().find((run) => run.result?.summary === 'park')
-      ?.result?.message ??
+    nativeDecisionRun(work)?.result?.message ??
     'Agent parked without a question. Open full history for context.'
   );
 }

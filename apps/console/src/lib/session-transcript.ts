@@ -8,6 +8,7 @@ import type {
   SessionDoc,
   TranscriptElisionDivider,
   TranscriptPageParseState,
+  TranscriptTextEvent,
   TranscriptTimelineEvent,
 } from '@agent-lcars/telemetry';
 import {
@@ -19,6 +20,7 @@ import {
   DEFAULT_TRANSCRIPT_PAGE_BYTES,
   fetchSessionTranscript,
   fetchSessionTranscriptByteRange,
+  fetchSessionTranscriptTail,
   MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
   MAX_TRANSCRIPT_SINGLE_LINE_BYTES,
   OPENCODE_EXPORT_MAX_BYTES,
@@ -163,6 +165,60 @@ export function resolveSessionTranscriptTarget(
     };
   }
   return { status: 'ineligible' };
+}
+
+const TRAJECTORY_TAIL_BYTES = 1024 * 1024;
+const TRAJECTORY_MESSAGE_LIMIT = 5;
+const TRAJECTORY_MESSAGE_CHARS = 1200;
+
+export interface SessionTrajectoryPreview {
+  messages: Pick<TranscriptTextEvent, 'role' | 'text'>[];
+}
+
+export async function getSessionTrajectoryPreview(
+  target: Extract<ResolvedSessionTranscriptTarget, { status: 'eligible' }>,
+): Promise<SessionTrajectoryPreview> {
+  const { agent, transcriptGcsUri } = target;
+  const fixture = isE2eTesting()
+    ? getE2eTranscript(transcriptGcsUri)
+    : undefined;
+  let raw: string;
+  if (agent === 'opencode') {
+    raw =
+      fixture ??
+      (await fetchSessionTranscript(
+        transcriptGcsUri,
+        OPENCODE_EXPORT_MAX_BYTES,
+      ));
+  } else {
+    // The extra byte distinguishes a truncated window from an exact fit.
+    const readBytes = TRAJECTORY_TAIL_BYTES + 1;
+    const tail =
+      fixture === undefined
+        ? await fetchSessionTranscriptTail(transcriptGcsUri, readBytes)
+        : Buffer.from(fixture).subarray(-readBytes);
+    if (tail.length > TRAJECTORY_TAIL_BYTES) {
+      const firstNewline = tail.indexOf(10);
+      raw = firstNewline === -1 ? '' : tail.toString('utf8', firstNewline + 1);
+    } else {
+      raw = tail.toString('utf8');
+    }
+  }
+  const { events } = parseTranscriptTimeline(raw, agent);
+  const messages = events
+    .filter(
+      (event): event is TranscriptTextEvent =>
+        event.kind === 'text' && event.text.trim().length > 0,
+    )
+    .slice(-TRAJECTORY_MESSAGE_LIMIT)
+    .map(({ role, text }) => ({
+      role,
+      text:
+        text.length > TRAJECTORY_MESSAGE_CHARS
+          ? text.slice(0, TRAJECTORY_MESSAGE_CHARS).trimEnd() + '…'
+          : text,
+    }));
+  return { messages };
 }
 
 export function encodeTranscriptCursor(cursor: TranscriptPageCursor): string {

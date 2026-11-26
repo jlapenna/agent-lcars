@@ -326,6 +326,36 @@ export async function fetchSessionTranscriptByteRange(
   }, options);
 }
 
+/** Reads a bounded suffix of a plain JSONL archive. */
+export async function fetchSessionTranscriptTail(
+  gcsUri: string,
+  maxBytes: number,
+): Promise<Buffer> {
+  const parsed = parseGcsUri(gcsUri);
+  if (!parsed) throw new Error('Malformed transcript GCS URI');
+  const stream = getTranscriptStorageClient()
+    .bucket(parsed.bucket)
+    .file(parsed.object)
+    .createReadStream({ end: -maxBytes, decompress: false });
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    for await (const chunk of stream) {
+      const bytes = Buffer.from(chunk);
+      size += bytes.length;
+      if (size > maxBytes)
+        throw new Error('Transcript suffix exceeds size limit');
+      chunks.push(bytes);
+    }
+    return Buffer.concat(chunks);
+  } catch (error) {
+    if (isRangeNotSatisfiableError(error)) return Buffer.alloc(0);
+    throw error;
+  } finally {
+    stream.destroy();
+  }
+}
+
 /**
  * Downloads and decodes a session's archived transcript from GCS, given the
  * `gs://` URI stored on its `SessionDoc.transcriptGcsUri`. `maxBytes` bounds

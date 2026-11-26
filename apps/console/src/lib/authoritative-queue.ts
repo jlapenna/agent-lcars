@@ -94,6 +94,9 @@ export async function getAuthoritativeQueueItems(): Promise<ActionItemsResult> {
           return {
             ...item,
             actionTypes,
+            ...(actionTypes.includes('run-failed') && {
+              decisionRunId: run.runId,
+            }),
           };
         }
         const [actions, decision] = await Promise.all([
@@ -102,6 +105,9 @@ export async function getAuthoritativeQueueItems(): Promise<ActionItemsResult> {
         ]);
         return {
           ...item,
+          ...(run.result?.summary === 'park' && {
+            decisionRunId: run.runId,
+          }),
           ...(actions ? { humanNeededActions: actions } : {}),
           ...(decision ? { humanDecision: decision } : {}),
         };

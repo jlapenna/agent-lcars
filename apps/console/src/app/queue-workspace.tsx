@@ -26,6 +26,7 @@ import {
 import type { WatchedRepo } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
 import { ToolbarFoldToggle } from './console-toolbar';
+import { DecisionTrajectory } from './decision-trajectory';
 import { DecisionSlaMeta } from './decision-waiting';
 import { formatAbsoluteLocal } from './format';
 import {
@@ -348,6 +349,12 @@ export function QueueWorkspace({
             (card) => inboxCardKey(card) === inboxCardKey(draftCard),
           )) ?? draftCard)
     : currentCard;
+  const trajectory = selectedCard?.trajectorySessionId && (
+    <DecisionTrajectory
+      key={selectedCard.trajectorySessionId}
+      sessionId={selectedCard.trajectorySessionId}
+    />
+  );
   const draftLeftQueue =
     retainedDraft &&
     !cards.some((card) => inboxCardKey(card) === inboxCardKey(draftCard));
@@ -857,6 +864,7 @@ export function QueueWorkspace({
                     ? { ...selectedCard, canReply: false }
                     : selectedCard
                 }
+                trajectory={trajectory}
                 onReplyDraftChange={onReplyDraftChange}
                 replyToWorkItem={replyToWorkItem}
                 onReplyAdmitted={(message) =>
@@ -875,6 +883,7 @@ export function QueueWorkspace({
               description={selectedCard.description}
               decisionSummary={selectedCard.decisionSummary}
               lastComment={selectedCard.lastComment}
+              trajectory={trajectory}
               multiRepo={watchedRepos.length > 1}
               muted={isSnoozed(
                 inboxCardKey(selectedCard),

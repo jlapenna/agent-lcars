@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getFirestore: vi.fn(),
   getSessionDoc: vi.fn(),
   getSessionTranscript: vi.fn(),
+  getSessionTrajectoryPreview: vi.fn(),
 }));
 
 vi.mock('@/auth', () => ({ auth: mocks.auth }));
@@ -30,6 +31,7 @@ vi.mock('@/lib/session-transcript', async () => {
   return {
     ...actual,
     getSessionTranscript: mocks.getSessionTranscript,
+    getSessionTrajectoryPreview: mocks.getSessionTrajectoryPreview,
   };
 });
 
@@ -114,6 +116,24 @@ describe('GET /api/sessions/[id]/transcript', () => {
     const operator = await GET(...makeRequest('agent-1'));
     expect(operator.status).toBe(401);
     expect(mocks.getSessionDoc).not.toHaveBeenCalled();
+  });
+
+  it('keeps the recent message preview admin-only and private', async () => {
+    const request = makeRequest('agent-1', '?view=recent-messages');
+    mocks.auth.mockResolvedValue({ user: { isAdmin: false } });
+    expect((await GET(...request)).status).toBe(401);
+    expect(mocks.getSessionTrajectoryPreview).not.toHaveBeenCalled();
+
+    mocks.auth.mockResolvedValue({ user: { isAdmin: true } });
+    mocks.getSessionDoc.mockResolvedValue(agentDoc());
+    const preview = {
+      messages: [{ role: 'assistant', text: 'Need a decision' }],
+    };
+    mocks.getSessionTrajectoryPreview.mockResolvedValue(preview);
+    const response = await GET(...request);
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(await response.json()).toEqual(preview);
+    expect(mocks.getSessionTranscript).not.toHaveBeenCalled();
   });
 
   it('returns 404 when the session document does not exist or has no consented archive', async () => {

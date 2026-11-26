@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { auth } from '@/auth';
 import {
+  getSessionTrajectoryPreview,
   getSessionTranscript,
   parseTranscriptCursor,
   resolveSessionTranscriptTarget,
@@ -85,6 +86,22 @@ export async function GET(
       { error: 'Transcript unavailable' },
       { status: 404, headers: NO_STORE_HEADERS },
     );
+  }
+
+  if (request.nextUrl.searchParams.get('view') === 'recent-messages') {
+    try {
+      const preview = await getSessionTrajectoryPreview(target);
+      return NextResponse.json(preview, { headers: NO_STORE_HEADERS });
+    } catch (error) {
+      logger.error(
+        'agent-lcars: failed to read recent transcript messages:',
+        error,
+      );
+      return NextResponse.json(
+        { error: 'Transcript storage unavailable' },
+        { status: 503, headers: NO_STORE_HEADERS },
+      );
+    }
   }
 
   const rawCursor = request.nextUrl.searchParams.get('cursor');
