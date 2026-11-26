@@ -16,16 +16,16 @@
     },
     {
       "repository": "google-antigravity/antigravity-cli",
-      "version": "1.5.17",
+      "version": "1.5.18",
       "asset": "agy_cli_linux_x64.tar.gz",
-      "sha256": "6304b4f592ae97e59231cfb1b365ee29c155750c9a881f0cc8efe5f5281077cf",
+      "sha256": "a4960723ed9cf5b5ac72ed541db8df4d62741795261eb93a4681006ccb23d5ad",
       "architecture": "amd64"
     },
     {
       "repository": "google-antigravity/antigravity-cli",
-      "version": "1.5.17",
+      "version": "1.5.18",
       "asset": "agy_cli_linux_arm64.tar.gz",
-      "sha256": "d6d2b88493e6e02854da478b215cd1dd98fd8cf985b6be37829dacadea4ffc07",
+      "sha256": "97799abac91ba0b29b77598b62f903b866461da17680263a182fef2cb796ab0d",
       "architecture": "arm64"
     }
   ]

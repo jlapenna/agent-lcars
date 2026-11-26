@@ -1,7 +1,14 @@
 import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import { Anchor, Group, Stack, Text } from '@mantine/core';
 
-export function IssueSourceLink({ issue }: { issue: TrackerIssue }) {
+export function IssueSourceLink({
+  issue,
+}: {
+  issue: Pick<
+    TrackerIssue,
+    'url' | 'reference' | 'identifier' | 'status' | 'state'
+  >;
+}) {
   return (
     <Group gap="xs">
       <Anchor href={issue.url} target="_blank" rel="noreferrer" size="sm">

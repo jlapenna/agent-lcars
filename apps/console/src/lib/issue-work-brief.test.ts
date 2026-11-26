@@ -1,6 +1,5 @@
 // @vitest-environment node
 import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
-import type { Run } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
 
 import { workAtRun } from './issue-work-brief';
@@ -32,7 +31,7 @@ const work = {
 
 describe('workAtRun', () => {
   it('builds the brief from the run issue snapshot', () => {
-    const brief = workAtRun({ issue } as unknown as Run, work) as typeof work;
+    const brief = workAtRun(issue, work) as typeof work;
     expect(brief.spec.description).toContain('Search returns no results.');
   });
 
@@ -43,13 +42,11 @@ describe('workAtRun', () => {
     };
     const brief = workAtRun(
       {
-        issue: {
-          ...issue,
-          title: 't'.repeat(256),
-          description: '',
-          oversized: true,
-        },
-      } as unknown as Run,
+        ...issue,
+        title: 't'.repeat(256),
+        description: '',
+        oversized: true,
+      },
       admitted,
     );
     expect(brief).toBe(admitted);

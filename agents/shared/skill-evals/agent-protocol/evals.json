@@ -40,6 +40,18 @@
       ],
       "id": 3,
       "files": []
+    },
+    {
+      "name": "ready-implementation-awaiting-review",
+      "prompt": "My dispatched implementation produced its own attempt-marked draft PR on a protected target. The closing scope and required independent local source review passed. There are no unresolved findings or deliberate holds. CI is running, GitHub requires another account to approve, and the brief has no handoff capability flag. What do I do on a GitHub issue dispatch? Would native Work differ?",
+      "expected_output": "For either implementation anchor, verify closing references, mark ready and arm protected squash auto-merge. Read back the arm and hand off the exact PR through the authenticated finalizer while CI and independent GitHub approval are pending.",
+      "assertions": [
+        "Does not park, keep a draft, or wait for a brief capability flag or pending GitHub approval before readying either eligible implementation PR",
+        "Preserves local independent source review, deliberate holds, closing-reference verification and feedback guards",
+        "Hands off the exact marked PR with verified squash arming and lets branch protection enforce approval and CI before merge"
+      ],
+      "id": 4,
+      "files": []
     }
   ]
 }

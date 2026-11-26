@@ -22,6 +22,7 @@ import {
   type Orchestrator,
   type OrchestratorStore,
   readFullRunMessage,
+  readRunIssue,
   type Run,
   runRecoveryDeadline,
 } from '@agent-lcars/orchestrator';
@@ -521,11 +522,14 @@ export const runsRouter = os.router({
           message: 'Issue moved outside this run’s repository scope',
         });
     }
-    const page = await tracker.comments(reference, input.cursor);
+    const [page, admittedIssue] = await Promise.all([
+      tracker.comments(reference, input.cursor),
+      readRunIssue(context.store, run),
+    ]);
     await requireRunToken(context, input.runId);
     return {
       issue,
-      ...(run.issue ? { admittedIssue: run.issue } : {}),
+      ...(admittedIssue === undefined ? {} : { admittedIssue }),
       ...page,
     };
   }),
@@ -811,8 +815,9 @@ export const runsRouter = os.router({
       parsedTimeout <= 80
         ? parsedTimeout
         : undefined;
+    const issue = await readRunIssue(context.store, run);
     const shared = {
-      ...(run.issue === undefined ? {} : { issue: run.issue }),
+      ...(issue === undefined ? {} : { issue }),
       pipeline: run.pipeline,
       ...params,
       attemptId: formatAttemptId({ generation, intentId: run.runId }),
@@ -824,7 +829,7 @@ export const runsRouter = os.router({
 
     if (!isWorkAnchor(run.task)) {
       const parsed = workPayloadSchema.safeParse(
-        workAtRun(run, task?.task.work),
+        workAtRun(issue, task?.task.work),
       );
       if (!parsed.success) {
         throw errors.UNAUTHORIZED({ message: 'run has no dispatchable Work' });
@@ -841,7 +846,7 @@ export const runsRouter = os.router({
       };
     }
 
-    const work = workAtRun(run, task?.task.work);
+    const work = workAtRun(issue, task?.task.work);
     if (work === undefined || task === undefined) {
       throw errors.UNAUTHORIZED({ message: 'run has no dispatchable Work' });
     }

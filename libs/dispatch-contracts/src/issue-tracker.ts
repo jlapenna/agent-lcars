@@ -32,8 +32,7 @@ export function issueSourceKey(issue: IssueReference): string {
 export const TRACKER_ISSUE_TITLE_MAX = 256;
 export const TRACKER_ISSUE_DESCRIPTION_MAX = 65_536;
 
-/** Current tracker facts on Task; copied onto Run at admission so an issue
- * edit cannot change the brief of an executing or retried conversation. */
+/** Current tracker facts on Task and immutable snapshots captured at run admission. */
 export const trackerIssueSchema = z.strictObject({
   reference: issueReferenceSchema,
   identifier: z.string().min(1).max(256),
@@ -72,6 +71,30 @@ export const trackerIssueSchema = z.strictObject({
     .max(256),
 });
 export type TrackerIssue = z.infer<typeof trackerIssueSchema>;
+
+export const trackerIssueDisplaySchema = trackerIssueSchema.pick({
+  reference: true,
+  identifier: true,
+  url: true,
+  title: true,
+  state: true,
+  oversized: true,
+});
+export type TrackerIssueDisplay = z.infer<typeof trackerIssueDisplaySchema>;
+
+export function trackerIssueDisplay(
+  issue: TrackerIssueDisplay,
+): TrackerIssueDisplay {
+  const { reference, identifier, url, title, state, oversized } = issue;
+  return {
+    reference,
+    identifier,
+    url,
+    title,
+    state,
+    ...(oversized === undefined ? {} : { oversized }),
+  };
+}
 
 export const trackerIssueProjectionSchema = z.strictObject({
   issue: trackerIssueSchema,
