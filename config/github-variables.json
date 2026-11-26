@@ -107,7 +107,6 @@
       "repositories": [
         "jlapenna/homelab",
         "supersprinklesracing/www",
-        "supersprinklesracing/girosf",
         "jlapenna/nx-cache-server",
         "jlapenna/sync-padd",
         "jlapenna/messages-control",
