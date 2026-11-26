@@ -177,7 +177,7 @@ function DispatchRow({
       <td>
         <PipelineBadge pipeline={run.pipeline} />
       </td>
-      <td className="ops-cell-clip">
+      <td className="ops-cell-clip ops-dispatch-item">
         <BridgePaneLink
           mobileHref={actionHref}
           paneHref={selectHref ?? actionHref}
