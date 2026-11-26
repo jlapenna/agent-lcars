@@ -149,6 +149,24 @@ resource "google_firestore_database" "dispatch_controller" {
   depends_on              = [google_firebase_project.this]
 }
 
+# The Work list filters the backfilled projection while keeping its work-ID
+# cursor and excluding GitHub anchors (which have no task.task.workId).
+resource "google_firestore_index" "native_tasks_state_work_id" {
+  project     = var.project_id
+  database    = google_firestore_database.dispatch_controller.name
+  collection  = "orchestrator-tasks"
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "derived.state"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "task.task.workId"
+    order      = "DESCENDING"
+  }
+}
+
 resource "google_storage_bucket" "transcripts" {
   name                        = "${var.project_id}-session-transcripts"
   location                    = "US"

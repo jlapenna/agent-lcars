@@ -129,6 +129,11 @@ run "renders_exact_repository_authorization" {
     error_message = "The owner query's per-repository CLI-session listing needs the sessions source+repo+lastActivityAt composite index."
   }
 
+  assert {
+    condition     = google_firestore_index.native_tasks_state_work_id.database == "dispatch-controller" && google_firestore_index.native_tasks_state_work_id.collection == "orchestrator-tasks" && [for field in google_firestore_index.native_tasks_state_work_id.fields : "${field.field_path}:${field.order}"] == ["derived.state:ASCENDING", "task.task.workId:DESCENDING"]
+    error_message = "The Work state filter needs its state and descending work-ID index in the dispatch database."
+  }
+
   # #2502: interactive sessions ask Console who owns an issue through a
   # dedicated reader identity. Only the maintainer's Google account may mint
   # its tokens, and nothing here may widen that to another principal.

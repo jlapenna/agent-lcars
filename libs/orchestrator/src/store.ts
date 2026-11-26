@@ -557,7 +557,14 @@ export interface OrchestratorStore {
     candidateWorkId: string,
   ): Promise<string>;
 
-  listNativeTasks(limit?: number, before?: string): Promise<VersionedTask[]>;
+  /** List newest native tasks in work-ID order. A state filter uses the
+   * backfilled projection. A store without the index may return an unfiltered
+   * page, so callers still apply the state filter and page by the last row. */
+  listNativeTasks(
+    limit?: number,
+    before?: string,
+    state?: TaskDerived['state'],
+  ): Promise<VersionedTask[]>;
 
   /**
    * Every task anchor, newest-updated first. This is the console's
