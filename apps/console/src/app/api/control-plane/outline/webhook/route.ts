@@ -1,7 +1,10 @@
 import { logger } from '@agent-lcars/logging';
 import { NextResponse } from 'next/server';
 
-import { readBoundedRequestBody } from '@/lib/bounded-request-body';
+import {
+  readBoundedRequestBody,
+  RequestBodyTimeoutError,
+} from '@/lib/bounded-request-body';
 import {
   type OutlineAgentNotice,
   outlineAgentNotice,
@@ -24,6 +27,8 @@ const MAX_IN_FLIGHT_DELIVERIES = 2;
 // five-second request timeout for upload and verification after admission.
 const MAX_WAITING_DELIVERIES = 8;
 const MAX_WAIT_MS = 2_000;
+// Leave time for authentication and acknowledgement within Outline's five seconds.
+const MAX_BODY_READ_MS = 2_500;
 let inFlightDeliveries = 0;
 const waitingDeliveries = new Set<(admitted: boolean) => void>();
 
@@ -98,6 +103,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const body = await readBoundedRequestBody(
       request,
       OUTLINE_WEBHOOK_MAX_BYTES,
+      MAX_BODY_READ_MS,
     );
     if (body === undefined) {
       report('oversized');
@@ -133,6 +139,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       });
     }
     notice = parsed.notice;
+  } catch (error) {
+    if (!(error instanceof RequestBodyTimeoutError)) throw error;
+    report('body_timeout');
+    return NextResponse.json(
+      { error: 'Timed out reading Outline request body' },
+      { status: 408 },
+    );
   } finally {
     releaseDeliverySlot();
   }

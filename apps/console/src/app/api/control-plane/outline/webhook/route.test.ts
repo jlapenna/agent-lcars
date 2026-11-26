@@ -186,6 +186,38 @@ describe('Outline signed webhook receiver', () => {
     }
   });
 
+  it('cancels stalled body reads and admits a waiting delivery', async () => {
+    vi.useFakeTimers();
+    // The HTTP response must not wait for the stream's cancellation cleanup.
+    const cancel = vi.fn(() => Promise.withResolvers<void>().promise);
+    const stalled = () =>
+      POST(
+        new Request(request(), {
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(Buffer.from('{'));
+            },
+            cancel,
+          }),
+          duplex: 'half',
+        } as RequestInit),
+      );
+
+    const first = stalled();
+    const second = stalled();
+    await vi.advanceTimersByTimeAsync(2_000);
+    const waiting = request();
+    const next = POST(waiting);
+    expect(waiting.bodyUsed).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(cancel).toHaveBeenCalledTimes(2);
+    expect((await first).status).toBe(408);
+    expect((await second).status).toBe(408);
+    expect((await next).status).toBe(200);
+    expect(queueOutlineEvent).toHaveBeenCalledTimes(1);
+  });
+
   it('drops a disconnected waiter and admits the next delivery', async () => {
     const first = heldDelivery();
     const second = heldDelivery();
