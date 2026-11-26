@@ -210,10 +210,14 @@ details.more[open] .more-panel { position: absolute; z-index: 5; top: calc(100% 
 .readouts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); row-gap: 16px; }
 .readout { padding: 2px 20px; border-left: 1px solid var(--hairline); min-width: 0; }
 .readout:first-child { border-left: 0; padding-left: 4px; }
+a.readout { display: block; color: var(--accent-ink); text-decoration: none; }
+a.readout .eyebrow { color: inherit; text-decoration: underline; text-underline-offset: .2em; }
+a.readout:is(:hover, :focus-visible) .eyebrow { text-decoration-thickness: 2px; }
+a.readout:active .eyebrow, a.readout .val { color: var(--ink); }
 .readout .val { font: 500 30px/1.1 var(--f-mono); margin: 10px 0 2px; letter-spacing: -.01em; }
 .readout .val small { font-size: 15px; color: var(--ink-dim); }
 .readout .sub { font-size: 12px; color: var(--ink-dim); min-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.readouts.wrap .sub { white-space: normal; }
+.readouts.wrap .sub, a.readout .sub { overflow-wrap: anywhere; white-space: normal; }
 .spark { display: block; width: 100%; height: 28px; margin-top: 10px; }
 .spark rect { fill: var(--spark); }
 .spark rect.now { fill: var(--accent); }
@@ -242,6 +246,7 @@ td.num, th.num { text-align: right; white-space: nowrap; }
 td.num { font-family: var(--f-mono); font-size: 13px; }
 .ref { font: 500 12px var(--f-mono); color: var(--accent-ink); white-space: nowrap; }
 .item-title { display: block; color: var(--ink); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+[data-od-id="panel-active-dispatches"] .item-title { overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
 .cell-clip { max-width: 0; width: 40%; }
 .links { display: block; margin-top: 4px; font-size: 12px; color: var(--ink-dim); }
 .tag { display: inline-block; padding: 3px 6px 2px; border: 1px solid var(--hairline); font: 500 11px/1 var(--f-mono); text-transform: uppercase; letter-spacing: .04em; color: var(--ink-dim); }
@@ -795,6 +800,15 @@ function readouts() {
   </section>`;
 }
 
+function destinationReadouts() {
+  const cell = (id, label, value, detail) => `<a class="readout" href="#${id}"><div class="eyebrow">${label}</div><div class="val">${value}</div><div class="sub">${detail}</div></a>`;
+  return `<section class="readouts" aria-label="Destination summaries">
+    ${cell('agents', 'Agents', '7', 'Live runs · 2 active CLI sessions')}
+    ${cell('shuttlebay', 'Shuttlebay', '11 / 12', 'Runners online · fleet-wide')}
+    ${cell('inbox', 'Inbox', '3', 'Decisions waiting')}
+  </section>`;
+}
+
 /* ---- Other destinations ---- */
 function agentsReadouts() {
   const cell = (id, label, val, sub) => `<div class="readout" data-od-id="agents-readout-${id}"><div class="eyebrow">${label}</div><div class="val">${val}</div><div class="sub">${sub}</div></div>`;
@@ -947,7 +961,7 @@ const ARCHIVE_WINDOWS = ['1h', '24h', '7d', '14d', '30d', '90d'];
 const VIEWS = {
   /* No repository select on the Bridge: its panels summarise the whole fleet. */
   deck: { warn: true, folded: [agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('issue, PR, session id'), asof], primary: '<a class="btn btn-primary push" href="#inbox" data-od-id="primary-action">Review 4 decisions</a>',
-    body: () => `${readouts()}<div class="cols"><div class="stack">${runsPanel(false)}${donePanel()}${eventWorkPanel()}${stoppedPanel()}${waitPanel('waiting-on-deploy', 'Waiting on deploy', 'Waiting for the next deploy before verification can continue.', WAITS.deploy)}${waitPanel('blocked', 'Blocked', 'Waiting on an external dependency or prerequisite; nothing to decide yet.', WAITS.blocked)}</div><div class="stack">${inboxPanel(false)}${fleetPanel()}${cliPanel()}</div></div>` },
+    body: () => `${destinationReadouts()}<div class="cols"><div class="stack">${runsPanel(false)}${donePanel()}${eventWorkPanel()}${stoppedPanel()}${waitPanel('waiting-on-deploy', 'Waiting on deploy', 'Waiting for the next deploy before verification can continue.', WAITS.deploy)}${waitPanel('blocked', 'Blocked', 'Waiting on an external dependency or prerequisite; nothing to decide yet.', WAITS.blocked)}</div><div class="stack">${inboxPanel(false)}${fleetPanel()}${cliPanel()}</div></div>` },
   inbox: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, #, author, label', true), '<span class="asof desk-only">Data as of just now</span>'], primary: '<button class="btn btn-primary push wrap-start" type="button" data-od-id="primary-action">Respond to oldest</button>', body: () => `<div><div class="list-meta phone-only"><span class="eyebrow">4 repos</span><span>Updated just now</span></div>${inboxPanel(true)}</div>` },
   agents: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('issue, PR, run id'), asof],
     body: () => `${agentsReadouts()}<div class="alert" role="alert" data-od-id="queue-health-alert">A run has been queued for 11m 0s — the runner autoscaler may not be supplying runners.</div>${runsPanel(true)}${cliPanel()}${donePanel()}${claimedPanel()}` },

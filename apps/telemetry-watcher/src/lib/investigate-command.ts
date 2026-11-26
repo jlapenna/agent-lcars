@@ -57,6 +57,7 @@ export async function executeInvestigateCommand(
     deps.stdout(INVESTIGATE_CLI_USAGE);
     return { ok: true };
   }
+  let admittedWorkId: string | undefined;
   try {
     const { values } = (() => {
       try {
@@ -150,6 +151,7 @@ export async function executeInvestigateCommand(
       ? `${question}\n\nContext from the requesting run:\n${context}`
       : question;
     let status = await request(`/agents/${agent}`, { requestId, message });
+    admittedWorkId = status.workId;
     while (!SETTLED.has(status.state)) {
       await deps.sleep(Math.ceil(Math.min(POLL_MS, remaining())));
       status = await request(
@@ -162,6 +164,12 @@ export async function executeInvestigateCommand(
     deps.stdout(output);
     return { ok: status.state === 'done' && status.ok === true };
   } catch (error) {
+    // The local wait can fail after admission. Keep the durable handle and
+    // leave the current state unknown until a subsequent authoritative read.
+    if (admittedWorkId !== undefined) {
+      const receipt = JSON.stringify({ workId: admittedWorkId });
+      if (!receipt.includes(deps.env['LCARS_RUN_TOKEN']!)) deps.stdout(receipt);
+    }
     deps.stderr(
       `investigate failed: ${
         error instanceof InvestigateError

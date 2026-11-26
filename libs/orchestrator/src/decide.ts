@@ -3,6 +3,7 @@ import {
   type TrackerIssue,
 } from '@agent-lcars/dispatch-contracts';
 
+import { prepareIssueSnapshot } from './issue-snapshot';
 import {
   EVENT_RESUME_MEMORY,
   type EventResumeState,
@@ -59,6 +60,8 @@ export interface Decision {
    * this for its successor so a crash cannot separate loss settlement from
    * retry creation. */
   readonly additionalRuns?: readonly Run[];
+  /** Payload for the one new snapshot this decision can admit. */
+  readonly newIssueSnapshot?: ReturnType<typeof prepareIssueSnapshot>;
   readonly outbox: readonly OutboxEntry[];
 }
 
@@ -275,6 +278,7 @@ export interface RequestRunInput {
   intervention?: OperationalIntervention;
   work?: WorkPayload;
   issue?: TrackerIssue;
+  issueSnapshot?: Run['issueSnapshot'];
   providerFallback?: ProviderFallbackRequest | ProviderFallback;
   sourceRevision?: WorkRevision;
   revisionAttempt?: number;
@@ -387,6 +391,7 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     taskId,
     task: baseTask,
     issue: Object.hasOwn(input, 'issue') ? input.issue : issue,
+    issueSnapshot: input.issueSnapshot,
     requestId,
     requestSource: input.requestSource,
     pipeline: input.pipeline,
@@ -546,6 +551,7 @@ function advanceSourceRevision(decision: Decision, now: string): Decision {
     taskId: run.task,
     task: resetLossBudgets(decision.task),
     issue: superseded ? decision.task.issue : run.issue,
+    issueSnapshot: superseded ? undefined : run.issueSnapshot,
     requestId: superseded ? desired.key : `retry:${run.runId}`,
     requestSource: superseded ? 'caller' : 'auto-retry',
     pipeline: run.pipeline,
@@ -558,6 +564,9 @@ function advanceSourceRevision(decision: Decision, now: string): Decision {
     ...decision,
     task: next.task,
     additionalRuns: [decidedRun(next)],
+    ...(next.newIssueSnapshot === undefined
+      ? {}
+      : { newIssueSnapshot: next.newIssueSnapshot }),
     outbox: [...decision.outbox, ...next.outbox],
   };
 }
@@ -568,6 +577,7 @@ function mintRun(input: {
   taskId: TaskId;
   task: Task;
   issue?: TrackerIssue;
+  issueSnapshot?: Run['issueSnapshot'];
   requestId: string;
   requestSource?: RequestSource;
   pipeline: string;
@@ -585,6 +595,12 @@ function mintRun(input: {
     input;
   const runCount = task.runCount + 1;
   const runId = `${taskKey(taskId)}/r${runCount}`;
+  const issue = Object.hasOwn(input, 'issue') ? input.issue : task.issue;
+  const newIssueSnapshot =
+    input.issueSnapshot === undefined && issue !== undefined
+      ? prepareIssueSnapshot(issue)
+      : undefined;
+  const issueSnapshot = input.issueSnapshot ?? newIssueSnapshot?.reference;
   const run: Run = {
     runId,
     task: taskId,
@@ -593,9 +609,7 @@ function mintRun(input: {
     priority: queuePrioritySchema.parse(input.priority ?? 'normal'),
     requestId,
     requestSource: requestSource ?? 'caller',
-    ...((Object.hasOwn(input, 'issue') ? input.issue : task.issue) === undefined
-      ? {}
-      : { issue: Object.hasOwn(input, 'issue') ? input.issue : task.issue }),
+    ...(issueSnapshot === undefined ? {} : { issueSnapshot }),
     ...(input.sourceRevision === undefined
       ? {}
       : {
@@ -643,6 +657,7 @@ function mintRun(input: {
   return {
     task: { ...task, activeRunId: runId, runCount, updatedAt: now },
     run,
+    ...(newIssueSnapshot === undefined ? {} : { newIssueSnapshot }),
     outbox: [
       {
         entryId: `dispatch/${runId}`,
@@ -793,7 +808,7 @@ export function renewLease(input: {
       input.claimFingerprint !== undefined &&
       run.queue?.state === 'claimed' &&
       run.queue.providerProcessStartedAt === undefined &&
-      run.issue?.reference.tracker === 'linear' &&
+      (run.issueSnapshot ?? run.issue)?.reference.tracker === 'linear' &&
       run.sourceRevision === undefined
         ? [
             {
@@ -1239,6 +1254,7 @@ function settleLostAndRetry(
     taskId: lostRun.task,
     task: lost.task,
     issue: lostRun.issue,
+    issueSnapshot: lostRun.issueSnapshot,
     requestId: `retry:${lostRun.runId}`,
     requestSource: 'auto-retry',
     pipeline: lostRun.pipeline,
@@ -1268,6 +1284,9 @@ function settleLostAndRetry(
     task: retry.task,
     run: lostRun,
     additionalRuns: [decidedRun(retry)],
+    ...(retry.newIssueSnapshot === undefined
+      ? {}
+      : { newIssueSnapshot: retry.newIssueSnapshot }),
     outbox: [...lost.outbox, ...retry.outbox],
   };
 }

@@ -1,6 +1,6 @@
 import 'server-only';
 
-import type { Run } from '@agent-lcars/orchestrator';
+import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import {
   isSourceManagedWork,
   WORK_TITLE_MAX,
@@ -11,10 +11,12 @@ import { normalizeWorkPayload } from './work-from-github';
 
 /** Execution reads the snapshot attached to its own Run, never mutable Task
  * metadata. Internal triage/report instructions remain their admitted brief. */
-export function workAtRun(run: Run, work: unknown): unknown {
+export function workAtRun(
+  issue: TrackerIssue | undefined,
+  work: unknown,
+): unknown {
   const parsed = workPayloadSchema.safeParse(work);
-  if (!run.issue || !parsed.success || isSourceManagedWork(work)) return work;
-  const issue = run.issue;
+  if (!issue || !parsed.success || isSourceManagedWork(work)) return work;
   // The issue grew past the tracker bounds after admission. Keep the
   // admitted payload byte-for-byte; any appended note could push it through
   // the description clamp. `lcars work source` reports `oversized` itself.

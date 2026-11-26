@@ -181,24 +181,29 @@ export function QueueWorkspace({
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
   const previousItemKey = useRef(selectedItemKey);
-
-  // Desktop preserves the two pane positions. On phones, selecting a row
-  // replaces the document's list with its detail: start at the Back bar even
-  // when the tapped row was far down a long queue.
-  useEffect(() => {
-    if (
-      previousItemKey.current !== selectedItemKey &&
-      window.matchMedia('(max-width: 47.99em)').matches
-    ) {
-      workspaceRef.current?.scrollIntoView({
-        block: 'start',
-        behavior: 'instant',
-      });
-    }
-    previousItemKey.current = selectedItemKey;
-  }, [selectedItemKey]);
   const keyboardNavigated = useRef(false);
+
+  // On narrow screens the detail replaces the list, so start at the Back
+  // bar. On short, wide screens both panes share the document scroller, so
+  // opening a row lower in the list can leave the detail above the viewport.
+  useEffect(() => {
+    if (previousItemKey.current === selectedItemKey) return;
+    previousItemKey.current = selectedItemKey;
+
+    const narrow = window.matchMedia('(max-width: 47.99em)').matches;
+    const shortAndWide =
+      selectedItemKey &&
+      !keyboardNavigated.current &&
+      window.matchMedia('(min-width: 48em) and (height < 36em)').matches;
+    const target = narrow
+      ? workspaceRef.current
+      : shortAndWide
+        ? detailRef.current
+        : null;
+    target?.scrollIntoView({ block: 'start', behavior: 'instant' });
+  }, [selectedItemKey]);
   // Where the last j/k already sent us: router.replace is asynchronous, so
   // key-repeat arriving before selectedItemKey updates must step from this
   // pending target, not the stale rendered selection (Codex review #495).
@@ -340,16 +345,23 @@ export function QueueWorkspace({
     draftCard &&
     (selectedItemKey === undefined ||
       selectedItemKey === inboxCardKey(draftCard));
+  const resolvedDraftCard =
+    retainedDraft && selectedItemKey !== undefined ? currentCard : undefined;
   const selectedCard = retainedDraft
-    ? ((resolvedSelectedCard &&
-      inboxCardKey(resolvedSelectedCard) === inboxCardKey(draftCard)
-        ? resolvedSelectedCard
-        : cards.find(
-            (card) => inboxCardKey(card) === inboxCardKey(draftCard),
-          )) ?? draftCard)
+    ? (resolvedDraftCard ??
+      cards.find((card) => inboxCardKey(card) === inboxCardKey(draftCard)) ??
+      draftCard)
     : currentCard;
+  // Automatic waits are intentionally absent from the queue. Only the live
+  // selected card can establish that a retained draft is still replyable.
+  const draftIsReplyableEventWait =
+    resolvedDraftCard &&
+    'work' in resolvedDraftCard &&
+    resolvedDraftCard.waitingOnEvent &&
+    resolvedDraftCard.canReply;
   const draftLeftQueue =
     retainedDraft &&
+    !draftIsReplyableEventWait &&
     !cards.some((card) => inboxCardKey(card) === inboxCardKey(draftCard));
   const onReplyDraftChange = (hasDraft: boolean) =>
     setDraftCard(hasDraft ? selectedCard : undefined);
@@ -818,7 +830,7 @@ export function QueueWorkspace({
           )}
         </div>
 
-        <div className="queue-workspace__detail">
+        <div className="queue-workspace__detail" ref={detailRef}>
           {draftLeftQueue && (
             <Text role="status" size="sm">
               The selected item left the queue. Your pending reply is preserved.

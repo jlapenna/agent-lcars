@@ -1,6 +1,8 @@
-import type {
-  RunEvidence,
-  TrackerIssue,
+import {
+  type RunEvidence,
+  type TrackerIssue,
+  type TrackerIssueDisplay,
+  trackerIssueDisplay,
 } from '@agent-lcars/dispatch-contracts';
 import {
   type DeliveryBinding,
@@ -27,7 +29,7 @@ import {
 export { deriveItemState, type ItemState, latestRun };
 
 export interface ItemRunView {
-  issue?: TrackerIssue;
+  issue?: TrackerIssueDisplay & Partial<TrackerIssue>;
   triagePublication?: Run['triagePublication'];
   runId: string;
   state: Run['state'];
@@ -125,8 +127,9 @@ export function workTitle(work: Pick<WorkSummary, 'spec' | 'issue'>): string {
  *  stay key-for-key identical. The `reply*` human-turn fields are the item
  *  view's alone (`toItemView`). */
 function toItemRunView(r: Run): ItemRunView {
+  const issue = r.issueSnapshot ?? r.issue;
   return {
-    ...(r.issue === undefined ? {} : { issue: r.issue }),
+    ...(issue === undefined ? {} : { issue: trackerIssueDisplay(issue) }),
     runId: r.runId,
     state: r.state,
     pipeline: r.pipeline,

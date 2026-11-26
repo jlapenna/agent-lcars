@@ -9,6 +9,7 @@ import {
   runEvidenceSchema,
   runMessageBytes,
   runPlacementSchema,
+  trackerIssueDisplaySchema,
   trackerIssueProjectionSchema,
   trackerIssueSchema,
   triagePublicationSchema,
@@ -239,6 +240,12 @@ export const itemViewSchema = z.strictObject({
   providerRouting: providerRoutingSchema.optional(),
   runs: z.array(itemRunViewSchema),
   sessions: z.array(itemSessionViewSchema),
+});
+
+const listedItemViewSchema = itemViewSchema.extend({
+  runs: z.array(
+    itemRunViewSchema.extend({ issue: trackerIssueDisplaySchema.optional() }),
+  ),
 });
 
 const bearer = { security: [{ bearerAuth: [] }] };
@@ -675,7 +682,7 @@ export const itemsContract = {
     )
     .output(
       z.strictObject({
-        items: z.array(itemViewSchema),
+        items: z.array(listedItemViewSchema),
         // Present only when more native tasks may exist behind this page
         // (see `description` above); absent means the underlying store is
         // exhausted, not that this page happened to come back non-empty.
@@ -1519,6 +1526,7 @@ export const runsContract = {
       z.strictObject({
         runner: z.string().min(1).max(256),
         placementAware: z.literal(true).optional(),
+        reviewOnly: z.literal(true).optional(),
       }),
     )
     .output(runClaimResponseSchema.optional()),

@@ -43,7 +43,7 @@ claim; Console remains the claim source of truth. It accepts `work.operator`
 or `work.reader` and answers only for control-plane repositories.
 
 Interactive Claude and Codex sessions call it before starting work, through
-the read-only `work-reader` identity:
+the `work-reader` identity:
 
 ```bash
 export LCARS_SERVICE_ACCOUNT=work-reader@agent-lcars.iam.gserviceaccount.com
@@ -51,9 +51,10 @@ lcars work owner jlapenna/agent-lcars#2502
 lcars work owner jlapenna/agent-lcars#2502 --json
 ```
 
-Its grant carries `work.reader` alone, so the same identity is refused by
-every other operation, including `work list` and `work status`. Only the
-maintainer's Google account may impersonate it; see
+Its grant carries `work.reader`, `costs.reader` and `work.operator` for the
+four coding pipelines. The same identity can inspect issues, dispatch
+authorized work, and use `work list` and `work status`. The historical account
+name is retained; only the maintainer's Google account may impersonate it. See
 [fleet credentials](../../docs/fleet-credentials.md#work-reader-interactive-work-owner-query).
 
 ## Agent event subscriptions

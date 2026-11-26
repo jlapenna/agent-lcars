@@ -68,6 +68,23 @@ import {
 
 /** Reference implementation; also the test double. */
 export class MemoryStore implements OrchestratorStore {
+  readonly #issueSnapshots = new Map<string, TrackerIssue>();
+
+  async readIssueSnapshot(id: string): Promise<TrackerIssue | undefined> {
+    return structuredClone(this.#issueSnapshots.get(id));
+  }
+
+  async readIssueSnapshots(
+    ids: readonly string[],
+  ): Promise<Map<string, TrackerIssue>> {
+    const snapshots = new Map<string, TrackerIssue>();
+    for (const id of ids) {
+      const issue = this.#issueSnapshots.get(id);
+      if (issue !== undefined) snapshots.set(id, structuredClone(issue));
+    }
+    return snapshots;
+  }
+
   readonly #trackerIssues = new Map<string, TrackerIssueProjection>();
 
   async readTrackerIssue(
@@ -459,6 +476,16 @@ export class MemoryStore implements OrchestratorStore {
     const taskRuns = () =>
       [...this.#runs.values()].filter((run) => taskKey(run.task) === key);
     const previousRuns = taskRuns();
+    const snapshot = decision.newIssueSnapshot;
+    if (
+      snapshot !== undefined &&
+      !this.#issueSnapshots.has(snapshot.reference.id)
+    ) {
+      this.#issueSnapshots.set(
+        snapshot.reference.id,
+        structuredClone(snapshot.issue),
+      );
+    }
     if (decision.run !== undefined) {
       this.#runs.set(decision.run.runId, structuredClone(decision.run));
       this.#requestRuns.set(
@@ -943,6 +970,7 @@ export class MemoryStore implements OrchestratorStore {
     claimedBySubject: string;
     tokenHash: string;
     placementAware?: boolean;
+    reviewOnly?: boolean;
   }): Promise<Run | undefined> {
     const runs = [...this.#runs.values()];
     const eligible = input.pipelines.filter(
@@ -959,6 +987,7 @@ export class MemoryStore implements OrchestratorStore {
       input.now,
       this.#priorityPositions,
       Object.fromEntries(this.#credentialWindows),
+      input.reviewOnly,
     );
     if (candidate === undefined) return undefined;
     const claimed = claimQueuedRun(candidate, input);
@@ -1047,6 +1076,7 @@ import {
   plainRunEvidence,
   type RunEvidence,
   runEvidenceSchema,
+  type TrackerIssue,
   type TrackerIssueProjection,
   trackerIssueProjectionSchema,
 } from '@agent-lcars/dispatch-contracts';

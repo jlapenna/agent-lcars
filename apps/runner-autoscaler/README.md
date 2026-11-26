@@ -285,9 +285,15 @@ rebuild, and applies to newly created Jobs.
 Before claiming, the controller counts unfinished Jobs (including Pending or
 suspended Jobs), reserves a process-local slot, and checks that a matching
 node is Ready, uncordoned and tolerated and that its total allocatable
-CPU/memory/storage/pod budget fits the Job shape. It does not subtract other
-workloads' requests at admission: it competes with ARC through the native
-scheduler, and keeps at most one claim waiting for placement. API uncertainty
+CPU/memory/storage/pod budget fits the Job shape. Ordinary claims compete with ARC through the native scheduler.
+If exactly one Job has an unschedulable Pod, a direct executor with configured
+review resources can claim a legacy provider review when a single eligible
+node has room after assigned requests and no eligible node currently fits the
+waiting Pod. Shared executors can use this path alongside declared runtimes.
+Recipe and Claw runs are ineligible for these slots. Only one such review can
+run alongside the same unplaced Job at a time. Missing
+Pods, uncertain inventory or two unplaced Jobs block further claims. The
+existing concurrency and provider limits apply to both paths. API uncertainty
 or no eligible node leaves work queued. Kubernetes makes the final placement
 decision: another workload can still consume capacity between this
 observation and scheduling. Optional

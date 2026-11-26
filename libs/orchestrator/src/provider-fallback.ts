@@ -71,6 +71,7 @@ function successor(input: {
     now: input.now,
     task: input.settled.task,
     issue: previous.issue,
+    issueSnapshot: previous.issueSnapshot,
     taskId: previous.task,
     activeRun: undefined,
     requestId: `fallback:${previous.runId}`,
@@ -117,6 +118,9 @@ function successor(input: {
             queue: { state: 'queued', deferredUntil: input.wait.retryAt },
           },
     ],
+    ...(next.newIssueSnapshot === undefined
+      ? {}
+      : { newIssueSnapshot: next.newIssueSnapshot }),
     outbox: [...input.settled.outbox, ...next.outbox],
   };
 }

@@ -178,6 +178,10 @@ conflicts 409. A failed bearer never falls back to a browser session. Preserve
 error details without logging credentials; do not broaden grants to retry a
 request outside your authority.
 
+Work lists return the admitted issue's display fields on each run.
+Individual Work details return the full admitted issue on each run.
+The issue on the Work item itself reflects the current tracker state.
+
 ## Read your own run's source (workers)
 
 A claimed run can read the issue that started it and a bounded page of its
