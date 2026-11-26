@@ -47,7 +47,7 @@ grep -Fq "Commit and push at the first working slice" "$orders" ||
 # --- plugin folders & permissions --------------------------------------------
 jq -e '.plugin == ["./lcars-session", "./context-lifecycle", "./lcars-telemetry", "./hindsight"]' "$config" >/dev/null ||
   fail "opencode.json must load the four folder plugins (./lcars-session, ./context-lifecycle, ./lcars-telemetry, ./hindsight)"
-jq -e '.permission.task == "deny" and .permission.subagent == "deny" and .permission.execute == "deny" and .permission.question == "deny" and .permission.experimental_image_generate == "deny"' "$config" >/dev/null ||
+jq -e '.permission.task == "deny" and .permission.subagent == "deny" and .permission.execute == "deny" and .permission.question == "deny" and .permission.generate_image == "deny"' "$config" >/dev/null ||
   fail "opencode.json must deny subagent/task delegation, Code Mode execute, interactive questions, and image generation by default"
 
 for plugin_name in lcars-session context-lifecycle lcars-telemetry hindsight; do
