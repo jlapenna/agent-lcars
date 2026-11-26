@@ -500,12 +500,12 @@ current head, and the LCARS review supplies it; a review request to a person
 is friction, not a handoff. The one pull request LCARS cannot approve is one
 its own GitHub identity opened, because GitHub lets no account approve its own
 pull request: that one merges after a maintainer approves it. Publish new PRs as drafts: this lets you check interpreted links before a
-ready-PR auto-merge backstop can arm them. After the check passes and either
-required review passes or the advertised native handoff below allows
-asynchronous GitHub review to remain pending, mark the draft ready, refresh the
-check and feedback, and arm below. That capability does not waive required local
-independent source review, repository review policy or already-known feedback
-before ready/arming.
+ready-PR auto-merge backstop can arm them. Once the closing-reference check and any required local independent
+source review pass, address known feedback and honor explicit holds. Mark the
+draft ready, refresh the check and feedback, and arm squash auto-merge as
+described below. Pending asynchronous GitHub approval or CI alone is never a
+reason to keep the PR in draft or park the implementing worker. Branch
+protection enforces those gates at merge.
 Before ready/arming, declare the exact fully completed issue scope and read
 GitHub's actual `closingIssuesReferences` at the reviewed/pushed head. Required
 runtime or deployment acceptance still open means that issue is excluded:
@@ -625,7 +625,8 @@ spend your own turn budget on the actual work instead.
 
 ### Ready delivery handoff
 
-A native implementation can end its provider turn after publishing an OPEN,
+An implementation dispatched on native Work or a GitHub issue can end its
+provider turn after publishing its own OPEN,
 exact attempt-marked, ready PR with protected target policy and squash
 delivery armed.
 Pending asynchronous GitHub review and CI transfer to the durable
@@ -649,9 +650,9 @@ those require the normal fully qualified delivery binding. The semantic owners a
 [`readyDeliveryBinding`](../../../../../apps/console/src/lib/ready-delivery.ts)
 and the initial-result fence in
 [`runs-router.ts`](../../../../../apps/console/src/lib/runs-router.ts).
-Without the advertised capability, continue the existing delivery path. The
-baked runner propagates only the serving Console’s version into the brief;
-repository content cannot enable it.
+This handoff applies without a capability flag in the run brief. A review
+run or a run anchored on the deliverable PR itself cannot claim it through
+this implementation handoff.
 
 The durable Task keeps delivery ownership while its own required CI is queued
 or running. Maintenance monitors that exact PR without a provider process; real
