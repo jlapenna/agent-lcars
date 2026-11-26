@@ -1248,7 +1248,10 @@ async function reconcilePullRequestRemediationOnce(
   // Approve only a head nobody has spoken against: not held by a label, not
   // already reviewed or dismissed by LCARS, and free of any reviewer's change
   // request or open thread. A partial read of reviews or threads is no proof.
+  // The periodic sweep never submits an unattended approval: its snapshot
+  // read can race the webhook and both would submit before seeing a review.
   if (
+    options?.trigger !== 'open-sweep' &&
     author !== undefined &&
     !labels.includes('status:needs-human') &&
     !labels.includes('status:blocked') &&
@@ -1772,31 +1775,61 @@ export async function reconcileOpenPullRequestRemediations(
     drain: async () => ({ dispatched: [], reported: [], failed: [] }),
   };
 
-  let inspected = 0;
-  for (const projection of eligible) {
-    if (Date.now() + 10_000 >= deadlineMs || inspected >= 10) break;
-    try {
-      const active = await deps.store.readActiveRun(projection.anchor);
-      if (active !== undefined && isLive(active.state)) continue;
-      // The delivery monitor owns these PRs; remediation must not race it.
-      const waitingDeliveries = await deps.store.readWaitingDeliveryTasks({
-        repo: projection.anchor.repo,
-        number: projection.anchor.issue,
-      });
-      if (waitingDeliveries.length > 0) continue;
-      inspected += 1;
-      await reconcilePullRequestRemediation(
-        enqueueOnlyDeps,
-        projection.anchor,
-        { wakeDelivery: false, trigger: 'open-sweep' },
-      );
-    } catch (error) {
-      logger.warn(
-        'agent-lcars: open PR remediation sweep failed for %s#%s:',
-        projection.anchor.repo,
-        projection.anchor.issue,
-        error,
-      );
+  const isDependencyReviewOnly = (projection: (typeof projections)[number]) =>
+    isDependencyBotLogin(projection.author) &&
+    !isDependencyDraft(projection) &&
+    !hasConcreteRemediationSignal(projection);
+  const dependencyReviewOnly = eligible
+    .filter(isDependencyReviewOnly)
+    .sort(
+      (left, right) =>
+        left.anchor.repo.localeCompare(right.anchor.repo) ||
+        left.anchor.issue - right.anchor.issue,
+    );
+  const inspectionLimit = 10;
+  // Ineffective approvals can remain review-required until an operator fixes
+  // the reviewer installation. Give review-only candidates their own budget
+  // and rotate the starting point each maintenance tick.
+  const offset =
+    (Math.floor(Date.now() / (5 * 60_000)) * inspectionLimit) %
+    Math.max(dependencyReviewOnly.length, 1);
+  const inspectionGroups = [
+    eligible.filter((projection) => !isDependencyReviewOnly(projection)),
+    [
+      ...dependencyReviewOnly.slice(offset),
+      ...dependencyReviewOnly.slice(0, offset),
+    ],
+  ];
+
+  for (const group of inspectionGroups) {
+    let inspected = 0;
+    for (const projection of group) {
+      if (Date.now() + 10_000 >= deadlineMs || inspected >= inspectionLimit) {
+        break;
+      }
+      try {
+        const active = await deps.store.readActiveRun(projection.anchor);
+        if (active !== undefined && isLive(active.state)) continue;
+        // The delivery monitor owns these PRs; remediation must not race it.
+        const waitingDeliveries = await deps.store.readWaitingDeliveryTasks({
+          repo: projection.anchor.repo,
+          number: projection.anchor.issue,
+        });
+        if (waitingDeliveries.length > 0) continue;
+        inspected += 1;
+        await reconcilePullRequestRemediation(
+          enqueueOnlyDeps,
+          projection.anchor,
+          { wakeDelivery: false, trigger: 'open-sweep' },
+        );
+      } catch (error) {
+        logger.warn(
+          'agent-lcars: open PR remediation sweep failed for %s#%s:',
+          projection.anchor.repo,
+          projection.anchor.issue,
+          error,
+        );
+      }
     }
   }
 

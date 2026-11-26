@@ -922,6 +922,29 @@ describe('automatic pull-request review & conflict remediation', () => {
       expect(reviewPosts(f)).toEqual([]);
     });
 
+    it('keeps unattended approval submission out of the periodic sweep', async () => {
+      const f = createFixture();
+      f.setPr(REPO, 4030, {
+        author: RENOVATE,
+        headRefName: 'renovate/vitest',
+        reviewDecision: 'REVIEW_REQUIRED',
+        commits: [
+          { oid: HEAD_1, author: 'renovate[bot]', signedByGitHub: true },
+        ],
+      });
+
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor, {
+        trigger: 'open-sweep',
+      });
+      expect(reviewPosts(f)).toEqual([]);
+      expect(await f.store.listRuns(anchor)).toEqual([]);
+
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toEqual({ action: 'approved-dependency-update', head: HEAD_1 });
+      expect(reviewPosts(f)).toHaveLength(1);
+    });
+
     it.each([
       ['REVIEW_REQUIRED', 'dependency-review-ineffective'],
       ['APPROVED', 'excluded-author'],
@@ -1240,7 +1263,8 @@ describe('automatic pull-request review & conflict remediation', () => {
         requestId: `pr-rereview:4040:${HEAD_2.slice(0, 16)}`,
         params: { mode: 'review' },
       });
-      await f.orchestrator.report(review!.runId, { ok: true });
+      if (review === undefined) throw new Error('Expected a recovery review');
+      await f.orchestrator.report(review.runId, { ok: true });
       await reconcileOpenPullRequestRemediations(
         f.remediationDeps,
         Date.now() + 60_000,
