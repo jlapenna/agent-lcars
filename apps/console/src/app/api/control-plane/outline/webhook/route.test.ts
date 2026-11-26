@@ -8,12 +8,8 @@ import { queueOutlineEvent } from '@/lib/outline-event-source';
 import { OUTLINE_WEBHOOK_MAX_BYTES, POST } from './route';
 
 vi.mock('@agent-lcars/logging', () => ({ logger: { structured: vi.fn() } }));
-vi.mock('@/lib/outline-event-source', async (original) => ({
-  ...(await original<typeof import('@/lib/outline-event-source')>()),
-  queueOutlineEvent: vi.fn(),
-}));
+vi.mock('@/lib/outline-event-source', () => ({ queueOutlineEvent: vi.fn() }));
 const secret = 'test-outline-secret';
-const original = process.env.AGENT_LCARS_OUTLINE_WEBHOOK_SECRET;
 const event = {
   id: '00000000-0000-4000-8000-000000000001',
   actorId: '00000000-0000-4000-8000-000000000002',
@@ -43,25 +39,18 @@ function request(
   });
 }
 beforeEach(() => {
-  vi.stubEnv('AGENT_LCARS_OUTLINE_SOURCE_ENABLED', 'false');
-  vi.stubEnv('AGENT_LCARS_OUTLINE_DELIVERY_ENABLED', 'false');
-  process.env.AGENT_LCARS_OUTLINE_WEBHOOK_SECRET = secret;
+  vi.stubEnv('AGENT_LCARS_OUTLINE_WEBHOOK_SECRET', secret);
   vi.clearAllMocks();
   vi.mocked(queueOutlineEvent).mockReset().mockResolvedValue(undefined);
 });
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
-  if (original === undefined)
-    delete process.env.AGENT_LCARS_OUTLINE_WEBHOOK_SECRET;
-  else process.env.AGENT_LCARS_OUTLINE_WEBHOOK_SECRET = original;
 });
-describe('Outline signed shadow receiver', () => {
-  it('queues only identifiers for shadow API authorization on pike', async () => {
-    vi.stubEnv('AGENT_LCARS_OUTLINE_SOURCE_ENABLED', 'true');
+describe('Outline signed webhook receiver', () => {
+  it('queues only identifiers for API authorization on pike', async () => {
     expect(await (await POST(request())).json()).toEqual({
       ok: true,
-      mode: 'shadow',
       outcome: 'queued',
     });
     expect(queueOutlineEvent).toHaveBeenCalledWith({
@@ -77,7 +66,6 @@ describe('Outline signed shadow receiver', () => {
     ).not.toContain('INJECT');
   });
   it('does not acknowledge a failed enqueue and uses the deployed enqueue alert contract', async () => {
-    vi.stubEnv('AGENT_LCARS_OUTLINE_SOURCE_ENABLED', 'true');
     vi.mocked(queueOutlineEvent).mockRejectedValueOnce(
       new Error('secret or provider body must not be logged'),
     );
@@ -97,26 +85,13 @@ describe('Outline signed shadow receiver', () => {
       JSON.stringify(vi.mocked(logger.structured).mock.calls),
     ).not.toContain('secret or provider');
   });
-  it('requires both activation flags before reporting live mode', async () => {
-    vi.stubEnv('AGENT_LCARS_OUTLINE_DELIVERY_ENABLED', 'true');
-    expect((await (await POST(request())).json()).mode).toBe('shadow');
-    vi.stubEnv('AGENT_LCARS_OUTLINE_SOURCE_ENABLED', 'true');
-    expect((await (await POST(request())).json()).mode).toBe('live');
-  });
-  it('records only normalized identifiers and advertises shadow mode', async () => {
-    const r = await POST(request());
-    expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({
-      ok: true,
-      mode: 'shadow',
-      outcome: 'recorded',
-    });
+  it('logs only normalized identifiers after enqueue', async () => {
+    expect((await POST(request())).status).toBe(200);
     expect(logger.structured).toHaveBeenCalledWith(
       'info',
       'Outline agent event received',
       expect.objectContaining({
-        mode: 'shadow',
-        outcome: 'shadow',
+        outcome: 'queued',
         actorId: event.actorId,
       }),
       { enrich: false },
@@ -253,8 +228,9 @@ describe('Outline signed shadow receiver', () => {
     expect(logger.structured).not.toHaveBeenCalled();
   });
   it('stays unavailable until its signing secret is provisioned', async () => {
-    delete process.env.AGENT_LCARS_OUTLINE_WEBHOOK_SECRET;
+    vi.stubEnv('AGENT_LCARS_OUTLINE_WEBHOOK_SECRET', undefined);
     expect((await POST(request())).status).toBe(503);
+    expect(queueOutlineEvent).not.toHaveBeenCalled();
     expect(logger.structured).toHaveBeenCalledWith(
       'info',
       'Outline agent event received',

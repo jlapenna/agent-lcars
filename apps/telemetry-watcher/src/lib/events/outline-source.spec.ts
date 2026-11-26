@@ -50,7 +50,6 @@ function fixture() {
     report,
     observe,
     sleep,
-    fallbackEnabled: true,
   });
   const job: Extract<OutlineSourceJob, { type: 'outline-event' }> = {
     type: 'outline-event',

@@ -32,7 +32,7 @@ const event = {
   },
 };
 
-describe('Outline shadow source', () => {
+describe('Outline notice verification', () => {
   it('verifies the exact raw bytes and millisecond freshness', () => {
     const raw = Buffer.from(JSON.stringify(event));
     const signature = parseOutlineSignature(sign(raw), now)!;

@@ -76,7 +76,6 @@ function fixture() {
   const deps = {
     store,
     routing: { store: subscriptions, publisher, resumeWork },
-    enabled: true,
     publish,
     drain,
   };
@@ -149,22 +148,6 @@ describe('Outline routing and fallback ownership', () => {
     await queueOutlineEvent(notice, f.store, f.publish);
     expect(f.notices.get(id)).toEqual(notice);
     expect(f.publish).toHaveBeenCalledWith({ type: 'outline-event', notice });
-  });
-  it('records positive creator evidence in shadow without routing or fallback', async () => {
-    const f = fixture();
-    f.deps.enabled = false;
-    await f.subscribe({
-      type: 'session',
-      host: 'laforge',
-      sessionId: 'session-a',
-    });
-    await acceptOutlineSourceReport(report, f.deps);
-    expect(f.documents.get(doc)).toEqual({
-      agentCreated: true,
-      everSubscribed: false,
-    });
-    expect(f.publisher.publish).not.toHaveBeenCalled();
-    expect(f.publish).not.toHaveBeenCalled();
   });
   it('routes to both hosts and native Work, with receipts only for session delivery', async () => {
     const f = fixture();

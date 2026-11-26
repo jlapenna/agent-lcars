@@ -8,10 +8,7 @@ import {
   parseOutlineSignature,
   verifyOutlineSignature,
 } from '@/lib/outline-agent-events';
-import {
-  outlineDeliveryEnabled,
-  queueOutlineEvent,
-} from '@/lib/outline-event-source';
+import { queueOutlineEvent } from '@/lib/outline-event-source';
 
 /** The deployed Next server uses HTTP/1; Cloud Run's request envelope is
  * 32 MiB (https://docs.cloud.google.com/run/quotas#request_limits). Do not
@@ -66,21 +63,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     return new NextResponse('System is under maintenance.', { status: 503 });
   }
 
-  const sourceEnabled =
-    process.env.AGENT_LCARS_OUTLINE_SOURCE_ENABLED === 'true';
-  const mode = outlineDeliveryEnabled() ? 'live' : 'shadow';
   const report = (outcome: string, fields: Record<string, unknown> = {}) =>
     logger.structured(
       'info',
       'Outline agent event received',
-      { component: 'lcars-outline-events', mode, outcome, ...fields },
+      { component: 'lcars-outline-events', outcome, ...fields },
       { enrich: false },
     );
   const secret = process.env.AGENT_LCARS_OUTLINE_WEBHOOK_SECRET;
   if (!secret) {
     report('disabled');
     return NextResponse.json(
-      { error: 'Outline shadow source is not configured' },
+      { error: 'Outline source is not configured' },
       { status: 503 },
     );
   }
@@ -135,7 +129,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       report('ignored');
       return NextResponse.json({
         ok: true,
-        mode,
         outcome: 'ignored',
       });
     }
@@ -143,35 +136,28 @@ export async function POST(request: Request): Promise<NextResponse> {
   } finally {
     releaseDeliverySlot();
   }
-  if (sourceEnabled) {
-    try {
-      await queueOutlineEvent(notice);
-    } catch (error) {
-      // Reuse the deployed generic agent-event enqueue alert. A source job
-      // that never reached Pub/Sub cannot produce a host-side failure metric.
-      logger.structured(
-        'error',
-        'Outline source enqueue failed',
-        {
-          component: 'lcars-agent-events',
-          stage: 'enqueue',
-          outcome: 'failed',
-          source: 'outline',
-          noticeId: notice.deliveryId,
-          error: error instanceof Error ? error.name : 'error',
-        },
-        { enrich: false },
-      );
-      return NextResponse.json(
-        { error: 'Outline source is temporarily unavailable' },
-        { status: 503 },
-      );
-    }
+  try {
+    await queueOutlineEvent(notice);
+  } catch (error) {
+    // Reuse the deployed agent-event enqueue alert for failures before Pub/Sub.
+    logger.structured(
+      'error',
+      'Outline source enqueue failed',
+      {
+        component: 'lcars-agent-events',
+        stage: 'enqueue',
+        outcome: 'failed',
+        source: 'outline',
+        noticeId: notice.deliveryId,
+        error: error instanceof Error ? error.name : 'error',
+      },
+      { enrich: false },
+    );
+    return NextResponse.json(
+      { error: 'Outline source is temporarily unavailable' },
+      { status: 503 },
+    );
   }
-  report(sourceEnabled ? 'queued' : 'shadow', { ...notice });
-  return NextResponse.json({
-    ok: true,
-    mode,
-    outcome: sourceEnabled ? 'queued' : 'recorded',
-  });
+  report('queued', { ...notice });
+  return NextResponse.json({ ok: true, outcome: 'queued' });
 }

@@ -46,7 +46,6 @@ function outlineFixture() {
   const ctx = context();
   const publish = vi.fn(async () => undefined);
   ctx.outline = {
-    enabled: true,
     store,
     publish,
     routing: {

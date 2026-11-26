@@ -83,7 +83,6 @@ Environment:
   AGENT_TELEMETRY_HOST           host name, as the telemetry hook reports it
   LCARS_OUTLINE_API_KEY          pike only: existing Agents account API key
   LCARS_OUTLINE_AGENT_USER_ID    pike only: expected Agents account UUID
-  LCARS_OUTLINE_FALLBACK_ENABLED true only after the Outline delivery cutover
   HC                             the herdr-core client (default ~/.local/bin/hc)`;
 
 /** The host's key, installed the way the telemetry writer key is. */
@@ -540,8 +539,6 @@ export async function executeEventsAgentCommand(
           agentUserId: outlineUserId,
           hashes: fileOutlineTextHashes(eventsState),
           sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-          fallbackEnabled:
-            proc.env['LCARS_OUTLINE_FALLBACK_ENABLED'] === 'true',
           report: async (input) => {
             const result = await report(input);
             if (!result.ok) {

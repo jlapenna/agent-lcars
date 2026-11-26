@@ -624,35 +624,28 @@ review threads), those with a live run or a waiting delivery owner, and
 `complete=false` when the census could not read everything. Homelab turns
 both into `node_lcars_pr_remediation_*` gauges and alerts.
 
-## Outline shadow receiver
+## Outline event delivery
 
-`/api/control-plane/outline/webhook` is a signed shadow receiver for the
-artifact-bridge migration (#3571). It verifies Outline's raw-body HMAC and
+`/api/control-plane/outline/webhook` verifies Outline's raw-body HMAC and
 five-minute signing timestamp before parsing. Only event/delivery, actor,
-document and model identifiers and event time reach its bounded
-`lcars-outline-events` structured outcomes; document titles, Markdown,
-comments and supplied links are discarded. The receiver admits at most two
-body readers per instance and queues up to eight more briefly without reading
-their bodies. It releases a slot after normalizing identifiers, before source
-publication. Both source and delivery activation
-default off. The existing bridge remains active until the explicit cutover.
+document and model identifiers and event time reach the structured outcomes
+and source queue. Titles, Markdown, comments and supplied links are discarded.
+The receiver admits at most two body readers per instance and queues up to
+eight more briefly without reading their bodies. It releases a slot after
+normalizing identifiers, before source publication.
 
-The receiver stays unavailable until its separate signing secret is provisioned
-and pinned in App Hosting. Terraform owns the secret container and its narrow
-App Hosting grants, never the value. The trusted host keeps the existing
-Outline API credential for administrator/creator checks, text hashes
-and ended-session fallback. The console has no Outline API credential or
-trusted-network access.
+The signing secret enables the receiver and subscription admission. Terraform
+owns its container and narrow App Hosting grants. App Hosting pins the version.
+Pike keeps the Outline API credential for administrator and creator checks, text
+hashes and ended-session replies.
 
-Rollout order is secret container/apply, secret version, runtime reference,
-then a second Outline webhook for shadow evidence. Host authorization and the
-explicit delivery cutover precede enabling subscription admission. Reuse the
-existing host agent; do not expose another LAN listener or copy the bridge's
-registry into console application state. Retirement and the one-day proof
-remain acceptance gates on #3571.
+Cut over by updating the existing Outline webhook after the pinned receiver,
+pike source, observability and subscription migration are verified. Confirm a
+real live-session notice and a real ended-session reply before retiring the
+bridge. Restore the previous webhook settings if the new path fails verification.
 
-With `AGENT_LCARS_OUTLINE_SOURCE_ENABLED=true`, signed identifier-only jobs
-share the existing `agent-event-deliveries` topic and pike's filtered pull.
+Signed identifier-only jobs share the existing `agent-event-deliveries`
+topic and pike's filtered pull.
 Pike's existing agent requires `LCARS_OUTLINE_API_KEY` and the independent
 `LCARS_OUTLINE_AGENT_USER_ID`; it refuses a key for another user. It rereads
 the creator and the actor's current admin role. Own document updates prime
@@ -663,10 +656,9 @@ settle for eight seconds before reading Markdown; an unchanged hash suppresses
 comment highlights. Baselines distinguish observed/own text from an accepted
 admin edit, so reordered bursts coalesce while a delayed own event cannot hide
 an administrator's newer change. Failed reads or reports leave hashes unchanged and nack
-the job. The Console logs bounded authorization outcomes in shadow mode.
+the job. The Console logs bounded authorization outcomes.
 
-`AGENT_LCARS_OUTLINE_DELIVERY_ENABLED=true` additionally activates routing and
-admission. An unobserved document queues a creator check and returns 503;
+An unobserved document queues a creator check and returns 503;
 it creates no subscription. Only a positive pike observation admits a document.
 The CLI preserves the setup explanation and marks it retryable. Host and
 native Work subscriptions use the normal router, identity and resume rules.
@@ -677,9 +669,8 @@ Before publishing a session delivery, the Console saves a metadata-only
 receipt naming its host and the signed source notice. A durable routing marker
 precedes terminal subscription settlement and survives repeated intake, so a
 lost report response cannot create a false unsubscribed fallback. Only that verified host
-may report it undeliverable. The Console queues pike's fallback, where
-`LCARS_OUTLINE_FALLBACK_ENABLED=true` and a fresh creator check are required.
-Pike resolves the parent thread through Outline and supplies a deterministic
+may report it undeliverable. The Console queues pike's fallback, which requires
+a fresh creator check. Pike resolves the parent thread through Outline and supplies a deterministic
 comment UUID (supported by [Outline's API](https://www.getoutline.com/developers));
 a retry checks that ID before writing. Normal health probes never create
 comments. Fallback transport failures nack the original delivery instead of

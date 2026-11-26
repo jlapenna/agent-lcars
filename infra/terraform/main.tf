@@ -873,7 +873,7 @@ resource "google_billing_budget" "monthly" {
   depends_on = [google_project_service.services]
 }
 
-# Outline's signed shadow receiver has no Outline API credential. Only this
+# Outline's signed receiver has no Outline API credential. Only this
 # signing-secret container is cloud-owned; the host keeps its existing API key.
 resource "google_secret_manager_secret_iam_member" "outline_viewer" {
   project   = var.project_id

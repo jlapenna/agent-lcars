@@ -293,7 +293,7 @@ async function requireAvailableSource(
   githubStream = false,
 ): Promise<void> {
   if (value.source === 'outline:doc') {
-    if (!context.outline?.enabled)
+    if (!context.outline)
       throw new ORPCError('FORBIDDEN', {
         message: 'Outline event delivery is not available yet',
       });
@@ -381,7 +381,7 @@ export const agentEventsRouter = os.router({
   fallbackOutline: authenticated.fallbackOutline.handler(
     async ({ input, context }) => {
       const host = requireHost(context.caller);
-      if (!context.outline?.enabled)
+      if (!context.outline)
         throw new ORPCError('SERVICE_UNAVAILABLE', {
           message: 'Outline fallback is not active',
         });

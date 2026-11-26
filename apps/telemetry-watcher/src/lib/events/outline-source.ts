@@ -24,7 +24,6 @@ export interface OutlineSourceDependencies {
     documentId: string,
     agentCreated: boolean,
   ) => Promise<void>;
-  readonly fallbackEnabled: boolean;
 }
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -108,8 +107,6 @@ export class OutlineSource {
       return;
     }
     if (job.type === 'outline-fallback') {
-      if (!deps.fallbackEnabled)
-        throw new Error('Outline fallback is disabled');
       if (!agentCreated)
         throw new Error('Outline fallback document is not agent-created');
       const existing = await deps.api.comment(job.id);

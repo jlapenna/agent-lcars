@@ -23,12 +23,6 @@ import {
 } from './outline-event-store';
 
 export const OUTLINE_SOURCE_HOST = 'pike';
-export function outlineDeliveryEnabled(): boolean {
-  return (
-    process.env.AGENT_LCARS_OUTLINE_SOURCE_ENABLED === 'true' &&
-    process.env.AGENT_LCARS_OUTLINE_DELIVERY_ENABLED === 'true'
-  );
-}
 
 /** A deterministic UUID prevents a lost fallback response from writing twice. */
 export function outlineFallbackId(deliveryId: string): string {
@@ -79,7 +73,6 @@ export function normalizedOutlineEvent(notice: OutlineEventNotice): AgentEvent {
 export interface OutlineSourceDependencies {
   readonly store: OutlineEventStore;
   readonly routing: AgentEventRoutingDeps;
-  readonly enabled: boolean;
   readonly publish: (job: OutlineSourceJob) => Promise<void>;
   readonly drain?: () => Promise<void>;
 }
@@ -99,7 +92,6 @@ export async function acceptOutlineSourceReport(
     {
       component: 'lcars-outline-events',
       stage: 'authorize',
-      mode: deps.enabled ? 'live' : 'shadow',
       outcome: report.outcome,
       noticeId: notice.deliveryId,
       documentId: notice.documentId,
@@ -107,7 +99,7 @@ export async function acceptOutlineSourceReport(
     { enrich: false },
   );
   const event = normalizedOutlineEvent(notice);
-  if (!deps.enabled || report.outcome !== 'accepted' || !report.agentCreated)
+  if (report.outcome !== 'accepted' || !report.agentCreated)
     return { eventId: event.id, delivered: 0 };
   const publisher: AgentEventPublisher = {
     publish: async (data, attributes) => {
