@@ -1,5 +1,6 @@
 import { MantineProvider } from '@mantine/core';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { notifications } from '@mantine/notifications';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
@@ -75,6 +76,36 @@ describe('QueueUtilityMenu', () => {
       'href',
       '/settings',
     );
+  });
+
+  it('shares the absolute URL at activation, including query and fragment', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const originalUrl = window.location.href;
+    vi.stubGlobal(
+      'navigator',
+      Object.create(navigator, { clipboard: { value: { writeText } } }),
+    );
+    try {
+      render(
+        <MantineProvider>
+          <QueueUtilityMenu repositoryUrl="/" signOutControl={null} />
+        </MantineProvider>,
+      );
+      await openMenu();
+      window.history.replaceState(null, '', '/work/42?tab=activity#run-7');
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Share' }));
+      expect(writeText).toHaveBeenCalledWith(
+        new URL('/work/42?tab=activity#run-7', originalUrl).href,
+      );
+      await waitFor(() =>
+        expect(notifications.show).toHaveBeenCalledWith({
+          message: 'Page link copied',
+        }),
+      );
+    } finally {
+      window.history.replaceState(null, '', originalUrl);
+      vi.unstubAllGlobals();
+    }
   });
 
   // Preferences live on /settings: the menu stays a short list of places.
