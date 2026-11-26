@@ -72,14 +72,15 @@
     "bundle": {
       "executor": "nx:run-commands",
       "dependsOn": ["build"],
-      "inputs": ["production", "^production", "nativePlatform", "ciBuild"],
+      "inputs": [
+        "production",
+        "^production",
+        "nativePlatform",
+        "ciBuild",
+        "{workspaceRoot}/tools/console-stage-standalone.sh"
+      ],
       "options": {
-        "commands": [
-          "mkdir -p dist/apps/console/.next/standalone/dist/apps/console/.next dist/apps/console/.next/standalone/apps/console",
-          "cp -r apps/console/public dist/apps/console/.next/standalone/apps/console/",
-          "cp -r dist/apps/console/.next/static dist/apps/console/.next/standalone/dist/apps/console/.next/"
-        ],
-        "parallel": false
+        "command": "bash tools/console-stage-standalone.sh"
       },
       "outputs": [
         "{workspaceRoot}/dist/apps/console/.next/standalone/apps/console/public",

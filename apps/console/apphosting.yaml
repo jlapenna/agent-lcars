@@ -1,7 +1,16 @@
 # Settings for Agent LCARS Frontend (on Cloud Run).
 # See https://firebase.google.com/docs/app-hosting/configure#cloud-run
 scripts:
-  buildCommand: ./tools/nx bundle @agent-lcars/console --verbose
+  # A workflow_run build has passed Verify for the checked-out revision.
+  # Keep the Nx prerequisite checks for builds without that guarantee.
+  buildCommand: |-
+    if [ "${GITHUB_EVENT_NAME:-}" = workflow_run ]; then
+      pnpm exec tsc --noEmit -p apps/console/tsconfig.typecheck.json &&
+      (cd apps/console && pnpm exec next build) &&
+      bash tools/console-stage-standalone.sh
+    else
+      ./tools/nx bundle @agent-lcars/console --verbose
+    fi
   runCommand: node dist/apps/console/.next/standalone/apps/console/server.js
 outputFiles:
   serverApp:
