@@ -3,7 +3,7 @@ import type { TaskListCursor } from '@agent-lcars/orchestrator';
 import { workRepository } from '@agent-lcars/work';
 import { PIPELINES } from '@agent-lcars/work';
 import type { WorkSummary } from '@agent-lcars/work/derive';
-import { Anchor } from '@mantine/core';
+import { Anchor, Group } from '@mantine/core';
 import { redirect } from 'next/navigation';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -35,8 +35,10 @@ import { getNativeInboxEvidence } from '../lib/native-inbox';
 import { derivePrimaryAction } from '../lib/primary-action';
 import { buildQueueView } from '../lib/queue-view';
 import { readTimings } from '../lib/read-timings';
+import { repositoryJobs } from '../lib/repository-jobs-runtime';
 import { indexSessionsByRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
+import { getArchiveSpendToday } from '../lib/session-archive';
 import { filterSessionsForRepo } from '../lib/session-repo-filter';
 import { fleetTokenRate, TOKEN_RATE_READ_FAILED } from '../lib/token-rate';
 import { getTokenRateSnapshot } from '../lib/token-rate-data';
@@ -44,11 +46,9 @@ import { type BoardCard, BridgeSections } from './action-items-board';
 import {
   FleetChip,
   isActiveCliSession,
-  RECENT_OUTCOMES_LIMIT,
   type RunItemRef,
 } from './agent-activity-panel';
 import {
-  AGENTS_WINDOWS,
   type AgentsViewFilters,
   cliSessionsArchiveHref,
   matchesAgentsRun,
@@ -73,22 +73,20 @@ import {
   ToolbarApply,
   ToolbarSearch,
   ToolbarSelect,
-  ToolbarWindow,
 } from './console-toolbar';
 import { ConsoleWorkspace } from './console-workspace';
 import { DataFreshness } from './data-freshness';
 import { decisionRows } from './decision-rows';
 import { DeckInboxSummary } from './deck-inbox-summary';
-import { formatRelativeTime } from './format';
+import { SPEND_READ_FAILED } from './fleet-readouts';
+import { formatCost, formatRelativeTime } from './format';
 import { inboxCardAgent, inboxCardMetadata } from './inbox-card';
 import { LiveDashboard } from './live-dashboard';
-import { MergedLastDay } from './merged-last-day';
 import { NavSuspense } from './nav-suspense';
 import {
   ActiveDispatchesPanel,
   CliSessionsPanel,
   DecisionInboxPanel,
-  RecentCompletionsPanel,
   RunnerFleetPanel,
 } from './ops-panels';
 import { NavPageLoading, PageLoading } from './page-loading';
@@ -99,9 +97,7 @@ import { parseStoppedWorkCursor, stoppedWorkHref } from './stopped-work-query';
 import { withConsolePageShell } from './with-console-page-shell';
 import { cancelItem, redispatchItem } from './work/actions';
 import { context as workContext } from './work/context';
-import { isEventWork } from './work/event-work';
-import { EventWorkActivity } from './work/event-work-activity';
-import { matchesWorkView, parseWorkViewFilters } from './work/work-list-query';
+import { workListHref } from './work/work-list-query';
 
 function toCard(item: ActionItem): BoardCard {
   return {
@@ -122,19 +118,13 @@ function toCard(item: ActionItem): BoardCard {
  * `resolveBridgeDetail` - a "Stopped work" row's `?sel=` must resolve to the
  * *same* item the list renders, matching every other Bridge row kind.
  */
-/** Stopped tasks per Bridge page, and event tasks read for activity. */
 const STOPPED_WORK_PAGE = 50;
-const EVENT_WORK_READ = 50;
 
 async function getParkedWork(
   repo?: string,
   rawCursor?: string,
-  view: AgentsViewFilters = {},
 ): Promise<{
   items: WorkSummary[];
-  eventItems: WorkSummary[];
-  /** Event tasks read to find `eventItems`, and whether older ones exist. */
-  eventWindow?: { size: number; windowed: boolean };
   hasMoreTasks: boolean;
   nextCursor?: TaskListCursor;
   error?: string;
@@ -142,31 +132,13 @@ async function getParkedWork(
   try {
     const work = await workContext();
     if (!work.principal?.scopes.has('work.operator')) {
-      return { items: [], eventItems: [], hasMoreTasks: false };
+      return { items: [], hasMoreTasks: false };
     }
-    // Each read takes only tasks carrying the stored sort key (#3566): the
-    // newest stopped tasks and the newest event tasks, instead of the newest
-    // 200 tasks of every state filtered here.
-    const [page, recent] = await Promise.all([
-      listWorkSummaries(work.runtime.store, {
-        limit: STOPPED_WORK_PAGE,
-        cursor: parseStoppedWorkCursor(rawCursor),
-        sortKey: 'stoppedAt',
-      }),
-      listWorkSummaries(work.runtime.store, {
-        limit: EVENT_WORK_READ,
-        sortKey: 'eventAt',
-      }),
-    ]);
-    const eventItems = recent.items
-      .filter(
-        (item) =>
-          'workId' in item.anchor &&
-          isEventWork(item) &&
-          (!repo || workRepository(item.spec) === repo) &&
-          matchesWorkView(item, parseWorkViewFilters(view), Date.now()),
-      )
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const page = await listWorkSummaries(work.runtime.store, {
+      limit: STOPPED_WORK_PAGE,
+      cursor: parseStoppedWorkCursor(rawCursor),
+      sortKey: 'stoppedAt',
+    });
     const items = await excludeClosedGithubAnchors(
       work.runtime.store,
       page.items.filter(
@@ -177,11 +149,6 @@ async function getParkedWork(
     );
     return {
       items,
-      eventItems,
-      eventWindow: {
-        size: recent.items.length,
-        windowed: recent.nextCursor !== undefined,
-      },
       hasMoreTasks: page.nextCursor !== undefined,
       nextCursor: page.nextCursor,
     };
@@ -192,10 +159,32 @@ async function getParkedWork(
     logger.error('agent-lcars: parked work panel unavailable:', error);
     return {
       items: [],
-      eventItems: [],
       hasMoreTasks: false,
       error:
         'Could not load stopped work. Retry or reset the stopped-work page.',
+    };
+  }
+}
+
+async function getJobsReadout() {
+  try {
+    const { principal, runtime } = await workContext();
+    if (
+      !principal?.scopes.has('work.operator') ||
+      !principal.pipelines.includes('goose')
+    ) {
+      return { detail: 'Goose operator grant required' };
+    }
+    const jobs = await repositoryJobs(runtime).listFor(principal);
+    return {
+      count: jobs.length,
+      detail: `${jobs.filter((job) => job.enabled).length} enabled · all permitted repos`,
+    };
+  } catch (error) {
+    logger.error('agent-lcars: Bridge jobs summary unavailable:', error);
+    return {
+      detail: 'Job registry unavailable',
+      warning: 'Job registry unavailable (repository jobs read failed).',
     };
   }
 }
@@ -208,7 +197,6 @@ function agentsScopedHref(
   const query = new URLSearchParams();
   if (repo) query.set('repo', repo);
   if (view.agent) query.set('agent', view.agent);
-  if (view.window) query.set('window', view.window);
   if (view.q) query.set('q', view.q);
   return query.size ? `/agents?${query}` : '/agents';
 }
@@ -217,7 +205,6 @@ interface PageProps {
   searchParams: Promise<{
     repo?: string;
     agent?: string;
-    window?: string;
     q?: string;
     sel?: string;
     stoppedCursor?: string;
@@ -234,7 +221,7 @@ async function IndexBody({
 }: {
   repoFilter: WatchedRepo | undefined;
   repoFilterKey?: string;
-  /** The toolbar's agent, window and find, as on Agents. */
+  /** The toolbar's agent and find, as on Agents. */
   view: AgentsViewFilters;
   selectedKey?: string;
   stoppedCursor?: string;
@@ -252,8 +239,6 @@ async function IndexBody({
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
     {
       items: parkedWorkItems,
-      eventItems,
-      eventWindow,
       hasMoreTasks: hasMoreParkedTasks,
       nextCursor: stoppedNextCursor,
       error: stoppedError,
@@ -261,6 +246,8 @@ async function IndexBody({
     nativeInbox,
     autoscaler,
     tokenRateSnapshot,
+    jobs,
+    spend,
   ] = await Promise.all([
     timings.time('queue', getCachedQueueItems()),
     activityRead,
@@ -271,10 +258,7 @@ async function IndexBody({
         getRunnerSessionsByRunId([...data.liveRuns, ...data.recentRuns]),
       ),
     ),
-    timings.time(
-      'stoppedWork',
-      getParkedWork(repoFilterKey, stoppedCursor, view),
-    ),
+    timings.time('stoppedWork', getParkedWork(repoFilterKey, stoppedCursor)),
     timings.time(
       'nativeInbox',
       getNativeInboxEvidence(async () => {
@@ -284,6 +268,14 @@ async function IndexBody({
     ),
     timings.time('autoscaler', getAutoscalerStatuses()),
     timings.time('tokenRate', getTokenRateSnapshot()),
+    timings.time('jobs', getJobsReadout()),
+    timings.time(
+      'spendToday',
+      getArchiveSpendToday(repoFilterKey).catch((error: unknown) => {
+        logger.error('agent-lcars: Bridge spend summary unavailable:', error);
+        return undefined;
+      }),
+    ),
   ]);
   timings.log();
   // Deduped: independent authoritative reads can fail independently, and
@@ -296,14 +288,13 @@ async function IndexBody({
       ...nativeInbox.warnings,
       ...autoscaler.warnings,
       ...(tokenRateSnapshot ? [] : [TOKEN_RATE_READ_FAILED]),
+      ...(jobs.warning ? [jobs.warning] : []),
+      ...(spend === undefined ? [SPEND_READ_FAILED] : []),
     ]),
   );
 
-  // run.id -> joined session doc, for every run this page renders (live and
-  // recent alike) - powers the In Flight budget gauges and the Recent
-  // Outcomes classification/diagnosis (see agent-activity-panel.tsx).
   const sessionsByRunId = indexSessionsByRunId(
-    [...activity.liveRuns, ...activity.recentRuns],
+    activity.liveRuns,
     runnerSessionsByRunId,
   );
 
@@ -330,28 +321,20 @@ async function IndexBody({
   // unfiltered data - a repo filter should narrow what's *displayed*, never
   // which items can see each other's runs/sessions. The repository selector
   // and scoped navigation share this same `?repo=` state.
-  // The toolbar's agent, window and find narrow the same rows after it, as
+  // The toolbar's agent and find narrow the same rows after it, as
   // on Agents; find also narrows the item lists by title and reference.
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
   const now = Date.now();
-  const filteredActivity = {
-    ...activity,
-    liveRuns: activity.liveRuns.filter(
-      (run) =>
-        matchesFilter(run.repo) &&
-        matchesAgentsRun(run, view, {
-          finished: false,
-          now,
-          shownTitle: itemsByRunId[run.id]?.title,
-        }),
-    ),
-    recentRuns: activity.recentRuns.filter(
-      (run) =>
-        matchesFilter(run.repo) &&
-        matchesAgentsRun(run, view, { finished: true, now }),
-    ),
-  };
+  const liveRuns = activity.liveRuns.filter(
+    (run) =>
+      matchesFilter(run.repo) &&
+      matchesAgentsRun(run, view, {
+        finished: false,
+        now,
+        shownTitle: itemsByRunId[run.id]?.title,
+      }),
+  );
   const filteredCliSessions = filterSessionsForRepo(
     cliSessions,
     repoFilter,
@@ -386,16 +369,10 @@ async function IndexBody({
       ),
   );
 
-  // The right pane of the two-panel view (desktop ≥1024px). Resolved from the
-  // `?sel=` key against the *same* records the left column actually renders -
-  // the same recent-run slice and the same live/idle session filter the
-  // operations panel uses - so a row that has scrolled out of the list (a
-  // run past the outcome cutoff, a session that ended) resolves to the empty
-  // state rather than lingering as detail with no row to select.
+  // Resolve the selection against the rows still visible on Bridge.
   const detail = resolveBridgeDetail({
     selectedKey,
-    liveRuns: filteredActivity.liveRuns,
-    recentRuns: filteredActivity.recentRuns.slice(0, RECENT_OUTCOMES_LIMIT),
+    liveRuns,
     cliSessions: activeCliSessions,
     waitingOnDeploy: deployCards,
     blocked: blockedCards,
@@ -438,9 +415,13 @@ async function IndexBody({
   const selectRun = (run: AgentRun) =>
     bridgeSelectionHref(runKey(run), repoFilterKey, stoppedCursor, view);
   const outcomesHref = agentsScopedHref(repoFilterKey, view);
-  const workHref = repoFilterKey
-    ? `/work?${new URLSearchParams({ repo: repoFilterKey })}`
-    : '/work';
+  const workHref = workListHref({ repo: repoFilterKey });
+  const eventWorkHref = workListHref({
+    activity: 'events',
+    repo: repoFilterKey,
+    agent: view.agent,
+    q: view.q,
+  });
 
   return (
     <ConsoleWorkspace
@@ -475,18 +456,6 @@ async function IndexBody({
               })),
             ]}
           />
-          <ToolbarWindow
-            name="window"
-            label="Window"
-            value={view.window ?? ''}
-            options={[
-              ...AGENTS_WINDOWS.map((window) => ({
-                value: window,
-                label: window,
-              })),
-              { value: '', label: 'all' },
-            ]}
-          />
           <ToolbarSearch
             name="q"
             label="Find"
@@ -517,7 +486,7 @@ async function IndexBody({
             id: 'agents',
             label: 'Agents',
             href: outcomesHref,
-            value: activity.queue ? filteredActivity.liveRuns.length : '—',
+            value: activity.queue ? liveRuns.length : '—',
             detail: cliSessionWarnings.length
               ? 'Live runs · CLI sessions unavailable'
               : `Live runs · ${activeCliSessions.length} active CLI sessions`,
@@ -543,6 +512,24 @@ async function IndexBody({
               ? 'Decisions waiting'
               : 'Native decisions unavailable',
           },
+          {
+            id: 'jobs',
+            label: 'Jobs',
+            href: '/jobs',
+            value: jobs.count ?? '—',
+            detail: jobs.detail,
+          },
+          {
+            id: 'costs',
+            label: 'Costs',
+            href: repoFilterKey
+              ? `/costs?${new URLSearchParams({ repo: repoFilterKey })}`
+              : '/costs',
+            value: spend ? formatCost(spend.todayUsd) : '—',
+            detail: spend
+              ? `Known spend today (UTC)${spend.todayEstimated ? ' · est.' : ''}`
+              : 'Spend unavailable',
+          },
         ]}
       />
       <section
@@ -552,42 +539,49 @@ async function IndexBody({
         <div className="bridge-workspace__list bridge-cols">
           <div className="bridge-stack">
             <ActiveDispatchesPanel
-              liveRuns={filteredActivity.liveRuns}
+              liveRuns={liveRuns}
               updatedAt={activityFetchedAt}
               itemsByRunId={itemsByRunId}
               sessionsByRunId={sessionsByRunId}
               selectHrefFor={selectRun}
               footer={
-                <Anchor
-                  href={workHref}
-                  size="sm"
-                  className="operations-more-link"
-                >
-                  Browse Work →
-                </Anchor>
+                <Group gap="sm">
+                  <Anchor
+                    href={workHref}
+                    size="sm"
+                    className="operations-more-link"
+                  >
+                    Browse Work →
+                  </Anchor>
+                  <Anchor
+                    href="/work/schedules"
+                    size="sm"
+                    className="operations-more-link"
+                  >
+                    View schedules →
+                  </Anchor>
+                  <Anchor
+                    href={outcomesHref}
+                    size="sm"
+                    className="operations-more-link"
+                  >
+                    Run outcomes →
+                  </Anchor>
+                  <Anchor
+                    href={eventWorkHref}
+                    size="sm"
+                    className="operations-more-link"
+                  >
+                    Event-driven work →
+                  </Anchor>
+                </Group>
               }
             />
-            <RecentCompletionsPanel
-              runs={filteredActivity.recentRuns.slice(0, RECENT_OUTCOMES_LIMIT)}
-              merged={<MergedLastDay repo={repoFilterKey} />}
-              sessionsByRunId={sessionsByRunId}
-              selectHrefFor={selectRun}
-              footer={
-                <Anchor
-                  href={outcomesHref}
-                  size="sm"
-                  className="operations-more-link"
-                >
-                  View all outcomes →
-                </Anchor>
-              }
-            />
-            <EventWorkActivity
-              items={eventItems}
-              windowSize={eventWindow?.size}
-              windowed={eventWindow?.windowed}
-              error={stoppedError}
-              repo={repoFilterKey}
+            <BridgeSections
+              waitingOnDeploy={deployCards}
+              blocked={blockedCards}
+              repoFilterKey={repoFilterKey}
+              stoppedCursor={stoppedCursor}
               view={view}
             />
             <ParkedWorkPanel
@@ -606,13 +600,6 @@ async function IndexBody({
               }
               cancel={cancelItem}
               redispatch={redispatchItem}
-              repoFilterKey={repoFilterKey}
-              stoppedCursor={stoppedCursor}
-              view={view}
-            />
-            <BridgeSections
-              waitingOnDeploy={deployCards}
-              blocked={blockedCards}
               repoFilterKey={repoFilterKey}
               stoppedCursor={stoppedCursor}
               view={view}
@@ -707,7 +694,7 @@ function IndexViewContent({
     <>
       <LiveDashboard />
       <NavSuspense
-        key={`${repoFilterKey ?? ''}:${view.agent ?? ''}:${view.window ?? ''}:${view.q ?? ''}:${stoppedCursor ?? ''}`}
+        key={`${repoFilterKey ?? ''}:${view.agent ?? ''}:${view.q ?? ''}:${stoppedCursor ?? ''}`}
         fallback={<PageLoading rows={6} header={false} />}
       >
         <IndexBody
@@ -776,7 +763,7 @@ async function IndexShell({ searchParams }: PageProps) {
   const repoFilter = parseRepoFilterParam(params.repo);
   const repoFilterKey = repoFilter ? repoKey(repoFilter) : undefined;
   const selectedKey = parseBridgeSelection(params.sel);
-  const view = parseAgentsViewFilters(params);
+  const view = parseAgentsViewFilters({ agent: params.agent, q: params.q });
 
   const subtitle =
     watchedRepos.length <= 1

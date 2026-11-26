@@ -112,7 +112,8 @@ describe('resumeTranscript', () => {
       cwd: '/home/runner/_work/checkout',
       claudeProjectsDir: '/home/runner/.claude/projects',
       codexHome: '/run/codex/home',
-      download: async () => '{"type":"session_meta"}\n',
+      download: async () =>
+        '{"type":"session_meta","payload":{"id":"019fb1be-238c-77d2-a0b2-14961c202368"}}\n',
       mkdir: () => undefined,
       writeFile: (p, c) => {
         written[p] = c;
@@ -124,6 +125,26 @@ describe('resumeTranscript', () => {
       '/run/codex/home/sessions/1970/01/01/rollout-1970-01-01T00-00-00-019fb1be-238c-77d2-a0b2-14961c202368.jsonl',
     );
     expect(written[path!]).toContain('session_meta');
+  });
+
+  it('rejects a child rollout archived under its parent ID', async () => {
+    const header = (id: string) =>
+      JSON.stringify({ type: 'session_meta', payload: { id } });
+    const writeFile = vi.fn();
+    expect(
+      await resumeTranscript({
+        agent: 'codex',
+        sessionId: 'parent',
+        transcriptGcsUri: 'gs://bucket/parent',
+        cwd: '/repo',
+        claudeProjectsDir: '/claude',
+        codexHome: '/codex',
+        download: async () => [header('child'), header('parent')].join('\n'),
+        mkdir: vi.fn(),
+        writeFile,
+      }),
+    ).toBeUndefined();
+    expect(writeFile).not.toHaveBeenCalled();
   });
 
   it('still writes a claude session to the claude projects dir', async () => {

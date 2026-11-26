@@ -39,11 +39,7 @@ export async function repositoryJobsHttp(
   const path = new URL(request.url).pathname.slice('/api/work/v1/jobs'.length);
   try {
     if (request.method === 'GET' && path === '')
-      return Response.json(
-        (await jobs.deps.store.list()).filter((job) =>
-          jobs.deps.granted(principal.principal, job.repository),
-        ),
-      );
+      return Response.json(await base.listFor(principal));
     const occurrencePath = /^\/occurrences\/([a-f0-9]{64})$/u.exec(path);
     if (request.method === 'GET' && occurrencePath) {
       const occurrence = await jobs.deps.store.readOccurrence(

@@ -53,10 +53,9 @@ describe('bridgeSelectionHref', () => {
     expect(
       bridgeSelectionHref('run:r1', undefined, undefined, {
         agent: 'codex',
-        window: '24h',
         q: 'heartbeat',
       }),
-    ).toBe('/?agent=codex&window=24h&q=heartbeat&sel=run%3Ar1');
+    ).toBe('/?agent=codex&q=heartbeat&sel=run%3Ar1');
   });
 
   it('clears the selection back to the scoped page when key is undefined', () => {

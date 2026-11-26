@@ -1255,7 +1255,7 @@ describe('guarded pre-claim cancellation', () => {
     expect(outcome).not.toHaveProperty('refused');
     expect(await store.readRun(run.runId)).toMatchObject({
       state: 'canceled',
-      queue: { state: 'queued' },
+      queue: { state: 'retired' },
     });
   });
 

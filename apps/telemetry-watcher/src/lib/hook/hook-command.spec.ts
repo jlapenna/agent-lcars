@@ -1044,6 +1044,23 @@ describe('Codex child publication ownership (#2669)', () => {
     expect(replacement?.doc.tokens).toEqual(write?.doc.tokens);
   });
 
+  it('attributes nested forks across replayed ancestor headers', async () => {
+    const home = tempHome();
+    const input = rows();
+    const parentHeader = input.findIndex(
+      (row) => row.type === 'session_meta' && row.payload.id === parentId,
+    );
+    expect(parentHeader).toBeGreaterThan(0);
+    input[parentHeader].payload.forked_from_id = 'grandparent';
+    input.splice(parentHeader + 1, 0, {
+      type: 'session_meta',
+      timestamp: input[parentHeader].timestamp,
+      payload: { id: 'grandparent' },
+    });
+    await executeHookCommand(['codex'], childDeps(home, input, 'SubagentStop'));
+    expect(spooledEvents(home)[0]?.sessionId).toBe(childId);
+  });
+
   it('collects the documented parent-session SubagentStop from its exact child transcript', async () => {
     const home = tempHome();
     const d = childDeps(home, rows(), 'SubagentStop');

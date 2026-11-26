@@ -1569,7 +1569,7 @@ export class FirestoreStore implements OrchestratorStore {
       const snapshot = await tx.get(ref);
       if (!snapshot.exists) return;
       const run = runSchema.parse(snapshot.data());
-      if (run.queue !== undefined) return;
+      if (!isLive(run.state) || run.queue !== undefined) return;
       tx.set(ref, {
         ...run,
         queue: { state: 'queued' },
@@ -1745,6 +1745,23 @@ export class FirestoreStore implements OrchestratorStore {
     );
   }
 
+  /** One bounded, retryable batch of the legacy terminal queue repair. */
+  async retireTerminalQueueBatch(): Promise<number> {
+    const terminal = runStateSchema.options.filter((state) => !isLive(state));
+    const candidates = this.#runs
+      .where('queue.state', '==', 'queued')
+      .where('state', 'in', terminal)
+      .select('queue.state')
+      .limit(200);
+    return this.#firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(candidates);
+      for (const doc of snapshot.docs) {
+        tx.update(doc.ref, 'queue.state', 'retired');
+      }
+      return snapshot.size;
+    });
+  }
+
   async listQueuedRuns(limit?: number): Promise<Run[]> {
     // Combining the `queue.state` equality filter with `orderBy('createdAt')`
     // (a different field) would need a composite index -- see
@@ -1755,8 +1772,7 @@ export class FirestoreStore implements OrchestratorStore {
     // fast pickup, not as a backlog), so reading it in full before slicing
     // is the same trade `claimPendingOutbox` already makes for its pending
     // population.
-    // Live states only: a run canceled while queued can keep
-    // `queue.state: queued`, and hundreds of those accumulated.
+    // Keep legacy terminal queue records out of live listing and capacity.
     const snapshot = await this.#runs
       .where('queue.state', '==', 'queued')
       .where('state', 'in', LIVE_STATES)

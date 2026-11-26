@@ -937,7 +937,8 @@ export class MemoryStore implements OrchestratorStore {
 
   async enqueueRun(input: { runId: string; now: string }): Promise<void> {
     const run = this.#runs.get(input.runId);
-    if (run === undefined || run.queue !== undefined) return;
+    if (run === undefined || !isLive(run.state) || run.queue !== undefined)
+      return;
     this.#runs.set(input.runId, {
       ...run,
       queue: { state: 'queued' },
