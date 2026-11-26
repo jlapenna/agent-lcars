@@ -9,8 +9,10 @@ export const config = {
      * - static assets (.svg, .png, .jpg, etc) and the web app manifest,
      *   which browsers fetch without credentials when installing the app
      * - /api/auth (Auth.js endpoints — must be accessible unauthenticated)
+     * - the exact Outline webhook path (the handler owns maintenance and
+     *   HMAC checks, and needs the original body beyond the proxy clone cap)
      */
-    '/((?!_next/static|_next/image|api/auth|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|txt|webmanifest)$).*)',
+    '/((?!_next/static|_next/image|api/auth|api/control-plane/outline/webhook/?$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|txt|webmanifest)$).*)',
   ],
 };
 
@@ -32,7 +34,6 @@ export const publicRoutes = [
   '/api/logs/error',
   '/api/control-plane/webhook',
   '/api/control-plane/linear/webhook',
-  '/api/control-plane/outline/webhook',
   '/api/control-plane/linear/process',
   '/api/control-plane/webhook/process',
   '/api/control-plane/webhook/events',

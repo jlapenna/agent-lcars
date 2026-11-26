@@ -16,6 +16,10 @@ export const OUTLINE_WEBHOOK_MAX_BYTES = 32 * 1024 * 1024;
  * existing bridge remains responsible until the explicit cutover. API reads
  * and administrator/creator authorization belong on the trusted host. */
 export async function POST(request: Request): Promise<NextResponse> {
+  if (process.env['MAINTENANCE_MODE'] === 'true') {
+    return new NextResponse('System is under maintenance.', { status: 503 });
+  }
+
   const report = (outcome: string, fields: Record<string, unknown> = {}) =>
     logger.structured(
       'info',

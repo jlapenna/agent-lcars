@@ -41,6 +41,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   if (original === undefined)
     delete process.env.AGENT_LCARS_OUTLINE_WEBHOOK_SECRET;
   else process.env.AGENT_LCARS_OUTLINE_WEBHOOK_SECRET = original;
@@ -85,6 +86,13 @@ describe('Outline signed shadow receiver', () => {
         )
       ).status,
     ).toBe(413);
+  });
+  it('rejects a signed delivery in maintenance mode before observing it', async () => {
+    vi.stubEnv('MAINTENANCE_MODE', 'true');
+    const response = await POST(request());
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe('System is under maintenance.');
+    expect(logger.structured).not.toHaveBeenCalled();
   });
   it('stays unavailable until its signing secret is provisioned', async () => {
     delete process.env.AGENT_LCARS_OUTLINE_WEBHOOK_SECRET;
