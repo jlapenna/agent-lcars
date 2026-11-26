@@ -215,7 +215,7 @@ async function resumeWorkTarget(
   });
   switch (resumed.outcome) {
     case 'refused':
-      await deps.store.settleRouted(subscription.id, event.id, true);
+      await deps.store.settleRouted(subscription.id, event.id, true, true);
       logger.warn(
         'agent-lcars: removed event subscription %s: work %s refused event %s (%s)',
         subscription.id,

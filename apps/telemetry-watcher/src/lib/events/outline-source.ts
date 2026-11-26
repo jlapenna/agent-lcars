@@ -95,11 +95,11 @@ export class OutlineSource {
     if (!document) {
       if (job.type === 'outline-fallback')
         throw new Error('Outline fallback document is unavailable');
-      if (job.type === 'outline-observe') await deps.observe(id, false);
-      else
+      // Unavailable is not creator evidence. A later registration can recheck.
+      if (job.type === 'outline-event')
         await deps.report({
           noticeId: job.notice.deliveryId,
-          outcome: 'foreign-document',
+          outcome: 'document-unavailable',
           agentCreated: false,
         });
       return;

@@ -92,10 +92,10 @@ describe('Outline trusted API source', () => {
       ).rejects.toThrow('Outline fallback document is unavailable');
       expect(f.report).toHaveBeenCalledWith({
         noticeId: eventId,
-        outcome: 'foreign-document',
+        outcome: 'document-unavailable',
         agentCreated: false,
       });
-      expect(f.observe).toHaveBeenCalledWith(doc, false);
+      expect(f.observe).not.toHaveBeenCalled();
       expect(f.api.createComment).not.toHaveBeenCalled();
       expect(f.hashes.size).toBe(0);
     },

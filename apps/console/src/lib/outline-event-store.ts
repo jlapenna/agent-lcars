@@ -8,9 +8,12 @@ import { Firestore } from '@google-cloud/firestore';
 // retention, then Firestore TTL removes it. Creator observations are durable.
 const expiresAt = () => new Date(Date.now() + 14 * 24 * 60 * 60_000);
 
+export const OUTLINE_AGENT_DOCUMENTS = 'outlineAgentDocuments';
+
 export interface OutlineDocumentObservation {
   readonly agentCreated: boolean;
-  readonly everSubscribed: boolean;
+  readonly everSubscribed?: boolean;
+  readonly creatorVerified?: boolean;
 }
 export interface OutlineDeliveryReceipt {
   readonly deliveryId: string;
@@ -67,20 +70,14 @@ export class FirestoreOutlineEventStore implements OutlineEventStore {
       .set({ routed: true }, { merge: true });
   }
   async observe(documentId: string, agentCreated: boolean) {
-    const ref = this.firestore()
-      .collection('outlineAgentDocuments')
-      .doc(documentId);
-    await this.firestore().runTransaction(async (transaction) => {
-      const old = await transaction.get(ref);
-      transaction.set(ref, {
-        agentCreated,
-        everSubscribed: old.data()?.everSubscribed === true,
-      });
-    });
+    await this.firestore()
+      .collection(OUTLINE_AGENT_DOCUMENTS)
+      .doc(documentId)
+      .set({ agentCreated, creatorVerified: true }, { merge: true });
   }
   async document(documentId: string) {
     const result = await this.firestore()
-      .collection('outlineAgentDocuments')
+      .collection(OUTLINE_AGENT_DOCUMENTS)
       .doc(documentId)
       .get();
     return result.exists
@@ -89,7 +86,7 @@ export class FirestoreOutlineEventStore implements OutlineEventStore {
   }
   async subscribed(documentId: string) {
     await this.firestore()
-      .collection('outlineAgentDocuments')
+      .collection(OUTLINE_AGENT_DOCUMENTS)
       .doc(documentId)
       .set({ everSubscribed: true }, { merge: true });
   }

@@ -20690,6 +20690,7 @@
                       "own-change",
                       "untrusted-actor",
                       "foreign-document",
+                      "document-unavailable",
                       "no-text-change"
                     ]
                   },

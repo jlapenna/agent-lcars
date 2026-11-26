@@ -6,6 +6,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 
 import { MemoryAgentEventSubscriptionStore } from './agent-event-store';
+import type { WorkResumeOutcome } from './work-event-resume';
 import {
   acceptOutlineSourceReport,
   normalizedOutlineEvent,
@@ -67,9 +68,8 @@ function fixture() {
       async (_data: Buffer, _attributes: Record<string, string>) => 'pubsub-id',
     ),
   };
-  const resumeWork = vi.fn(async () => ({
+  const resumeWork = vi.fn(async (): Promise<WorkResumeOutcome> => ({
     outcome: 'queued' as const,
-    runId: 'work:w/r2',
   }));
   const publish = vi.fn(async (_job: OutlineSourceJob) => undefined);
   const drain = vi.fn(async () => undefined);
@@ -180,6 +180,7 @@ describe('Outline routing and fallback ownership', () => {
     'untrusted-actor',
     'foreign-document',
     'no-text-change',
+    'document-unavailable',
   ] as const)('does not route %s', async (outcome) => {
     const f = fixture();
     await f.subscribe({ type: 'session', host: 'pike', sessionId: 'a' });
@@ -213,6 +214,46 @@ describe('Outline routing and fallback ownership', () => {
     await f.store.subscribed(doc);
     await acceptOutlineSourceReport(report, f.deps);
     expect(f.publish).toHaveBeenCalledOnce();
+  });
+  it.each(['unsubscribe', 'until'] as const)(
+    'suppresses fallback for a later notice after an intentional %s',
+    async (stop) => {
+      const f = fixture();
+      await f.store.subscribed(doc);
+      const subscription = await f.subscribe(
+        { type: 'session', host: 'pike', sessionId: 'a' },
+        undefined,
+        stop === 'until' ? 'comment' : undefined,
+      );
+      if (stop === 'unsubscribe') await f.subscriptions.delete(subscription.id);
+      else await acceptOutlineSourceReport(report, f.deps);
+      const nextId = '00000000-0000-4000-8000-000000000005';
+      await f.store.saveNotice({ ...notice, deliveryId: nextId });
+      await acceptOutlineSourceReport({ ...report, noticeId: nextId }, f.deps);
+      expect(f.publish).not.toHaveBeenCalled();
+    },
+  );
+  it('keeps fallback for a Work that permanently refuses its notice', async () => {
+    const f = fixture();
+    await f.subscribe({ type: 'work', workId: 'w' });
+    f.resumeWork.mockResolvedValue({ outcome: 'refused', reason: 'closed' });
+    await acceptOutlineSourceReport(report, f.deps);
+    expect(f.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'outline-fallback' }),
+    );
+  });
+  it('preserves verified creator evidence while the document is unavailable', async () => {
+    const f = fixture();
+    await f.store.observe(doc, true);
+    await acceptOutlineSourceReport(
+      {
+        ...report,
+        outcome: 'document-unavailable',
+        agentCreated: false,
+      },
+      f.deps,
+    );
+    expect((await f.store.document(doc))?.agentCreated).toBe(true);
   });
   it('respects intentional kind filters without writing an unsolicited fallback', async () => {
     const f = fixture();

@@ -35,7 +35,11 @@ function outlineFixture() {
     notice: vi.fn(async () => undefined),
     document: vi.fn(async (id) => documents.get(id)),
     observe: vi.fn(async (id, agentCreated) => {
-      documents.set(id, { agentCreated, everSubscribed: false });
+      documents.set(id, {
+        ...documents.get(id),
+        agentCreated,
+        creatorVerified: true,
+      });
     }),
     subscribed: vi.fn(async (id) => {
       documents.set(id, { agentCreated: true, everSubscribed: true });
@@ -94,11 +98,33 @@ describe('Outline source and creator authority', () => {
     expect(
       (await call(f.ctx, 'POST', '/events/subscriptions', request)).status,
     ).toBe(201);
-    expect(f.documents.get(documentId)?.everSubscribed).toBe(true);
+    expect(await f.ctx.store.outlineFallbackEligible(documentId)).toBe(true);
+  });
+  it('rechecks an old ambiguous negative and allows registration after access returns', async () => {
+    const f = outlineFixture();
+    f.documents.set(documentId, { agentCreated: false, everSubscribed: true });
+    expect(
+      (await call(f.ctx, 'POST', '/events/subscriptions', request)).status,
+    ).toBe(503);
+    expect(f.publish).toHaveBeenCalledWith({
+      type: 'outline-observe',
+      documentId,
+    });
+    expect(
+      (
+        await call(f.ctx, 'POST', '/events/outline/observations', {
+          documentId,
+          agentCreated: true,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (await call(f.ctx, 'POST', '/events/subscriptions', request)).status,
+    ).toBe(201);
   });
   it('rejects another creator even when the session is local and live', async () => {
     const f = outlineFixture();
-    f.documents.set(documentId, { agentCreated: false, everSubscribed: false });
+    f.documents.set(documentId, { agentCreated: false, creatorVerified: true });
     expect(
       (await call(f.ctx, 'POST', '/events/subscriptions', request)).status,
     ).toBe(403);

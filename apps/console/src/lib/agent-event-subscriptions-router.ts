@@ -299,14 +299,14 @@ async function requireAvailableSource(
       });
     const documentId = value.key.slice('outline:doc:'.length);
     const observed = await context.outline.store.document(documentId);
-    if (!observed) {
+    if (!observed?.agentCreated && observed?.creatorVerified !== true) {
       await context.outline.publish({ type: 'outline-observe', documentId });
       throw new ORPCError('SERVICE_UNAVAILABLE', {
         message:
           'Outline creator verification is pending on pike; retry registration after that setup completes',
       });
     }
-    if (!observed.agentCreated)
+    if (!observed?.agentCreated)
       throw new ORPCError('FORBIDDEN', {
         message: 'Only agent-created Outline documents may be subscribed',
       });
@@ -335,17 +335,6 @@ async function requireAvailableSource(
       });
     }
   }
-}
-
-async function registeredView(
-  subscription: AgentEventSubscription,
-  context: AgentEventsContext,
-) {
-  if (subscription.source === 'outline:doc' && context.outline)
-    await context.outline.store.subscribed(
-      subscription.key.slice('outline:doc:'.length),
-    );
-  return view(subscription, context);
 }
 
 export const agentEventsRouter = os.router({
@@ -443,7 +432,7 @@ export const agentEventsRouter = os.router({
           createdAt: now.toISOString(),
         };
         const existing = await context.store.get(subscription.id);
-        if (existing !== undefined) return registeredView(existing, context);
+        if (existing !== undefined) return view(existing, context);
         if (
           (await context.store.listForWork(workId)).length >=
           MAX_SUBSCRIPTIONS_PER_WORK
@@ -451,7 +440,7 @@ export const agentEventsRouter = os.router({
           throw errors.CONFLICT({
             message: `Work ${workId} already has ${MAX_SUBSCRIPTIONS_PER_WORK} subscriptions`,
           });
-        return registeredView(
+        return view(
           (await context.store.create(subscription)).subscription,
           context,
         );
@@ -494,7 +483,7 @@ export const agentEventsRouter = os.router({
         createdAt: now.toISOString(),
       };
       const existing = await context.store.get(subscription.id);
-      if (existing !== undefined) return registeredView(existing, context);
+      if (existing !== undefined) return view(existing, context);
       if (
         (await context.store.countForSession(input.sessionId)) >=
         MAX_SUBSCRIPTIONS_PER_SESSION
@@ -502,7 +491,7 @@ export const agentEventsRouter = os.router({
         throw errors.CONFLICT({
           message: `Session ${input.sessionId} already has ${MAX_SUBSCRIPTIONS_PER_SESSION} subscriptions`,
         });
-      return registeredView(
+      return view(
         (await context.store.create(subscription)).subscription,
         context,
       );

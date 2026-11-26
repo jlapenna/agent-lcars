@@ -85,7 +85,8 @@ export async function acceptOutlineSourceReport(
 ): Promise<{ eventId: string; delivered: number }> {
   const notice = await deps.store.notice(report.noticeId);
   if (!notice) throw new Error('Outline source notice is unknown');
-  await deps.store.observe(notice.documentId, report.agentCreated);
+  if (report.outcome !== 'document-unavailable')
+    await deps.store.observe(notice.documentId, report.agentCreated);
   logger.structured(
     'info',
     'Outline source authorized',
@@ -139,7 +140,8 @@ export async function acceptOutlineSourceReport(
       routed.deliveries.every((d) => d.outcome === 'resume-refused')) &&
     (await deps.routing.store.listForKey(event.key)).length === 0 &&
     !(await deps.store.wasRouted(notice.deliveryId)) &&
-    (await deps.store.document(notice.documentId))?.everSubscribed
+    ((await deps.routing.store.outlineFallbackEligible(notice.documentId)) ??
+      (await deps.store.document(notice.documentId))?.everSubscribed)
   ) {
     await deps.publish(
       fallbackJob(notice, `unsubscribed:${notice.deliveryId}`),

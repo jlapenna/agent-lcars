@@ -21,6 +21,7 @@ export const OUTLINE_SOURCE_OUTCOMES = [
   'own-change',
   'untrusted-actor',
   'foreign-document',
+  'document-unavailable',
   'no-text-change',
 ] as const;
 export const outlineSourceReportSchema = z.strictObject({
