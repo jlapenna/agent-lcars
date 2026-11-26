@@ -897,8 +897,9 @@ if [ "$PIPELINE" = "opencode" ]; then
   if [ -z "$RESUME_SESSION_ID" ] &&
     bash "$opencode_store_check" >/dev/null 2>&1 &&
     opencode_current_version="$(timeout --kill-after=2s 5s "$OPENCODE_BIN" --version 2>/dev/null)" &&
+    opencode_current_version="${opencode_current_version#opencode }" &&
     opencode_expected_version="$(tr -d '\r\n' < "$opencode_version_file")" &&
-    [ "$opencode_current_version" = "${opencode_expected_version#v}" ]; then
+    [ "${opencode_current_version#v}" = "${opencode_expected_version#v}" ]; then
     : > "$OPENCODE_BASELINE_SESSIONS"
     echo 'Using the baked empty OpenCode store.'
   else
@@ -906,7 +907,7 @@ if [ "$PIPELINE" = "opencode" ]; then
     opencode_bootstrap_json="$RUNNER_TEMP/opencode-bootstrap-sessions.json"
     if ! env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN \
       timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
-      "$OPENCODE_BIN" --pure session list --format json > "$opencode_bootstrap_json"; then
+      "$OPENCODE_BIN" session list --standalone --format json > "$opencode_bootstrap_json"; then
       EARLY_FAILURE_MESSAGE='OpenCode store initialization failed'
       echo "FATAL: $EARLY_FAILURE_MESSAGE" >&2
       exit 1
@@ -1483,8 +1484,13 @@ else
   export OPENCODE_CONFIG="$OPENCODE_CONFIG_DIR/opencode.json"
   if [ "$MODE" = review ]; then
     # OpenCode loads inline configuration after the reviewed project's config.
+    opencode_review_overlay=review-overlay.json
+    case "$(tr -d '\r\n' < "$opencode_version_file")" in
+      v1.*|1.*) ;;
+      *) opencode_review_overlay=review-overlay-v2.json ;;
+    esac
     opencode_review_config=$(jq -cs '(.[0] // {}) * .[1]' \
-      <(printf '%s' "${OPENCODE_CONFIG_CONTENT:-null}") "$OPENCODE_CONFIG_DIR/review-overlay.json")
+      <(printf '%s' "${OPENCODE_CONFIG_CONTENT:-null}") "$OPENCODE_CONFIG_DIR/$opencode_review_overlay")
     export OPENCODE_CONFIG_CONTENT="$opencode_review_config"
     review_revision=$(cat "$(dirname "$AGENT_REVIEW_PATH")/revision")
     AGENT_PROMPT="$AGENT_PROMPT
@@ -1528,7 +1534,7 @@ In the procedure receipt, cite the packaged upstream revision $review_revision."
     fi
     env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN \
       timeout --signal=TERM --kill-after=30s "${round_remaining}s" \
-      "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
+      "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" "$OPENCODE_BIN" run --standalone --model "$OPENCODE_MODEL" \
         "$@" \
         --auto "$round_prompt" \
         > >(tee -a "$PROVIDER_OUTPUT_FILE") 2> >(tee -a "$PROVIDER_OUTPUT_FILE" >&2)
@@ -1554,7 +1560,7 @@ In the procedure receipt, cite the packaged upstream revision $review_revision."
     opencode_after_sessions="$RUNNER_TEMP/opencode-after-first-round.txt"
     if env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN \
       timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
-      "$OPENCODE_BIN" --pure session list --format json > "$opencode_after_json" &&
+      "$OPENCODE_BIN" session list --standalone --format json > "$opencode_after_json" &&
       jq -e 'type == "array"' "$opencode_after_json" >/dev/null 2>&1; then
       jq -r --arg directory "$PWD" '
           .[]
@@ -1589,14 +1595,16 @@ In the procedure receipt, cite the packaged upstream revision $review_revision."
       ( ulimit -f 32768
         exec env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN \
           timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
-          "$OPENCODE_BIN" --pure export "$OPENCODE_ROUND_SESSION" ) > "$opencode_report_export" 2>/dev/null &&
+          "$OPENCODE_BIN" session export --standalone "$OPENCODE_ROUND_SESSION" ) > "$opencode_report_export" 2>/dev/null &&
       jq -j -n '
           [inputs] | if length != 1 then error("export is not one JSON value") else .[0] end
           | if (.messages | type) == "array" then
+            # OpenCode 1: {info: {role}, parts}; OpenCode 2: {type, content}.
             [.messages[]
               | objects
-              | select((.info | objects | .role) == "assistant")
-              | .parts
+              | if (.info | type) == "object" and .info.role == "assistant" then .parts
+                elif .type == "assistant" then .content
+                else empty end
               | arrays
               | .[]
               | objects

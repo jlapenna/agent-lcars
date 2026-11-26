@@ -151,6 +151,46 @@ export function completedOpenCodeChild(root, task, child) {
   );
 }
 
+// OpenCode 2 subagents always run in the background: the `subagent` call
+// completes as soon as the child starts (`metadata.status: "running"`), so the
+// call itself is not completion proof. Completion is the child's own export --
+// its native parent, a succeeded outcome, and a final assistant step that
+// stopped with non-empty text -- plus the parent's synthetic `<subagent>`
+// report for that child. Field names captured from OpenCode v2.3.2 exports.
+export function completedOpenCode2Child(root, call, child) {
+  const metadata = call?.state?.metadata;
+  const childId = child?.info?.id;
+  const assistant = child?.messages
+    ?.filter((message) => message?.type === 'assistant')
+    .at(-1);
+  const report = '<subagent sessionID="' + childId + '" state="completed"';
+  return (
+    call?.type === 'tool' &&
+    call.name === 'subagent' &&
+    call.state?.status === 'completed' &&
+    typeof childId === 'string' &&
+    metadata?.sessionID === childId &&
+    metadata?.truncated === false &&
+    child?.info?.parentID === root?.info?.id &&
+    childId !== root?.info?.id &&
+    child?.info?.outcome === 'succeeded' &&
+    assistant?.finish === 'stop' &&
+    !assistant.error &&
+    assistant.content?.some(
+      (part) =>
+        part.type === 'text' &&
+        typeof part.text === 'string' &&
+        part.text.trim().length > 0,
+    ) === true &&
+    root?.messages?.some(
+      (message) =>
+        message?.type === 'synthetic' &&
+        typeof message.text === 'string' &&
+        message.text.includes(report),
+    ) === true
+  );
+}
+
 // Antigravity 1.5.9 emits completed invocation IDs in structured subagent_info.
 // Listing is optional: spawning is not completion, so callers must still
 // verify each child's terminal native transcript.

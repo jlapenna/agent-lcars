@@ -7,21 +7,26 @@ opencode_bin="${OPENCODE_BIN:-/usr/local/bin/opencode}"
 version_file="${OPENCODE_VERSION_FILE:-/usr/local/share/agent-lcars-tooling/opencode-version}"
 store="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
 expected="$(tr -d '\r\n' < "$version_file")"
+# OpenCode 1 prints `1.19.5`; OpenCode 2 prints `opencode v2.3.2`.
 actual="$("$opencode_bin" --version)"
+actual="${actual#opencode }"
+actual="${actual#v}"
 [ "$actual" = "${expected#v}" ] || { echo 'OpenCode binary does not match the image pin' >&2; exit 1; }
 # Idempotent only for an empty store. Refuse to sanitize real session history.
 scratch="$(mktemp -d)"
 listing="$scratch/listing.json"
 trap 'rm -rf "$scratch"' EXIT
-# Store migration needs no provider. --pure still resolves global config file
-# references, including the production API-key mount absent during a build.
+# Store migration needs no provider. OpenCode 2 has no --pure mode and still
+# resolves global config file references, including the production API-key
+# mount absent during a build. --standalone keeps the command on a private
+# server instead of spawning the persistent background service.
 # Isolate configuration while retaining the real runner home/data directory.
 export XDG_CONFIG_HOME="$scratch/config"
 unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_DIR
 OPENCODE_DISABLE_AUTOUPDATE=true OPENCODE_DISABLE_MODELS_FETCH=true \
-  "$opencode_bin" --pure session list --format json >"$listing"
-# The pinned CLI emits no bytes for an empty result; SQLite below remains
-# authoritative even in that case (matching the existing runtime fallback).
+  "$opencode_bin" session list --standalone --format json >"$listing"
+# OpenCode 1 emitted no bytes for an empty result and OpenCode 2 prints `[]`;
+# SQLite below remains authoritative either way.
 if [ -s "$listing" ]; then
   jq -e 'type == "array" and length == 0' "$listing" >/dev/null
 fi
@@ -35,7 +40,7 @@ if not path.is_file():
 with sqlite3.connect(path) as db:
     if db.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
         raise SystemExit('OpenCode store integrity check failed')
-    if db.execute('SELECT count(*) FROM session').fetchone()[0] != 0:
+    if db.execute('SELECT count(*) FROM session_v2').fetchone()[0] != 0:
         raise SystemExit('Refusing to bake nonempty OpenCode session history')
     for table in ('credential', 'account', 'control_account'):
         if db.execute(f'SELECT count(*) FROM {table}').fetchone()[0]:

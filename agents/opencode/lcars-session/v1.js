@@ -1,6 +1,6 @@
 /**
- * Give commands launched by OpenCode's shell tool the native session id that
- * OpenCode already supplies to its supported `shell.env` plugin hook.
+ * Give commands launched by OpenCode 1's shell tool the native session id that
+ * OpenCode supplies to its `shell.env` plugin hook.
  *
  * `lcars session title` and `lcars session status` deliberately resolve the
  * current session from the caller's environment. OpenCode creates a fresh

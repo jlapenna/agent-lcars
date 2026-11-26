@@ -2,10 +2,10 @@
   "$schema": "https://opencode.ai/config.json",
   "instructions": ["~/.config/opencode/instructions.md"],
   "plugin": [
-    "./lcars-session.js",
-    "./context-lifecycle.js",
-    "./lcars-telemetry.js",
-    "./hindsight.js"
+    "./lcars-session",
+    "./context-lifecycle",
+    "./lcars-telemetry",
+    "./hindsight"
   ],
   "skills": [
     "/opt/repo-tools/plugins/repo-tools/skills",
@@ -15,7 +15,11 @@
   "permission": {
     "external_directory": "allow",
     "doom_loop": "allow",
-    "task": "deny"
+    "task": "deny",
+    "subagent": "deny",
+    "execute": "deny",
+    "question": "deny",
+    "experimental_image_generate": "deny"
   },
   "compaction": {
     "reserved": 30000,

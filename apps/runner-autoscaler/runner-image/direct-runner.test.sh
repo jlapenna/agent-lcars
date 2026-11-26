@@ -696,14 +696,15 @@ FAKE
 cat > "$bindir/opencode" <<'FAKE'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  echo "${FAKE_OPENCODE_VERSION:-1.18.30}"
+  # OpenCode 2 prefixes the version: `opencode v2.3.2`.
+  echo "opencode v${FAKE_OPENCODE_VERSION:-1.18.30}"
   exit 0
 fi
 if [ "${1:-}" = run ] && [ "${2:-}" = --help ]; then
   echo '      --auto         auto-approve permissions'
   exit 0
 fi
-if [ "${1:-}" = --pure ] && [ "${2:-}" = session ] && [ "${3:-}" = list ]; then
+if [ "${1:-}" = session ] && [ "${2:-}" = list ] && [ "${3:-}" = --standalone ]; then
   touch "$tmp/opencode-initialized"
   echo bootstrap >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
   if [ "${FAKE_OPENCODE_BOOTSTRAP_FAIL:-}" = 1 ] || [ "${FAKE_OPENCODE_INIT_EXIT:-0}" -ne 0 ]; then exit 1; fi
@@ -719,15 +720,17 @@ fi
 # Raw session export: the runner reads a report's final message from it
 # before the completion check. Its last assistant text is the round's
 # FAKE_OPENCODE_EXPORT_TEXT, defaulting to the message finalize captures.
-if [ "${1:-}" = --pure ] && [ "${2:-}" = export ]; then
-  echo "export ${3:-}" >> "$OPENCODE_SEQUENCE_LOG"
+if [ "${1:-}" = session ] && [ "${2:-}" = export ] && [ "${3:-}" = --standalone ]; then
+  echo "export ${4:-}" >> "$OPENCODE_SEQUENCE_LOG"
   if [ "${FAKE_OPENCODE_EXPORT_FAIL:-}" = 1 ]; then exit 1; fi
   if [ "${FAKE_OPENCODE_EXPORT_EMPTY:-}" = 1 ]; then exit 0; fi
-  jq -n --arg id "${3:-}" --arg text "${FAKE_OPENCODE_EXPORT_TEXT-${FAKE_OPENCODE_LAST_MESSAGE:-}}" '{
+  # OpenCode 2's export shape: flat typed messages with `content`.
+  jq -n --arg id "${4:-}" --arg text "${FAKE_OPENCODE_EXPORT_TEXT-${FAKE_OPENCODE_LAST_MESSAGE:-}}" '{
     info: {id: $id},
     messages: [
-      {info: {role: "user"}, parts: [{type: "text", text: "prompt"}]},
-      {info: {role: "assistant"}, parts: [{type: "text", text: $text}, {type: "tool"}]}
+      {type: "user", text: "prompt", files: []},
+      {type: "assistant", content: [{type: "text", text: $text}, {type: "tool", name: "shell"}]},
+      {type: "idle", outcome: "succeeded"}
     ]
   }'
   exit 0
@@ -1043,9 +1046,9 @@ import os
 import sqlite3
 import sys
 with sqlite3.connect(sys.argv[1]) as db:
-    db.execute('CREATE TABLE session (id TEXT)')
+    db.execute('CREATE TABLE session_v2 (id TEXT)')
     if os.environ.get('FAKE_OPENCODE_NONEMPTY_STORE') == '1':
-        db.execute("INSERT INTO session VALUES ('old-session')")
+        db.execute("INSERT INTO session_v2 VALUES ('old-session')")
 PYDB
     touch "$tmp/opencode-initialized"
   fi
@@ -1705,7 +1708,7 @@ run_scenario opencode-happy opencode
 unset OPENCODE_LLM_API_KEY FAKE_OPENCODE_RESOLVED_MODEL
 [ "$rc" -eq 0 ] || fail "opencode happy path: expected exit 0, got $rc ($(cat "$scenario_log"))"
 [ -s "$OPENCODE_ARGS_LOG" ] || fail "opencode happy path: OpenCode was not invoked"
-grep -q -- 'run --model homelab/default --session sess_1 --auto' "$OPENCODE_ARGS_LOG" ||
+grep -q -- 'run --standalone --model homelab/default --session sess_1 --auto' "$OPENCODE_ARGS_LOG" ||
   fail "opencode happy path: wrong invocation ($(cat "$OPENCODE_ARGS_LOG"))"
 [ "$(cat "$OPENCODE_ENV_LOG")" = "||||" ] ||
   fail "opencode happy path: OpenCode inherited the LiteLLM key in its environment ($(cat "$OPENCODE_ENV_LOG"))"
@@ -1758,8 +1761,8 @@ done
 unset FAKE_OPENCODE_BAKED_STORE FAKE_BRIEF_NO_RESUME
 echo "scenario opencode-baked-store: OK"
 
-# OpenCode 1.18.30 returns successful empty stdout for a fresh pure session
-# listing. That is a valid empty baseline, while non-empty malformed JSON still
+# OpenCode 1.18.30 returned successful empty stdout for a fresh session
+# listing (OpenCode 2 prints `[]`). That is a valid empty baseline, while non-empty malformed JSON still
 # fails closed.
 export FAKE_BRIEF_NO_RESUME=1 FAKE_OPENCODE_EMPTY_BOOTSTRAP=1
 run_scenario opencode-empty-bootstrap opencode
@@ -1787,7 +1790,7 @@ unset FAKE_CLOCK FAKE_OPENCODE_ELAPSED OPENCODE_TIMEOUT_SECONDS
 [ "$rc" -eq 0 ] || fail "opencode premature stop: continuation did not produce verified completion"
 [ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 2 ] ||
   fail "opencode premature stop: expected exactly two total provider rounds"
-grep -q -- 'run --model homelab/default --session ses_new_1 --auto Continue the same authorized task' "$OPENCODE_ARGS_LOG" ||
+grep -q -- 'run --standalone --model homelab/default --session ses_new_1 --auto Continue the same authorized task' "$OPENCODE_ARGS_LOG" ||
   fail "opencode premature stop: second round did not preserve the discovered session ($(cat "$OPENCODE_ARGS_LOG"))"
 mapfile -t opencode_run_timeouts < <(grep 'opencode.* run ' "$TIMEOUT_ARGS_LOG" | sed -nE 's/.* ([0-9]+)s .*opencode.*/\1/p')
 [ "${#opencode_run_timeouts[@]}" -eq 2 ] ||
@@ -1828,7 +1831,7 @@ export FAKE_GH_NO_MATCH=1 FAKE_GH_MATCH_AFTER_OPENCODE_RUNS=2
 run_scenario opencode-resumed-premature-stop opencode
 unset FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_OPENCODE_RUNS
 [ "$rc" -eq 0 ] || fail "opencode resumed premature stop: continuation failed"
-[ "$(grep -c -- 'run --model.*--session sess_1' "$OPENCODE_ARGS_LOG")" -eq 2 ] ||
+[ "$(grep -c -- 'run --standalone --model.*--session sess_1' "$OPENCODE_ARGS_LOG")" -eq 2 ] ||
   fail "opencode resumed premature stop: both rounds did not preserve sess_1 ($(cat "$OPENCODE_ARGS_LOG"))"
 
 echo "scenario opencode-resumed-premature-stop: OK"
@@ -2002,7 +2005,7 @@ unset FAKE_BRIEF_NO_RESUME
 if grep -q -- 'runner resume' "$NODE_ARGS_LOG" 2>/dev/null; then
   fail "opencode no-resume: runner resume was invoked despite no resume field in the brief ($(cat "$NODE_ARGS_LOG"))"
 fi
-grep -q -- 'run --model homelab/default --auto' "$OPENCODE_ARGS_LOG" ||
+grep -q -- 'run --standalone --model homelab/default --auto' "$OPENCODE_ARGS_LOG" ||
   fail "opencode no-resume: opencode was not invoked with a fresh run ($(cat "$OPENCODE_ARGS_LOG"))"
 if grep -q -- '--session' "$OPENCODE_ARGS_LOG"; then
   fail "opencode no-resume: opencode received --session despite no resume field in the brief ($(cat "$OPENCODE_ARGS_LOG"))"
@@ -2020,7 +2023,7 @@ unset FAKE_RESUME_FAIL
 [ -f "$COMPLETE_LOG" ] || fail "opencode resume-failed: direct-runner.sh never called POST .../complete"
 grep -q '"outcome":"runner-failed"' "$COMPLETE_LOG" ||
   fail "opencode resume-failed: complete call did not report runner-failed ($(cat "$COMPLETE_LOG"))"
-if grep -q -- 'run --model' "$OPENCODE_ARGS_LOG"; then
+if grep -q -- 'run --standalone --model' "$OPENCODE_ARGS_LOG"; then
   fail "opencode resume-failed: provider run started after a failed restore ($(cat "$OPENCODE_ARGS_LOG"))"
 fi
 
@@ -2167,7 +2170,7 @@ run_scenario opencode-native-report-blank-correction opencode
 unset FAKE_OPENCODE_EXPORT_TEXT FAKE_CLOCK FAKE_OPENCODE_ELAPSED OPENCODE_TIMEOUT_SECONDS
 [ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 2 ] ||
   fail "opencode native report blank: an unusable report skipped its correction round"
-grep -q -- 'run --model homelab/default --session ses_new_1 --auto Continue the same authorized task.*repeated as your final response' "$OPENCODE_ARGS_LOG" ||
+grep -q -- 'run --standalone --model homelab/default --session ses_new_1 --auto Continue the same authorized task.*repeated as your final response' "$OPENCODE_ARGS_LOG" ||
   fail "opencode native report blank: correction did not continue the round's session asking for the report ($(cat "$OPENCODE_ARGS_LOG"))"
 jq -e '.outcome == "report" and (.message | contains("# OpenCode findings"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "opencode native report blank: the corrected report did not settle ($(cat "$COMPLETE_LOG"))"
@@ -2398,7 +2401,7 @@ run_scenario implement-delegation-policy opencode
 [ "$rc" -eq 0 ] || fail "implement delegation policy: expected exit 0, got $rc"
 jq -e '.agent["lcars-review"] == null' "$OPENCODE_ENV_LOG.config" >/dev/null ||
   fail "implement delegation policy: review-only inline agent settings leaked into implementation"
-jq -e '.permission.task == "deny"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
+jq -e '.permission.task == "deny" and .permission.subagent == "deny" and .permission.execute == "deny"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
   fail "implement delegation policy: review-only task permission leaked into implementation"
 jq -e '(.provider.homelab.models.default.options.reasoningEffort // null) == null' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
   fail "implement delegation policy: review reasoning budget leaked into implementation"

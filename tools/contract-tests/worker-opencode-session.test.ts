@@ -11,7 +11,9 @@ import { join, resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import bridge from '../../packages/fleet-tools/bin/worker-hook-bridge.cjs';
-import plugin from '../../packages/fleet-tools/bin/worker-opencode-plugin.mjs';
+import plugin, {
+  workerPolicyPluginV2,
+} from '../../packages/fleet-tools/bin/worker-opencode-plugin.mjs';
 import { sessionResolver } from '../../packages/fleet-tools/bin/worker-opencode-session.mjs';
 import session from '../../packages/fleet-tools/bin/worker-session.cjs';
 
@@ -212,4 +214,84 @@ it('keeps ordinary policy rejection active for verified child sessions', async (
     ),
   ).rejects.toThrow('Do not bypass Git hooks');
   expect(session.boundSession(context)).toBe('root');
+});
+
+it('allows root review sessions to call subagent while deterministically denying recursive child subagent delegation on both v1 and v2', async () => {
+  const f = fixture();
+  let v2Before!: (event: {
+    sessionID: string;
+    tool: string;
+    input: Record<string, unknown>;
+  }) => Promise<void>;
+  await workerPolicyPluginV2.setup({
+    location: { directory: f.root },
+    session: {
+      get: async (
+        { sessionID }: { sessionID: string },
+        options?: { signal?: AbortSignal },
+      ) => {
+        const res = await f.get({
+          path: { id: sessionID },
+          ...(options?.signal ? { signal: options.signal } : {}),
+        } as never);
+        return res.data;
+      },
+    },
+    tool: {
+      hook: async (_name: string, fn: typeof v2Before) => {
+        v2Before = fn;
+      },
+    },
+  });
+
+  // Root session calling `subagent` succeeds and establishes root binding.
+  await expect(
+    v2Before({
+      sessionID: 'root',
+      tool: 'subagent',
+      input: {
+        agent: 'general',
+        description: 'Check file',
+        prompt: 'Inspect diff',
+      },
+    }),
+  ).resolves.toBeUndefined();
+  expect(session.boundSession(context)).toBe('root');
+
+  // Child session (`parentID: 'root'`) calling `subagent` is rejected on v2.
+  await expect(
+    v2Before({
+      sessionID: 'child',
+      tool: 'subagent',
+      input: {
+        agent: 'general',
+        description: 'Nested delegation',
+        prompt: 'Delegate again',
+      },
+    }),
+  ).rejects.toThrow('may not recursively delegate');
+
+  // Child session calling `task` on v1 is likewise rejected.
+  const v1Hooks = await plugin({ directory: f.root, client: f.client });
+  await expect(
+    v1Hooks['tool.execute.before'](
+      { sessionID: 'child', tool: 'task' },
+      {
+        args: {
+          subagent_type: 'general',
+          description: 'Nested task',
+          prompt: 'Delegate again',
+        },
+      },
+    ),
+  ).rejects.toThrow('may not recursively delegate');
+
+  // OpenCode 2 `shell` and `write` (`path`) policy enforcement works on v2.
+  await expect(
+    v2Before({
+      sessionID: 'child',
+      tool: 'shell',
+      input: { command: 'git commit --no-verify -m bypass' },
+    }),
+  ).rejects.toThrow('Do not bypass Git hooks');
 });

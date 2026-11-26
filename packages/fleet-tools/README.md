@@ -42,7 +42,7 @@ The `bin/worker-*` files are not exposed as commands. The runner image's
 `runtime/worker-policy-bootstrap.sh` runs `worker-hook-setup.cjs` to register
 the dispatched-worker `PreToolUse` policy for each provider
 (`worker-policy.cjs`, through `worker-hook-bridge.cjs` or the OpenCode plugin
-`worker-opencode-plugin.mjs`), bind the provider session (`worker-session.cjs`,
+`worker-opencode-plugin/`), bind the provider session (`worker-session.cjs`,
 `worker-opencode-session.mjs`), and check review state (`worker-review.cjs`).
 `worker-readiness.cjs` evaluates offline canary evidence. Their contract tests
 live in `tools/contract-tests/worker-*.test.ts`.

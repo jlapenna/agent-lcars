@@ -4,7 +4,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { HOOK_RUNTIMES, type HookRuntime, isHookRuntime } from './hook-payload';
-import { OPENCODE_TELEMETRY_PLUGIN } from './opencode-plugin-source';
+import {
+  OPENCODE_TELEMETRY_PLUGIN,
+  OPENCODE_TELEMETRY_PLUGIN_PACKAGE_JSON,
+  OPENCODE_TELEMETRY_PLUGIN_V1,
+} from './opencode-plugin-source';
 
 /**
  * `lcars integration install|uninstall|status <runtime>`: the self-installing
@@ -590,31 +594,81 @@ function settingsUninstallIntegration(
   return settingsIntegrationStatus(runtime, homeDirectory, env);
 }
 
-/** OpenCode's global plugin directory, honoring XDG_CONFIG_HOME. */
-export function opencodePluginPath(
+/** OpenCode's global plugin package directory, honoring XDG_CONFIG_HOME. */
+export function opencodePluginDir(
   homeDirectory: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const configHome =
     env['XDG_CONFIG_HOME']?.trim() || path.join(homeDirectory, '.config');
-  return path.join(configHome, 'opencode', 'plugins', 'lcars-telemetry.js');
+  return path.join(configHome, 'opencode', 'plugins', 'lcars-telemetry');
+}
+
+export function opencodePluginPath(
+  homeDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return path.join(opencodePluginDir(homeDirectory, env), 'index.js');
+}
+
+const opencodeV1Shim =
+  'export { default } from "../plugins/lcars-telemetry/v1.js";\n';
+
+function opencodeV1PluginPath(
+  homeDirectory: string,
+  env: NodeJS.ProcessEnv,
+): string {
+  return path.resolve(
+    opencodePluginDir(homeDirectory, env),
+    '../../plugin/lcars-telemetry.js',
+  );
+}
+
+function legacyOpencodePluginPath(
+  homeDirectory: string,
+  env: NodeJS.ProcessEnv,
+): string {
+  return path.resolve(
+    opencodePluginDir(homeDirectory, env),
+    '../lcars-telemetry.js',
+  );
+}
+
+function readOptionalUtf8(filePath: string): string | undefined {
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return undefined;
+  }
 }
 
 function opencodeStatus(
   homeDirectory: string,
   env: NodeJS.ProcessEnv,
 ): IntegrationStatus {
-  let plugin: string | undefined;
-  try {
-    plugin = fs.readFileSync(opencodePluginPath(homeDirectory, env), 'utf8');
-  } catch {
-    plugin = undefined;
-  }
-  const match = plugin?.match(/LCARS_INTEGRATION_VERSION=(\d+)/u);
-  const current = plugin === OPENCODE_TELEMETRY_PLUGIN;
+  const dir = opencodePluginDir(homeDirectory, env);
+  const plugin = readOptionalUtf8(path.join(dir, 'index.js'));
+  const v1 = readOptionalUtf8(path.join(dir, 'v1.js'));
+  const pkg = readOptionalUtf8(path.join(dir, 'package.json'));
+  const shim = readOptionalUtf8(opencodeV1PluginPath(homeDirectory, env));
+  const legacy = readOptionalUtf8(legacyOpencodePluginPath(homeDirectory, env));
+  const versionSource = plugin ?? v1 ?? legacy;
+  const match = versionSource?.match(/LCARS_INTEGRATION_VERSION=(\d+)/u);
+  const stubInstalled =
+    plugin !== undefined ||
+    v1 !== undefined ||
+    pkg !== undefined ||
+    shim !== undefined ||
+    legacy !== undefined;
+  const current =
+    plugin === OPENCODE_TELEMETRY_PLUGIN &&
+    v1 === OPENCODE_TELEMETRY_PLUGIN_V1 &&
+    pkg === OPENCODE_TELEMETRY_PLUGIN_PACKAGE_JSON &&
+    shim === opencodeV1Shim &&
+    legacy === undefined;
   return {
     runtime: 'opencode',
-    stubInstalled: plugin !== undefined,
+    stubInstalled,
     ...(match && { stubVersion: Number(match[1]) }),
     stubCurrent: current,
     entriesPresent: current ? 1 : 0,
@@ -642,12 +696,25 @@ export function installIntegration(
   if (runtime !== 'opencode') {
     return settingsInstallIntegration(runtime, homeDirectory, env);
   }
-  // OpenCode loads every file in its global plugin directory at startup.
+  // v2 discovers packages under plugins/. v1 discovers the flat entry in plugin/.
+  const dir = opencodePluginDir(homeDirectory, env);
   writeAtomically(
-    opencodePluginPath(homeDirectory, env),
-    OPENCODE_TELEMETRY_PLUGIN,
+    path.join(dir, 'package.json'),
+    OPENCODE_TELEMETRY_PLUGIN_PACKAGE_JSON,
     0o600,
   );
+  writeAtomically(path.join(dir, 'v1.js'), OPENCODE_TELEMETRY_PLUGIN_V1, 0o600);
+  writeAtomically(path.join(dir, 'index.js'), OPENCODE_TELEMETRY_PLUGIN, 0o600);
+  writeAtomically(
+    opencodeV1PluginPath(homeDirectory, env),
+    opencodeV1Shim,
+    0o600,
+  );
+  try {
+    fs.unlinkSync(legacyOpencodePluginPath(homeDirectory, env));
+  } catch {
+    // No legacy flat v1 file present.
+  }
   return opencodeStatus(homeDirectory, env);
 }
 
@@ -659,10 +726,28 @@ export function uninstallIntegration(
   if (runtime !== 'opencode') {
     return settingsUninstallIntegration(runtime, homeDirectory, env);
   }
+  const dir = opencodePluginDir(homeDirectory, env);
+  for (const file of ['index.js', 'v1.js', 'package.json']) {
+    try {
+      fs.unlinkSync(path.join(dir, file));
+    } catch {
+      // Already absent.
+    }
+  }
   try {
-    fs.unlinkSync(opencodePluginPath(homeDirectory, env));
+    fs.rmdirSync(dir);
   } catch {
-    // Already absent.
+    // Already absent or holds foreign files.
+  }
+  for (const file of [
+    legacyOpencodePluginPath(homeDirectory, env),
+    opencodeV1PluginPath(homeDirectory, env),
+  ]) {
+    try {
+      fs.unlinkSync(file);
+    } catch {
+      // Already absent.
+    }
   }
   return opencodeStatus(homeDirectory, env);
 }

@@ -7,9 +7,9 @@ set -euo pipefail
 
 readonly OPENCODE_RELEASE_OWNER='anomalyco'
 readonly OPENCODE_RELEASE_REPOSITORY='opencode'
-# v1.19.5's largest reviewed archive is the 79,651,821-byte amd64 baseline
+# v2.3.2's largest reviewed archive is the 122,641,607-byte amd64 baseline
 # release. Keep a small bounded margin without permitting unbounded downloads.
-readonly OPENCODE_MAX_ARCHIVE_BYTES=88080384
+readonly OPENCODE_MAX_ARCHIVE_BYTES=134217728
 readonly OPENCODE_DOWNLOAD_BUDGET_SECONDS=600
 readonly OPENCODE_RETRY_MAX_SECONDS=570
 opencode_temp_dir=''

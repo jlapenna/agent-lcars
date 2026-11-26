@@ -227,6 +227,7 @@ writeFileSync(
 );
 let args;
 let binary = provider;
+let version;
 const env = { ...process.env };
 for (const name of [
   'BASH_ENV',
@@ -283,8 +284,11 @@ if (provider === 'opencode') {
   const effectiveConfig = imageId
     ? '/home/runner/.config/opencode'
     : sourceConfig;
+  version = run(binary, ['--version']).trim();
+  const v1 = /^v?1\./.test(version);
+  const reviewOverlay = v1 ? 'review-overlay.json' : 'review-overlay-v2.json';
   if (imageId) {
-    for (const name of ['review-overlay.json', 'instructions.md']) {
+    for (const name of [reviewOverlay, 'instructions.md']) {
       if (
         !readFileSync(join(sourceConfig, name)).equals(
           readFileSync(join(effectiveConfig, name)),
@@ -297,9 +301,7 @@ if (provider === 'opencode') {
   }
   // Match the direct runner's effective per-review configuration.
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
-    ...JSON.parse(
-      readFileSync(join(effectiveConfig, 'review-overlay.json'), 'utf8'),
-    ),
+    ...JSON.parse(readFileSync(join(effectiveConfig, reviewOverlay), 'utf8')),
     provider: {
       homelab: {
         models: { default: { options: { reasoningEffort: 'medium' } } },
@@ -310,6 +312,7 @@ if (provider === 'opencode') {
   env.MODE = 'review';
   args = [
     'run',
+    ...(v1 ? [] : ['--standalone']),
     '--auto',
     '--format',
     'json',
@@ -328,7 +331,7 @@ if (provider === 'agy')
     '--print',
     prompt,
   ];
-const version = run(binary, ['--version']).trim();
+version ??= run(binary, ['--version']).trim();
 const runtimeDirectory = join(root, 'apps/runner-autoscaler/runner-image');
 const runtimeDependencies = JSON.parse(
   readFileSync(join(runtimeDirectory, 'runtime-clis/package.json'), 'utf8'),

@@ -71,14 +71,30 @@ export function delegationFixture(directory, home, mode, provider) {
       if (!spawned) {
         if (provider !== 'codex') {
           spawned = true;
+          const opencodeSubagent =
+            provider === 'opencode' &&
+            tools.some(
+              (tool) => (tool.function?.name ?? tool.name) === 'subagent',
+            );
           return {
-            tool: provider === 'claude' ? 'Agent' : 'task',
-            args: {
-              subagent_type:
-                provider === 'claude' ? 'general-purpose' : 'general',
-              description: 'Exercise native child hook',
-              prompt: `${marker}: perform the supplied native file edit, then finish.`,
-            },
+            tool:
+              provider === 'claude'
+                ? 'Agent'
+                : opencodeSubagent
+                  ? 'subagent'
+                  : 'task',
+            args: opencodeSubagent
+              ? {
+                  agent: 'general',
+                  description: 'Exercise native child hook',
+                  prompt: `${marker}: perform the supplied native file edit, then finish.`,
+                }
+              : {
+                  subagent_type:
+                    provider === 'claude' ? 'general-purpose' : 'general',
+                  description: 'Exercise native child hook',
+                  prompt: `${marker}: perform the supplied native file edit, then finish.`,
+                },
           };
         }
         if (!tools.some((tool) => tool.name === 'spawn_agent')) {
@@ -130,7 +146,9 @@ export function delegationFixture(directory, home, mode, provider) {
             .split('\n')
             .map(JSON.parse);
           const task = receipts.find(
-            (event) => event.phase === 'before' && event.tool === 'task',
+            (event) =>
+              event.phase === 'before' &&
+              (event.tool === 'task' || event.tool === 'subagent'),
           );
           const write = receipts.find(
             (event) => event.phase === 'before' && event.tool === 'write',
@@ -148,7 +166,7 @@ export function delegationFixture(directory, home, mode, provider) {
               receipts.some(
                 (event) =>
                   event.phase === 'after' &&
-                  event.tool === 'task' &&
+                  event.tool === task.tool &&
                   event.callID === task.callID &&
                   event.sessionID === task.sessionID,
               ),

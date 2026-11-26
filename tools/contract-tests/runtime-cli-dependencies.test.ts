@@ -90,4 +90,24 @@ describe('native runtime dependency declarations', () => {
       }
     }
   });
+
+  it('pins @opencode/plugin in agents/opencode to the reviewed opencode-version with SHA-512 integrity', () => {
+    const expectedVersion = read(image + 'opencode-version')
+      .trim()
+      .replace(/^v/, '');
+    const manifest = json('agents/opencode/package.json');
+    const lock = json('agents/opencode/package-lock.json');
+    expect(manifest.dependencies).toEqual({
+      '@opencode/plugin': expectedVersion,
+    });
+    expect(lock.packages[''].dependencies).toEqual(manifest.dependencies);
+    const entry = lock.packages['node_modules/@opencode/plugin'];
+    expect(entry.version).toBe(expectedVersion);
+    expect(entry.integrity).toMatch(/^sha512-/);
+    const runtimeGroup = config.packageRules.find(
+      (rule: { groupSlug?: string }) =>
+        rule.groupSlug === 'runner-cli-runtimes',
+    );
+    expect(runtimeGroup.matchDepNames).toContain('@opencode/plugin');
+  });
 });

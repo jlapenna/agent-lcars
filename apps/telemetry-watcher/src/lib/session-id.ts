@@ -3,15 +3,18 @@ import { isSafeIdentifier } from '@agent-lcars/telemetry';
 /**
  * Session id environment variables, in resolution-order preference.
  * `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` are supplied by their own
- * runtimes. OpenCode supplies its native id to the configured `shell.env`
- * plugin hook, which exposes it as `LCARS_SESSION_ID`; the same variable is
- * also the checked-first explicit override for humans and future runtimes.
+ * runtimes, as is `OPENCODE_SESSION_ID` (OpenCode 2 exports it to every shell
+ * command). OpenCode 1 only supplied its native id to the configured
+ * `shell.env` plugin hook, which exposes it as `LCARS_SESSION_ID`; the same
+ * variable is also the checked-first explicit override for humans and future
+ * runtimes.
  */
 export const SESSION_ID_ENV_VARS = [
   'LCARS_SESSION_ID',
   'CLAUDE_CODE_SESSION_ID',
   'CODEX_THREAD_ID',
   'ANTIGRAVITY_CONVERSATION_ID',
+  'OPENCODE_SESSION_ID',
 ] as const;
 
 export type SessionIdEnvVar = (typeof SESSION_ID_ENV_VARS)[number];

@@ -65,11 +65,12 @@ mkdir -p "$home/.hindsight/coding-agents/dist" "$home/.config/opencode" \
   "$home/.gemini/antigravity-cli/skills/hindsight-coding-agent"
 chmod 700 "$home/.hindsight"
 (umask 077; printf '{"disabled":true}\n' > "$home/.hindsight/coding-agent.json")
+: > "$home/.hindsight/coding-agents/index.js"
 : > "$home/.hindsight/coding-agents/dist/index.js"
 : > "$home/.claude/skills/hindsight-coding-agent/SKILL.md"
 : > "$home/.agents/skills/hindsight-coding-agent/SKILL.md"
 : > "$home/.gemini/antigravity-cli/skills/hindsight-coding-agent/SKILL.md"
-cp "$repo_root/agents/opencode/hindsight.js" "$home/.config/opencode/hindsight.js"
+cp -R "$repo_root/agents/opencode/hindsight" "$home/.config/opencode/hindsight"
 # Real SQLite/schema behavior is tested by the image's two build layers.
 write_exe "$lib/check-opencode-store.sh" 'exit 0'
 

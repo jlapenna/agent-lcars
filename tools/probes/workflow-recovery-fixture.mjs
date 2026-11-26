@@ -1,6 +1,12 @@
 // Fault injection around the installed evaluator, after real setup succeeds.
 // The native adapter and bridge still execute their production recovery path.
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -42,20 +48,32 @@ process.exit(result.status ?? 1);
       const config = JSON.parse(readFileSync(configPath, 'utf8'));
       let replaced = 0;
       if (provider === 'opencode') {
-        const nativePlugin = pathToFileURL(
-          realpathSync(
-            resolve('packages/fleet-tools/bin/worker-opencode-plugin.mjs'),
-          ),
-        ).href;
+        const nativePluginDir = realpathSync(
+          resolve('packages/fleet-tools/bin/worker-opencode-plugin'),
+        );
+        const nativePlugin = pathToFileURL(nativePluginDir).href;
+        const nativeV1 = pathToFileURL(join(nativePluginDir, 'v1.js')).href;
+        const nativeV2 = pathToFileURL(join(nativePluginDir, 'index.js')).href;
         const bridge = pathToFileURL(
           realpathSync(
             resolve('packages/fleet-tools/bin/worker-hook-bridge.cjs'),
           ),
         ).href;
-        const wrapper = join(directory, 'workflow-fault-plugin.mjs');
+        const wrapper = join(directory, 'workflow-fault-plugin');
+        mkdirSync(wrapper, { recursive: true });
         writeFileSync(
-          wrapper,
-          `import nativePlugin from ${JSON.stringify(nativePlugin)};
+          join(wrapper, 'package.json'),
+          JSON.stringify({
+            name: 'workflow-fault-plugin',
+            private: true,
+            type: 'module',
+            main: './v1.js',
+            exports: { '.': './v1.js', './server': './index.js' },
+          }),
+        );
+        writeFileSync(
+          join(wrapper, 'v1.js'),
+          `import nativePlugin from ${JSON.stringify(nativeV1)};
 import bridge from ${JSON.stringify(bridge)};
 export default async (context) => {
   const hooks = await nativePlugin(context);
@@ -65,6 +83,36 @@ export default async (context) => {
     try { await hooks['tool.execute.before'](input, output); }
     finally { bridge.invoke = original; }
   }};
+};
+`,
+        );
+        writeFileSync(
+          join(wrapper, 'index.js'),
+          `import v1 from './v1.js';
+import nativePluginV2 from ${JSON.stringify(nativeV2)};
+import bridge from ${JSON.stringify(bridge)};
+export default {
+  id: 'workflow-fault-plugin',
+  server: v1,
+  async setup(ctx) {
+    return nativePluginV2.setup({
+      ...ctx,
+      tool: {
+        ...ctx.tool,
+        hook: (name, callback) =>
+          ctx.tool.hook(name, async (event) => {
+            const original = bridge.invoke;
+            bridge.invoke = (_handler, payload, options) =>
+              original(${JSON.stringify(handler)}, payload, options);
+            try {
+              return await callback(event);
+            } finally {
+              bridge.invoke = original;
+            }
+          }),
+      },
+    });
+  },
 };
 `,
         );

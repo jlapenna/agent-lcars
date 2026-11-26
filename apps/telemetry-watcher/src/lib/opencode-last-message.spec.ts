@@ -56,6 +56,36 @@ describe('extractLastAssistantText', () => {
     expect(extractLastAssistantText(file)).toBe('closing turn');
   });
 
+  it('reads the OpenCode 2 export shape and ignores synthetic subagent reports', () => {
+    const file = writeExport(
+      JSON.stringify({
+        info: { id: 'ses_1' },
+        messages: [
+          { type: 'user', text: 'do the thing', files: [] },
+          {
+            type: 'assistant',
+            content: [
+              { type: 'tool', name: 'subagent' },
+              { type: 'text', text: 'first turn' },
+            ],
+          },
+          { type: 'idle', outcome: 'succeeded' },
+          {
+            type: 'synthetic',
+            text: '<subagent state="completed">child report</subagent>',
+          },
+          {
+            type: 'assistant',
+            content: [{ type: 'text', text: 'closing turn' }],
+          },
+          { type: 'idle', outcome: 'succeeded' },
+        ],
+      }),
+    );
+
+    expect(extractLastAssistantText(file)).toBe('closing turn');
+  });
+
   it('returns undefined for an export with no assistant text part', () => {
     const file = writeExport(
       JSON.stringify({

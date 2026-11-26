@@ -191,8 +191,51 @@ describe('resumeTranscript', () => {
       mkdir: () => undefined,
       writeFile: () => undefined,
     });
-    expect(ran[0]).toEqual(['--pure', 'import', expect.any(String)]);
+    expect(ran[0]).toEqual([
+      'session',
+      'import',
+      '--standalone',
+      expect.any(String),
+      '--directory',
+      '/home/runner/_work/checkout',
+    ]);
     expect(path).toBe('ses_1');
+  });
+
+  it('fails closed and removes the temporary file when OpenCode 2 rejects an OpenCode 1 export', async () => {
+    const unlinked: string[] = [];
+    const written: string[] = [];
+    const v1Export = JSON.stringify({
+      info: { id: 'ses_v1_pre_cutover', directory: '/home/runner/_work/repo' },
+      messages: [
+        {
+          info: { id: 'msg_1', role: 'user', sessionID: 'ses_v1_pre_cutover' },
+          parts: [{ type: 'text', text: 'pre-cutover prompt' }],
+        },
+      ],
+    });
+    const result = await resumeTranscript({
+      agent: 'opencode',
+      sessionId: 'ses_v1_pre_cutover',
+      transcriptGcsUri:
+        'gs://b/runs/r1/opencode/ses_v1_pre_cutover.export.json',
+      cwd: '/home/runner/_work/repo',
+      claudeProjectsDir: '/home/runner/.claude/projects',
+      download: async () => v1Export,
+      writeFile: (filePath) => {
+        written.push(filePath);
+      },
+      unlink: (filePath) => {
+        unlinked.push(filePath);
+      },
+      runOpenCode: async () => {
+        throw new Error('Error: Failed to import session: Bad Request');
+      },
+      mkdir: () => undefined,
+    });
+    expect(result).toBeUndefined();
+    expect(written).toHaveLength(1);
+    expect(unlinked).toEqual(written);
   });
 
   it('returns undefined when no trusted opencode binary is available', async () => {

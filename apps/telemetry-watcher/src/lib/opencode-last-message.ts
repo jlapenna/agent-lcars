@@ -29,19 +29,23 @@ function lastAssistantTextPart(parsed: unknown): string | undefined {
   let lastText: string | undefined;
   for (const message of messages) {
     if (!message || typeof message !== 'object') continue;
-    const info = (message as Record<string, unknown>)['info'];
-    const role =
+    const record = message as Record<string, unknown>;
+    const info = record['info'];
+    // OpenCode 1: `{info: {role}, parts}`. OpenCode 2: `{type, content}`.
+    const parts =
       info && typeof info === 'object'
-        ? (info as Record<string, unknown>)['role']
-        : undefined;
-    if (role !== 'assistant') continue;
-    const parts = (message as Record<string, unknown>)['parts'];
+        ? (info as Record<string, unknown>)['role'] === 'assistant'
+          ? record['parts']
+          : undefined
+        : record['type'] === 'assistant'
+          ? record['content']
+          : undefined;
     if (!Array.isArray(parts)) continue;
     for (const part of parts) {
       if (!part || typeof part !== 'object') continue;
-      const record = part as Record<string, unknown>;
-      if (record['type'] === 'text' && typeof record['text'] === 'string') {
-        lastText = record['text'];
+      const content = part as Record<string, unknown>;
+      if (content['type'] === 'text' && typeof content['text'] === 'string') {
+        lastText = content['text'];
       }
     }
   }
@@ -53,7 +57,9 @@ function lastAssistantTextPart(parsed: unknown): string | undefined {
  * sibling `captureOpenCodeExports` already writes beside its sanitized
  * JSONL for resumability (spec decision 3, plan 4) — and returns the last
  * assistant text part it contains: the exact closing turn of the
- * conversation. Verified against a real 1MB export with
+ * conversation. OpenCode 2 exports flat `{type: 'assistant', content}`
+ * messages; OpenCode 1 exported `{info: {role}, parts}`. Both are read. The
+ * OpenCode 1 query was verified against a real 1MB export with
  * `jq -r '[.messages[] | select(.info.role=="assistant") | .parts[]? |
  * select(.type=="text") | .text] | last'` (issue #1784); this is that same
  * query, hand-written because the sidecar has no `jq` dependency.

@@ -42,6 +42,13 @@ describe('candidate worker image qualification consumer', () => {
     'accepts complete offline evidence for %s independently without graduating it',
     (provider) => {
       const { expected, native, setup } = evidence(provider);
+      expect(expected.moduleHashes).toMatchObject({
+        'worker-opencode-plugin/index.js':
+          expect.stringMatching(/^[a-f0-9]{64}$/),
+        'worker-opencode-plugin/v1.js': expect.stringMatching(/^[a-f0-9]{64}$/),
+        'worker-opencode-plugin/package.json':
+          expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
       expect(evaluateImageEvidence(expected, native, setup)).toMatchObject({
         offlinePassed: true,
         graduated: false,
@@ -49,6 +56,16 @@ describe('candidate worker image qualification consumer', () => {
       });
     },
   );
+
+  it('normalizes OpenCode 2 v-prefixed version output across evaluator evidence', () => {
+    const { expected, native, setup } = evidence('opencode');
+    expected.providerVersion = 'opencode v2.3.2';
+    native.nativeReport.providerVersion = '2.3.2';
+    setup.nativeReport.providerVersion = '2.3.2';
+    expect(evaluateImageEvidence(expected, native, setup).offlinePassed).toBe(
+      true,
+    );
+  });
 
   it.each(['claude', 'codex', 'opencode'])(
     'rejects selective passing reports missing valid or prohibited operations for %s',

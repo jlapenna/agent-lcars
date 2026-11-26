@@ -59,9 +59,14 @@ const version = await run(
   { PATH: process.env.PATH, HOME: root },
   10000,
 );
-if (version.code !== 0 || version.stdout.trim() !== expectedVersion) {
+// OpenCode 2 prints `opencode v2.3.2`; OpenCode 1 printed a bare version.
+const normalizedExpectedVersion = expectedVersion
+  .trim()
+  .replace(/^opencode v/, '');
+const reportedVersion = version.stdout.trim().replace(/^opencode v/, '');
+if (version.code !== 0 || reportedVersion !== normalizedExpectedVersion) {
   throw new Error(
-    `version mismatch: expected ${expectedVersion}, got ${version.stdout.trim()}`,
+    `version mismatch: expected ${normalizedExpectedVersion}, got ${reportedVersion}`,
   );
 }
 
@@ -118,7 +123,19 @@ async function probe(mode) {
     workflow?.content ?? outcome?.content ?? 'LCARS_FILE_PROBE\n';
   const sentinel = files?.sentinel ?? join(workspace, 'effect');
   const receipt = join(workspace, 'hook-receipt');
-  const plugin = join(workspace, 'probe-plugin.mjs');
+  const pluginDir = join(workspace, 'probe-plugin');
+  mkdirSync(pluginDir, { recursive: true });
+  writeFileSync(
+    join(pluginDir, 'package.json'),
+    JSON.stringify({
+      name: 'probe-plugin',
+      private: true,
+      type: 'module',
+      main: './v1.js',
+      exports: { '.': './v1.js', './server': './index.js' },
+    }),
+  );
+  const plugin = pathToFileURL(pluginDir).href;
   const lineageProbe = mode.startsWith('bootstrap-lineage');
   const lineageRecovery = mode.startsWith('bootstrap-lineage-recovery-');
   const lineageExhausted = mode === 'bootstrap-lineage-recovery-exhausted';
@@ -194,13 +211,20 @@ else process.exitCode = 1;
 `,
     { mode: 0o700 },
   );
+  const allowedProbeTools = delegation
+    ? ['write', 'task', 'subagent']
+    : workflow
+      ? ['write', 'bash', 'shell']
+      : fileProbe
+        ? ['write']
+        : ['bash', 'shell'];
   writeFileSync(
-    plugin,
+    join(pluginDir, 'v1.js'),
     `import { appendFileSync, writeFileSync } from 'node:fs';
 ${lineageProbe ? `import { probeLineage, probeLineageRecovery } from ${JSON.stringify(pathToFileURL(resolve('tools/probes/opencode-lineage-fixture.mjs')).href)};` : ''}
 export default async (native) => ({
   'tool.execute.before': async (input) => {
-    if (${delegation ? "!['write', 'task'].includes(input.tool)" : workflow ? "!['write', 'bash'].includes(input.tool)" : `input.tool !== ${JSON.stringify(fileProbe ? 'write' : 'bash')}`}) return;
+    if (!${JSON.stringify(allowedProbeTools)}.includes(input.tool)) return;
     appendFileSync(${JSON.stringify(receipt)}, JSON.stringify(input) + '\\n');
     ${
       delegation
@@ -218,11 +242,50 @@ export default async (native) => ({
   ${
     delegation
       ? `'tool.execute.after': async (input) => {
-    if (input.tool === 'task') appendFileSync(${JSON.stringify(delegation.events)}, JSON.stringify({...input, phase:'after'}) + '\\n');
+    if (input.tool === 'task' || input.tool === 'subagent') appendFileSync(${JSON.stringify(delegation.events)}, JSON.stringify({...input, phase:'after'}) + '\\n');
   },`
       : ''
   }
 });
+`,
+  );
+  writeFileSync(
+    join(pluginDir, 'index.js'),
+    `import { appendFileSync, writeFileSync } from 'node:fs';
+import v1 from './v1.js';
+${lineageProbe ? `import { probeLineage, probeLineageRecovery } from ${JSON.stringify(pathToFileURL(resolve('tools/probes/opencode-lineage-fixture.mjs')).href)};` : ''}
+export default {
+  id: 'probe-plugin',
+  server: v1,
+  async setup(ctx) {
+    await ctx.tool.hook('execute.before', async (hookEvent) => {
+      if (!${JSON.stringify(allowedProbeTools)}.includes(hookEvent.tool)) return;
+      const input = { tool: hookEvent.tool, sessionID: hookEvent.sessionID, callID: hookEvent.id };
+      appendFileSync(${JSON.stringify(receipt)}, JSON.stringify(input) + '\\n');
+      ${
+        delegation
+          ? `const session = await ctx.session.get({ sessionID: hookEvent.sessionID });
+      if (!session || session.id !== hookEvent.sessionID) throw new Error('Native child session lookup failed');
+      appendFileSync(${JSON.stringify(delegation.events)}, JSON.stringify({...input, phase:'before', parentID:session.parentID}) + '\\n');`
+          : ''
+      }
+      ${workflow ? `appendFileSync(${JSON.stringify(workflow.eventsPath)}, JSON.stringify(input) + '\\n');` : ''}
+      ${lineageProbe ? `writeFileSync(${JSON.stringify(lineageReceipt)}, JSON.stringify(await ${lineageRecovery ? `probeLineageRecovery(ctx, hookEvent.sessionID, ${lineageExhausted})` : 'probeLineage(ctx, hookEvent.sessionID)'}));` : ''}
+      ${lineageExhausted ? "throw new Error('LCARS control execution failed; preserve work and report an infrastructure failure; do not fabricate a human blocker or PARK.');" : ''}
+      ${mode === 'deny' ? "throw new Error('LCARS_PROBE_DENY');" : ''}
+      ${mode === 'failure' ? "throw new Error('LCARS_PROBE_DEPENDENCY_UNAVAILABLE');" : ''}
+    });
+    ${
+      delegation
+        ? `await ctx.tool.hook('execute.after', async (hookEvent) => {
+      if (hookEvent.tool === 'task' || hookEvent.tool === 'subagent') {
+        appendFileSync(${JSON.stringify(delegation.events)}, JSON.stringify({ tool: hookEvent.tool, sessionID: hookEvent.sessionID, callID: hookEvent.id, phase:'after' }) + '\\n');
+      }
+    });`
+        : ''
+    }
+  },
+};
 `,
   );
   const failedHandler = join(dir, 'failed-handler.cjs');
@@ -243,11 +306,11 @@ process.stdout.write(result.stdout || '');
 process.exit(result.status ?? 1);
 `,
     );
-  if (usesPolicy && !bootstrap)
+  if (usesPolicy && !bootstrap) {
     writeFileSync(
-      plugin,
+      join(pluginDir, 'v1.js'),
       `import {appendFileSync} from 'node:fs';
-import workerPolicy from ${JSON.stringify(pathToFileURL(resolve('packages/fleet-tools/bin/worker-opencode-plugin.mjs')).href)};
+import workerPolicy from ${JSON.stringify(pathToFileURL(resolve('packages/fleet-tools/bin/worker-opencode-plugin/v1.js')).href)};
 import bridge from ${JSON.stringify(pathToFileURL(resolve('packages/fleet-tools/bin/worker-hook-bridge.cjs')).href)};
 export default async (context) => {
   const hooks = await workerPolicy(context);
@@ -268,6 +331,42 @@ export default async (context) => {
 };
 `,
     );
+    writeFileSync(
+      join(pluginDir, 'index.js'),
+      `import {appendFileSync} from 'node:fs';
+import v1 from './v1.js';
+import workerPolicyV2 from ${JSON.stringify(pathToFileURL(resolve('packages/fleet-tools/bin/worker-opencode-plugin/index.js')).href)};
+import bridge from ${JSON.stringify(pathToFileURL(resolve('packages/fleet-tools/bin/worker-hook-bridge.cjs')).href)};
+export default {
+  id: 'probe-plugin',
+  server: v1,
+  async setup(ctx) {
+    return workerPolicyV2.setup({
+      ...ctx,
+      tool: {
+        ...ctx.tool,
+        hook: (name, callback) =>
+          ctx.tool.hook(name, async (hookEvent) => {
+            appendFileSync(${JSON.stringify(receipt)}, JSON.stringify({ tool: hookEvent.tool, sessionID: hookEvent.sessionID, callID: hookEvent.id }) + '\\n');
+            ${
+              recovery
+                ? `
+            const original = bridge.invoke;
+            const started = performance.now();
+            bridge.invoke = (_handler, payload, options) => original(${JSON.stringify(failedHandler)}, payload, options);
+            try { return await callback(hookEvent); }
+            finally { bridge.invoke = original; appendFileSync(${JSON.stringify(controlTiming)}, JSON.stringify({elapsedMs:performance.now()-started}) + '\\n'); }
+            `
+                : 'return await callback(hookEvent);'
+            }
+          }),
+      },
+    });
+  },
+};
+`,
+    );
+  }
   let issued = false,
     secondIssued = false;
   let requests = 0;
@@ -291,7 +390,18 @@ export default async (context) => {
       const fileAction = delegation
         ? delegatedStep?.write === true
         : fileProbe || workflowStep?.kind === 'write';
-      const toolName = delegatedStep?.tool ?? (fileAction ? 'write' : 'bash');
+      const shellToolName = input.tools?.some(
+        (entry) => entry.function?.name === 'shell',
+      )
+        ? 'shell'
+        : 'bash';
+      const writeUsesPath = input.tools?.some(
+        (entry) =>
+          entry.function?.name === 'write' &&
+          entry.function?.parameters?.properties?.path,
+      );
+      const toolName =
+        delegatedStep?.tool ?? (fileAction ? 'write' : shellToolName);
       const second =
         ownershipChanged && issued && !secondIssued && returnedToolResult;
       if (second)
@@ -327,7 +437,7 @@ export default async (context) => {
                     delegatedStep?.args ??
                       (fileAction
                         ? {
-                            filePath:
+                            [writeUsesPath ? 'path' : 'filePath']:
                               second || round === 2
                                 ? secondSentinel
                                 : files.target,
@@ -345,7 +455,11 @@ export default async (context) => {
                                     : usesPolicy
                                       ? 'gh issue comment 42 --repo octo/example --body "Fixture deliverable"'
                                       : `touch '${sentinel}'`,
-                            description: 'Create harmless probe sentinel',
+                            ...(shellToolName === 'bash'
+                              ? {
+                                  description: 'Create harmless probe sentinel',
+                                }
+                              : {}),
                           }),
                   ),
                 },
@@ -432,20 +546,32 @@ export default async (context) => {
         }),
       );
   } else if (usesPolicy) {
-    setup.installOpenCode(join(workspace, 'opencode.json'), plugin);
-    if (setup.installOpenCode(join(workspace, 'opencode.json'), plugin).changed)
+    setup.installOpenCode(join(workspace, 'opencode.json'), pluginDir);
+    if (
+      setup.installOpenCode(join(workspace, 'opencode.json'), pluginDir).changed
+    )
       throw new Error('Setup was not idempotent');
   }
   writeFileSync(join(dir, 'models.json'), '{}');
-  const args = [
-    'run',
-    '--model',
-    'probe/test',
-    '--auto',
-    '--dir',
-    workspace,
-    'Execute the supplied probe tool call, then finish.',
-  ];
+  // OpenCode 2 has no `run --dir`; OpenCode 1 has no `--standalone`.
+  const args = reportedVersion.startsWith('1.')
+    ? [
+        'run',
+        '--model',
+        'probe/test',
+        '--auto',
+        '--dir',
+        workspace,
+        'Execute the supplied probe tool call, then finish.',
+      ]
+    : [
+        'run',
+        '--standalone',
+        '--model',
+        'probe/test',
+        '--auto',
+        'Execute the supplied probe tool call, then finish.',
+      ];
   const env = {
     PATH: usesPolicy ? `${fakeBin}:${process.env.PATH}` : process.env.PATH,
     ...(usesPolicy
@@ -754,7 +880,7 @@ const selectedModes =
 for (const mode of selectedModes) observations.push(await probe(mode));
 const report = {
   provider: 'opencode',
-  providerVersion: expectedVersion,
+  providerVersion: normalizedExpectedVersion,
   qualification: 'not-evaluated',
   observations,
   evidenceDirectory: root,

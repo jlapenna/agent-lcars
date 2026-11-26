@@ -135,7 +135,7 @@ describe('captureOpenCodeExports', () => {
         output,
         JSON.stringify({
           info: {
-            id: args[2],
+            id: args[3],
             directory: '[redacted:session-directory]',
             title: '[redacted:session-title]',
             time: { created: 100, updated: 200, metadata: 'secret-time' },
@@ -190,12 +190,22 @@ describe('captureOpenCodeExports', () => {
     ).toEqual({ status: 'ok', selected: 1, exported: 1, failed: 0 });
 
     expect(calls[0]).toEqual({
-      args: ['--pure', 'session', 'list', '--format', 'json'],
+      args: [
+        'session',
+        'list',
+        '--standalone',
+        '--max-count',
+        '10000',
+        '--format',
+        'json',
+      ],
+      cwd: workspace,
       maxBytes: OPENCODE_CAPTURE_LIMITS.listBytes,
       timeout: OPENCODE_CAPTURE_LIMITS.timeoutMs,
     });
     expect(calls[1]).toEqual({
-      args: ['--pure', 'export', 'ses_current', '--sanitize'],
+      args: ['session', 'export', '--standalone', 'ses_current', '--sanitize'],
+      cwd: workspace,
       maxBytes: OPENCODE_CAPTURE_LIMITS.exportBytes,
       timeout: OPENCODE_CAPTURE_LIMITS.timeoutMs,
     });
@@ -239,6 +249,130 @@ describe('captureOpenCodeExports', () => {
     );
   });
 
+  it('normalizes an OpenCode 2 export to the metadata-only archive shape', async () => {
+    const runOpenCode: RunOpenCode = () =>
+      JSON.stringify([{ id: 'ses_v2', directory: workspace, updated: 200 }]);
+    const runOpenCodeToFile: RunOpenCodeToFile = (_args, output) => {
+      // Shape captured from `opencode session export` on OpenCode v2.3.2.
+      fs.writeFileSync(
+        output,
+        JSON.stringify({
+          info: {
+            id: 'ses_v2',
+            model: { id: 'default', providerID: 'homelab', variant: 'default' },
+            time: { created: 100, updated: 200, busy: 105, idle: 199 },
+            title: 'writer-secret-title',
+            location: { directory: '/writer-secret-directory' },
+          },
+          messages: [
+            {
+              id: 'msg_user',
+              type: 'user',
+              time: { created: 101 },
+              text: 'writer-secret-prompt',
+              files: [],
+            },
+            {
+              id: 'msg_assistant',
+              type: 'assistant',
+              agent: 'build',
+              model: {
+                id: 'default',
+                providerID: 'homelab',
+                variant: 'default',
+              },
+              time: { created: 110, firstToken: 111, completed: 190 },
+              content: [
+                {
+                  type: 'tool',
+                  id: 'call_1',
+                  name: 'shell',
+                  executed: false,
+                  state: {
+                    status: 'completed',
+                    input: { command: 'echo writer-secret-command' },
+                    content: [{ type: 'text', text: 'writer-secret-output' }],
+                  },
+                  time: { created: 115, ran: 120, completed: 180 },
+                },
+                { type: 'text', text: 'writer-secret-answer' },
+              ],
+              finish: 'stop',
+              cost: 0.25,
+              tokens: {
+                input: 10,
+                output: 2,
+                reasoning: 0,
+                cache: { read: 5, write: 1 },
+              },
+            },
+            {
+              id: 'msg_synthetic',
+              type: 'synthetic',
+              time: { created: 195 },
+              text: 'writer-secret-synthetic',
+            },
+            {
+              id: 'msg_idle',
+              type: 'idle',
+              time: { created: 199 },
+              outcome: 'succeeded',
+            },
+          ],
+        }),
+      );
+    };
+
+    expect(
+      await captureOpenCodeExports({
+        workspaceDir: workspace,
+        exportsDir: root,
+        runOpenCode,
+        runOpenCodeToFile,
+        resolvedModel: 'qwen-route',
+      }),
+    ).toEqual({ status: 'ok', selected: 1, exported: 1, failed: 0 });
+
+    const materialized = fs.readFileSync(
+      path.join(root, 'sessions', 'ses_v2.jsonl'),
+      'utf8',
+    );
+    expect(JSON.parse(materialized)).toEqual({
+      info: {
+        id: 'ses_v2',
+        directory: workspace,
+        time: { created: 100, updated: 200 },
+        resolvedModel: 'qwen-route',
+      },
+      messages: [
+        { info: { role: 'user', time: { created: 101 } }, parts: [] },
+        {
+          info: {
+            role: 'assistant',
+            time: { created: 110, completed: 190 },
+            providerID: 'homelab',
+            modelID: 'default',
+            tokens: {
+              input: 10,
+              output: 2,
+              reasoning: 0,
+              cache: { read: 5, write: 1 },
+            },
+            cost: 0.25,
+          },
+          parts: [
+            {
+              type: 'tool',
+              tool: 'shell',
+              state: { time: { start: 120, end: 180 } },
+            },
+          ],
+        },
+      ],
+    });
+    expect(materialized).not.toContain('writer-secret');
+  });
+
   it('captures a raw export beside the sanitized one', async () => {
     const runOpenCode: RunOpenCode = () =>
       JSON.stringify([{ id: 'ses_1', directory: workspace, updated: 100 }]);
@@ -260,8 +394,19 @@ describe('captureOpenCodeExports', () => {
 
     // Two invocations per session: one --sanitize (the rendered artifact),
     // one without (the resumable one).
-    expect(calls).toContainEqual(['--pure', 'export', 'ses_1', '--sanitize']);
-    expect(calls).toContainEqual(['--pure', 'export', 'ses_1']);
+    expect(calls).toContainEqual([
+      'session',
+      'export',
+      '--standalone',
+      'ses_1',
+      '--sanitize',
+    ]);
+    expect(calls).toContainEqual([
+      'session',
+      'export',
+      '--standalone',
+      'ses_1',
+    ]);
     expect(fs.existsSync(path.join(root, 'sessions', 'ses_1.jsonl'))).toBe(
       true,
     );
@@ -277,7 +422,7 @@ describe('captureOpenCodeExports', () => {
       fs.writeFileSync(
         output,
         JSON.stringify({
-          info: { id: args[2] },
+          info: { id: args[3] },
           messages: [
             {
               info: {
@@ -312,7 +457,7 @@ describe('captureOpenCodeExports', () => {
       fs.writeFileSync(
         output,
         JSON.stringify({
-          info: { id: args[2] },
+          info: { id: args[3] },
           messages: [
             {
               info: {
@@ -347,7 +492,7 @@ describe('captureOpenCodeExports', () => {
         { id: 'ses_newest', directory: workspace, updated: 200 },
       ]);
     const runOpenCodeToFile: RunOpenCodeToFile = (args, output) => {
-      const sessionId = args[2] as string;
+      const sessionId = args[3] as string;
       const isRaw = !args.includes('--sanitize');
       fs.writeFileSync(
         output,
@@ -503,11 +648,11 @@ describe('captureOpenCodeExports', () => {
     const runOpenCode: RunOpenCode = () => JSON.stringify(sessions);
     const runOpenCodeToFile: RunOpenCodeToFile = (args, output) => {
       if (args.includes('--sanitize')) {
-        exports.push(args[2] as string);
+        exports.push(args[3] as string);
       }
       fs.writeFileSync(
         output,
-        JSON.stringify({ info: { id: args[2] }, messages: [] }),
+        JSON.stringify({ info: { id: args[3] }, messages: [] }),
       );
     };
 
@@ -610,14 +755,19 @@ describe('captureOpenCodeExports', () => {
     expect(isTrustedOpenCodePath(symlink, currentUid)).toBe(false);
   });
 
-  it('uses pure mode and a credential-free child environment for real processes', async () => {
+  it('uses standalone mode, workspace cwd, and a credential-free child environment for real processes', async () => {
+    const realWorkspace = path.join(root, 'checkout');
+    fs.mkdirSync(realWorkspace, { recursive: true });
     const executable = path.join(root, 'fake-opencode');
     const argsLog = path.join(root, 'args.log');
     const envLog = path.join(root, 'env.log');
-    const sessions = JSON.stringify([{ id: 'ses_env', directory: workspace }]);
+    const cwdLog = path.join(root, 'cwd.log');
+    const sessions = JSON.stringify([
+      { id: 'ses_env', directory: realWorkspace },
+    ]);
     fs.writeFileSync(
       executable,
-      `#!/bin/bash\n/usr/bin/printf '%s\\n' '---' "$@" >> ${JSON.stringify(argsLog)}\n/usr/bin/env >> ${JSON.stringify(envLog)}\nif [ "$2" = session ]; then\n  /usr/bin/printf '%s\\n' '${sessions}'\nelse\n  /usr/bin/printf '%s\\n' '{"info":{"id":"ses_env"},"messages":[]}'\nfi\n`,
+      `#!/bin/bash\n/bin/pwd >> ${JSON.stringify(cwdLog)}\n/usr/bin/printf '%s\\n' '---' "$@" >> ${JSON.stringify(argsLog)}\n/usr/bin/env >> ${JSON.stringify(envLog)}\nif [ "$2" = list ]; then\n  /usr/bin/printf '%s\\n' '${sessions}'\nelse\n  /usr/bin/printf '%s\\n' '{"info":{"id":"ses_env"},"messages":[]}'\nfi\n`,
       { mode: 0o700 },
     );
     vi.stubEnv('GOOGLE_APPLICATION_CREDENTIALS', '/tmp/writer-secret.json');
@@ -632,15 +782,22 @@ describe('captureOpenCodeExports', () => {
 
     expect(
       await captureOpenCodeExports({
-        workspaceDir: workspace,
+        workspaceDir: realWorkspace,
         exportsDir: root,
         opencodeExecutable: executable,
       }),
     ).toEqual({ status: 'ok', selected: 1, exported: 1, failed: 0 });
 
+    const cwds = fs.readFileSync(cwdLog, 'utf8').trim().split('\n');
+    expect(cwds[0]).toBe(fs.realpathSync(realWorkspace));
+    expect(cwds[1]).toBe(fs.realpathSync(realWorkspace));
     const args = fs.readFileSync(argsLog, 'utf8');
-    expect(args).toContain('---\n--pure\nsession\nlist\n--format\njson\n---');
-    expect(args).toContain('---\n--pure\nexport\nses_env\n--sanitize\n');
+    expect(args).toContain(
+      '---\nsession\nlist\n--standalone\n--max-count\n10000\n--format\njson\n---',
+    );
+    expect(args).toContain(
+      '---\nsession\nexport\n--standalone\nses_env\n--sanitize\n',
+    );
     const env = fs.readFileSync(envLog, 'utf8');
     expect(env).not.toContain('writer-secret');
     expect(env).not.toMatch(
@@ -656,7 +813,7 @@ describe('captureOpenCodeExports', () => {
     ]);
     fs.writeFileSync(
       executable,
-      `#!/bin/bash\nif [ "$2" = session ]; then\n  /usr/bin/printf '%s\\n' '${sessions}'\n  exit 0\nfi\nset +e\n/bin/dd if=/dev/zero bs=1024 count=128 status=none\nstatus=$?\n/usr/bin/stat -Lc %s /proc/$$/fd/1 > ${JSON.stringify(observedSize)}\nexit "$status"\n`,
+      `#!/bin/bash\nif [ "$2" = list ]; then\n  /usr/bin/printf '%s\\n' '${sessions}'\n  exit 0\nfi\nset +e\n/bin/dd if=/dev/zero bs=1024 count=128 status=none\nstatus=$?\n/usr/bin/stat -Lc %s /proc/$$/fd/1 > ${JSON.stringify(observedSize)}\nexit "$status"\n`,
       { mode: 0o700 },
     );
     const hardLimit = 64 * 1024;
@@ -708,7 +865,7 @@ describe('captureOpenCodeExports', () => {
     fs.writeFileSync(path.join(sessionsDir, 'ses_stale.jsonl'), '{}');
     fs.writeFileSync(path.join(sessionsDir, 'keep.txt'), 'keep');
     const runOpenCode = vi.fn<RunOpenCode>((args) => {
-      if (args[0] === '--pure' && args[1] === 'session') return '[]';
+      if (args[0] === 'session' && args[1] === 'list') return '[]';
       throw new Error('unexpected export');
     });
 

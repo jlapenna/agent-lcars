@@ -26,7 +26,18 @@ const version = spawnSync(binary, ['--version'], {
   encoding: 'utf8',
   timeout: 10000,
 });
-if (version.status !== 0 || version.stdout.trim() !== expectedVersion)
+// OpenCode 2 prints `opencode v2.3.2`; the other CLIs print a bare version.
+const normalizeVersion = (value) =>
+  provider === 'opencode'
+    ? String(value ?? '')
+        .trim()
+        .replace(/^opencode v/, '')
+    : String(value ?? '').trim();
+const normalizedExpectedVersion = normalizeVersion(expectedVersion);
+if (
+  version.status !== 0 ||
+  normalizeVersion(version.stdout) !== normalizedExpectedVersion
+)
   throw new Error('Pinned CLI version mismatch');
 
 const observations = [];
@@ -110,7 +121,7 @@ for (const mode of setupModes) {
 }
 const report = {
   provider,
-  providerVersion: expectedVersion,
+  providerVersion: normalizedExpectedVersion,
   qualification: 'not-evaluated',
   observations,
   evidenceDirectory: root,
