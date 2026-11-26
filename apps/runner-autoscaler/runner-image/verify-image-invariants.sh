@@ -68,8 +68,10 @@ for review_file in README.md upstream.md LICENSE revision; do
 done
 check "Anthropic review dependency records an immutable revision" grep -Eq '^[a-f0-9]{40}$' "$review_dir/revision"
 check "Hindsight coding-agents CLI is installed" test -x "$hindsight_cli"
-check "Hindsight runtime is staged for runner" test -f "$home/.hindsight/coding-agents/dist/index.js"
-check "Hindsight OpenCode wrapper is installed" test -f "$home/.config/opencode/hindsight.js"
+check "Hindsight runtime is staged for runner" bash -c \
+  'test -f "$1/.hindsight/coding-agents/index.js" && test -f "$1/.hindsight/coding-agents/dist/index.js"' _ "$home"
+check "Hindsight OpenCode wrapper is installed" bash -c \
+  'test -f "$1/.config/opencode/hindsight/package.json" && test -f "$1/.config/opencode/hindsight/index.js" && test -f "$1/.config/opencode/hindsight/v1.js"' _ "$home"
 check "Hindsight skill is installed for Claude, Codex and Antigravity" bash -c \
   'test -f "$1/.claude/skills/hindsight-coding-agent/SKILL.md" && test -f "$1/.agents/skills/hindsight-coding-agent/SKILL.md" && test -f "$1/.gemini/antigravity-cli/skills/hindsight-coding-agent/SKILL.md"' _ "$home"
 check "image carries disabled Hindsight config with no baked token" \

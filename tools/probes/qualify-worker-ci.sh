@@ -64,7 +64,10 @@ run_phase() {
 # its normal passing-scratch cleanup; do not archive copied dependency trees.
 run_phase version 30 env -i PATH="$PATH" HOME="$scratch/home" \
   TMPDIR="$scratch/tmp" "$binary" --version
-version="$(cat "$output/version.stdout.txt")"
+version="$(tr -d '\r\n' < "$output/version.stdout.txt")"
+if [ "$provider" = opencode ]; then
+  version="${version#opencode v}"
+fi
 run_phase native 1200 env -i PATH="$PATH" HOME="$scratch/home" \
   TMPDIR="$scratch/tmp" node tools/probes/in-runner-image.mjs \
   "$provider" "$binary" "$version" "$image_id"

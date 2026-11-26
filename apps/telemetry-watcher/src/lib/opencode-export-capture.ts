@@ -6,10 +6,11 @@ import * as path from 'path';
 
 import { extractLastAssistantText } from './opencode-last-message';
 
-/** The session list is read whole (no `--max-count`): a count cap silently
- * dropped this workspace's older sessions once other directories' sessions
- * filled it. This byte bound only protects the sidecar's memory; one JSON
- * entry is a few hundred bytes, so it holds tens of thousands of sessions. */
+/** OpenCode 2's `session list` scopes to `process.cwd()`'s project and
+ * defaults `--max-count` to 100 when omitted. Pass an explicit high count
+ * (`LIST_MAX_COUNT`) and spawn in `workspaceDir` when present on disk;
+ * `LIST_MAX_BYTES` bounds sidecar memory. */
+const LIST_MAX_COUNT = 10_000;
 const LIST_MAX_BYTES = 16 * 1024 * 1024;
 const EXPORT_MAX_BYTES = 32 * 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 10_000;
@@ -17,6 +18,7 @@ const COMMAND_TIMEOUT_MS = 10_000;
 interface CommandOptions {
   timeout: number;
   maxBytes: number;
+  cwd?: string;
 }
 
 interface CaptureLimitsOverride {
@@ -125,7 +127,7 @@ export function isTrustedOpenCodePath(
  * Privileged telemetry capture resolves only the root-owned runner-image
  * location. The action-installed `$HOME/.opencode/bin/opencode` is writable by
  * the same uid as the agent and is therefore intentionally never eligible,
- * even with `--pure` and a scrubbed child environment. PATH is never consulted.
+ * even with a scrubbed child environment. PATH is never consulted.
  * Until the runner image owns this executable, capture fails closed and the
  * separate non-privileged trajectory artifact remains the available archive.
  */
@@ -161,14 +163,25 @@ function killCommand(child: {
   child.kill('SIGKILL');
 }
 
+function existingDirectory(candidate: string | undefined): string | undefined {
+  if (!candidate) return undefined;
+  try {
+    return fs.statSync(candidate).isDirectory() ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function defaultRunOpenCode(
   executable: string,
   args: string[],
   options: CommandOptions,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    const cwd = existingDirectory(options.cwd);
     const child = spawn(executable, args, {
       detached: true,
+      ...(cwd ? { cwd } : {}),
       env: openCodeChildEnv(),
       stdio: ['ignore', 'pipe', 'ignore'],
     });
@@ -233,6 +246,7 @@ function defaultRunOpenCodeToFile(
     // unlike stat polling, a fast writer cannot overshoot it. The executable
     // and all arguments are passed after the shell program and expanded only
     // through "$@"; no session-controlled value is interpolated as shell code.
+    const cwd = existingDirectory(options.cwd);
     const child = spawn(
       '/bin/bash',
       [
@@ -245,6 +259,7 @@ function defaultRunOpenCodeToFile(
       ],
       {
         detached: true,
+        ...(cwd ? { cwd } : {}),
         env: openCodeChildEnv(),
         stdio: ['ignore', output, 'ignore'],
       },
@@ -410,15 +425,31 @@ function allowlistedTokens(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+/** OpenCode 2 tool content: `{type: 'tool', name, time: {created, ran,
+ *  completed}}`. Normalized to the OpenCode 1 part shape the archive keeps. */
+function openCode2ToolTime(value: unknown): Record<string, number> | undefined {
+  const source = asRecord(value);
+  if (!source) return undefined;
+  const start = finiteNumber(source['ran']) ?? finiteNumber(source['created']);
+  const end = finiteNumber(source['completed']);
+  const result: Record<string, number> = {
+    ...(start !== undefined && { start }),
+    ...(end !== undefined && { end }),
+  };
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 function allowlistedToolPart(
   value: unknown,
 ): Record<string, unknown> | undefined {
   const part = asRecord(value);
   if (!part || part['type'] !== 'tool') return undefined;
-  const tool = boundedString(part['tool'], 128);
+  const tool = boundedString(part['tool'] ?? part['name'], 128);
   if (!tool) return undefined;
-  const state = asRecord(part['state']);
-  const time = allowlistedTime(state?.['time'], ['start', 'end']);
+  const time =
+    part['tool'] !== undefined
+      ? allowlistedTime(asRecord(part['state'])?.['time'], ['start', 'end'])
+      : openCode2ToolTime(part['time']);
   return {
     type: 'tool',
     tool,
@@ -426,12 +457,51 @@ function allowlistedToolPart(
   };
 }
 
+function allowlistedParts(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.flatMap((part) => {
+        const allowlisted = allowlistedToolPart(part);
+        return allowlisted ? [allowlisted] : [];
+      })
+    : [];
+}
+
+/** OpenCode 2 exports flat, typed messages (`{type: 'user' | 'assistant' |
+ *  'idle' | 'synthetic' | ..., content, model: {id, providerID}}`). Only
+ *  user and assistant turns map onto the OpenCode 1 `{info, parts}` archive
+ *  contract; every other message type is dropped. */
+function allowlistedOpenCode2Message(
+  message: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const role =
+    message['type'] === 'user' || message['type'] === 'assistant'
+      ? message['type']
+      : undefined;
+  if (!role) return undefined;
+  const time = allowlistedTime(message['time'], ['created', 'completed']);
+  const model = asRecord(message['model']);
+  const providerID = boundedString(model?.['providerID']);
+  const modelID = boundedString(model?.['id']);
+  const tokens = allowlistedTokens(message['tokens']);
+  const cost = finiteNumber(message['cost']);
+  const info: Record<string, unknown> = {
+    role,
+    ...(time && { time }),
+    ...(providerID && { providerID }),
+    ...(modelID && { modelID }),
+    ...(tokens && { tokens }),
+    ...(cost !== undefined && { cost }),
+  };
+  return { info, parts: allowlistedParts(message['content']) };
+}
+
 function allowlistedMessage(
   value: unknown,
 ): Record<string, unknown> | undefined {
   const message = asRecord(value);
-  const sourceInfo = asRecord(message?.['info']);
-  if (!message || !sourceInfo) return undefined;
+  if (!message) return undefined;
+  const sourceInfo = asRecord(message['info']);
+  if (!sourceInfo) return allowlistedOpenCode2Message(message);
 
   const role =
     sourceInfo['role'] === 'user' || sourceInfo['role'] === 'assistant'
@@ -450,13 +520,7 @@ function allowlistedMessage(
     ...(tokens && { tokens }),
     ...(cost !== undefined && { cost }),
   };
-  const parts = Array.isArray(message['parts'])
-    ? message['parts'].flatMap((part) => {
-        const allowlisted = allowlistedToolPart(part);
-        return allowlisted ? [allowlisted] : [];
-      })
-    : [];
-  return { info, parts };
+  return { info, parts: allowlistedParts(message['parts']) };
 }
 
 /**
@@ -505,7 +569,7 @@ function isCommandUnavailable(error: unknown): boolean {
 /**
  * Materializes OpenCode's SQLite-backed sessions into bounded one-record
  * JSONL files. OpenCode owns the database schema; this capture uses its public
- * `session list --format json` and sanitized `export <id>` commands instead
+ * `session list --format json` and sanitized `session export <id>` commands instead
  * of querying tables directly. The runner watcher can then reuse its existing
  * file/change-detection/archive pipeline without coupling to that schema.
  */
@@ -535,8 +599,20 @@ export async function captureOpenCodeExports(
   let listOutput: string;
   try {
     listOutput = await runOpenCode(
-      ['--pure', 'session', 'list', '--format', 'json'],
-      { timeout: commandTimeoutMs, maxBytes: LIST_MAX_BYTES },
+      [
+        'session',
+        'list',
+        '--standalone',
+        '--max-count',
+        String(LIST_MAX_COUNT),
+        '--format',
+        'json',
+      ],
+      {
+        timeout: commandTimeoutMs,
+        maxBytes: LIST_MAX_BYTES,
+        cwd: options.workspaceDir,
+      },
     );
   } catch (error) {
     if (isCommandUnavailable(error)) {
@@ -579,11 +655,12 @@ export async function captureOpenCodeExports(
     const normalizedFile = `${destination}.tmp-${process.pid}-${Date.now()}`;
     try {
       await runOpenCodeToFile(
-        ['--pure', 'export', session.id, '--sanitize'],
+        ['session', 'export', '--standalone', session.id, '--sanitize'],
         captureFile,
         {
           timeout: commandTimeoutMs,
           maxBytes: exportMaxBytes,
+          cwd: options.workspaceDir,
         },
       );
       const exportedJson = fs.readFileSync(captureFile, 'utf8');
@@ -629,7 +706,7 @@ export async function captureOpenCodeExports(
       const rawTemporary = `${rawDestination}.tmp-${process.pid}-${Date.now()}`;
       try {
         await runOpenCodeToFile(
-          ['--pure', 'export', session.id],
+          ['session', 'export', '--standalone', session.id],
           rawTemporary,
           {
             timeout: commandTimeoutMs,

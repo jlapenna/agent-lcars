@@ -13,8 +13,20 @@ fixture = root / "workspace/.claude/worktrees/task/app/fixture.txt"
 request_count = 0
 started = time.monotonic()
 
+SUMMARY_CONTENT = (
+    "## Objective\n- COMPACTED_STATE_SENTINEL\n\n"
+    "## Requirements\n- Preserve task state\n\n"
+    "## Decisions\n- (none)\n\n"
+    "## Work State\n### Completed\n- Read fixture.txt\n"
+    "### Active\n- Continue after compaction\n"
+    "### Blocked\n- (none)\n\n"
+    "## Next Move\n1. Read fixture.txt again and finish\n\n"
+    "## Relevant Files\n- .claude/worktrees/task/app/fixture.txt\n\n"
+    "## Important Context\n- COMPACTED_STATE_SENTINEL"
+)
 
-def chunk(*, content=None, tool_call=None, finish_reason=None):
+
+def chunk(*, content=None, tool_call=None, path_key="filePath", finish_reason=None):
     delta = {"role": "assistant"}
     if content is not None:
         delta["content"] = content
@@ -26,7 +38,7 @@ def chunk(*, content=None, tool_call=None, finish_reason=None):
                 "type": "function",
                 "function": {
                     "name": "read",
-                    "arguments": json.dumps({"filePath": str(fixture), "limit": 200}),
+                    "arguments": json.dumps({path_key: str(fixture), "limit": 200}),
                 },
             }
         ]
@@ -59,12 +71,29 @@ class Handler(BaseHTTPRequestHandler):
             for message in messages
             if message.get("role") == "system"
         )
+        non_system_text = "\n".join(
+            json.dumps(message.get("content", ""))
+            for message in messages
+            if message.get("role") != "system"
+        )
         tool_messages = [message for message in messages if message.get("role") == "tool"]
         tool_text = "\n".join(json.dumps(message.get("content", "")) for message in tool_messages)
         has_summary = "COMPACTED_STATE_SENTINEL" in serialized
-        is_compaction = (
+        is_v1_compaction = (
             not body.get("tools")
             and "You are a context summarization agent" in system
+        )
+        is_v2_compaction = (
+            bool(body.get("tools"))
+            and "You MUST summarize the conversation above" in serialized
+            and "<template>" in serialized
+        )
+        is_compaction = is_v1_compaction or is_v2_compaction
+        read_uses_path = any(
+            (tool.get("function", {}).get("name") == "read")
+            and "path" in (tool.get("function", {}).get("parameters", {}).get("properties") or {})
+            for tool in (body.get("tools") or [])
+            if isinstance(tool, dict)
         )
         observation = {
             "request": request_count,
@@ -74,20 +103,23 @@ class Handler(BaseHTTPRequestHandler):
             "isTitle": not body.get("tools") and not is_compaction,
             "hasStandingInstructions": "Commit and push at the first working slice" in system,
             "hasSummary": has_summary,
-            "hasSyntheticContinuation": "Continue if you have next steps" in serialized,
+            "hasSyntheticContinuation": (
+                "Continue if you have next steps" in serialized
+                or "<conversation-checkpoint>" in serialized
+            ),
             "toolMessageCount": len(tool_messages),
             "toolHasLine120": "LINE-120" in tool_text,
             "toolHasLine121": "LINE-121" in tool_text,
             "toolHasLine200": "LINE-200" in tool_text,
             "rootInstructionCount": serialized.count("ROOT_INSTRUCTION_SENTINEL"),
-            "hasChildInstructions": "CHILD_INSTRUCTION_SENTINEL" in tool_text,
+            "hasChildInstructions": "CHILD_INSTRUCTION_SENTINEL" in non_system_text,
             "maxTokens": body.get("max_tokens", body.get("max_completion_tokens")),
         }
         with (root / "observations.ndjson").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(observation, sort_keys=True) + "\n")
 
         if is_compaction:
-            first = chunk(content="COMPACTED_STATE_SENTINEL")
+            first = chunk(content=SUMMARY_CONTENT)
             usage = 100
         elif not body.get("tools"):
             first = chunk(content="continuation contract")
@@ -96,8 +128,21 @@ class Handler(BaseHTTPRequestHandler):
             first = chunk(content="continuation complete")
             usage = 100
         else:
-            first = chunk(tool_call=f"read-{request_count}")
-            usage = 3600 if not has_summary and tool_messages else 100
+            first = chunk(
+                tool_call=f"read-{request_count}",
+                path_key="path" if read_uses_path else "filePath",
+            )
+            workspace_cfg = json.loads(
+                (root / "workspace/opencode.json").read_text(encoding="utf-8")
+            )
+            input_limit = workspace_cfg["provider"]["continuation-contract"][
+                "models"
+            ]["test"]["limit"]["input"]
+            usage = (
+                input_limit - 400
+                if not has_summary and tool_messages
+                else 100
+            )
 
         finish = "tool_calls" if "tool_calls" in first["choices"][0]["delta"] else "stop"
         frames = [

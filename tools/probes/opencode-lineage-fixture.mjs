@@ -1,34 +1,84 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
-import workerPolicy from '../../packages/fleet-tools/bin/worker-opencode-plugin.mjs';
+import workerPolicy, {
+  workerPolicyPluginV2,
+} from '../../packages/fleet-tools/bin/worker-opencode-plugin.mjs';
 
-// Real pinned-runtime session API, empty metadata sessions only. This does not
-// launch agents or claim end-to-end delegated tool execution qualification.
-export async function probeLineage(native, root) {
+function isV2Context(native) {
+  return typeof native?.session?.create === 'function';
+}
+
+async function createBeforeCaller(native) {
+  if (isV2Context(native)) {
+    let before;
+    await workerPolicyPluginV2.setup({
+      ...native,
+      tool: {
+        hook: async (name, fn) => {
+          if (name === 'execute.before') before = fn;
+        },
+      },
+    });
+    return (sessionID, command = 'echo lineage-probe') =>
+      before({
+        tool: 'shell',
+        sessionID,
+        id: 'lineage-probe',
+        input: { command },
+      });
+  }
   const hooks = await workerPolicy(native);
-  const action = (sessionID, command = 'echo lineage-probe') =>
+  return (sessionID, command = 'echo lineage-probe') =>
     hooks['tool.execute.before'](
       { tool: 'bash', sessionID, callID: 'lineage-probe' },
       { args: { command } },
     );
+}
+
+async function createEmptySession(native, parentID, title) {
+  if (isV2Context(native)) {
+    const info = await native.session.create({
+      ...(parentID ? { parentID } : {}),
+      title,
+    });
+    assert.ok(info?.id);
+    assert.equal(info.parentID, parentID);
+    return info.id;
+  }
+  const response = await native.client.session.create({
+    body: {
+      ...(parentID ? { parentID } : {}),
+      title,
+    },
+  });
+  assert.ok(!response.error && response.data?.id);
+  assert.equal(response.data.parentID, parentID);
+  return response.data.id;
+}
+
+// Real pinned-runtime session API, empty metadata sessions only. This does not
+// launch agents or claim end-to-end delegated tool execution qualification.
+export async function probeLineage(native, root) {
+  const action = await createBeforeCaller(native);
   await action(root);
   const bindingPath = `${process.env.LCARS_WORKER_CONTEXT}.session.json`;
   const before = readFileSync(bindingPath, 'utf8');
-  const create = async (parentID) => {
-    const response = await native.client.session.create({
-      body: {
-        ...(parentID ? { parentID } : {}),
-        title: 'LCARS empty lineage fixture',
-      },
-    });
-    assert.ok(!response.error && response.data?.id);
-    assert.equal(response.data.parentID, parentID);
-    return response.data.id;
-  };
-  const child = await create(root);
-  const grandchild = await create(child);
-  const unrelated = await create();
+  const child = await createEmptySession(
+    native,
+    root,
+    'LCARS empty lineage fixture',
+  );
+  const grandchild = await createEmptySession(
+    native,
+    child,
+    'LCARS empty lineage fixture',
+  );
+  const unrelated = await createEmptySession(
+    native,
+    undefined,
+    'LCARS empty lineage fixture',
+  );
   await action(grandchild);
   await action(child);
   await assert.rejects(
@@ -40,11 +90,8 @@ export async function probeLineage(native, root) {
     /Native session identity does not match/,
   );
   // A second adapter instance (as after resume) must reestablish ancestry.
-  const resumed = await workerPolicy(native);
-  await resumed['tool.execute.before'](
-    { tool: 'bash', sessionID: child, callID: 'resumed-lineage' },
-    { args: { command: 'echo lineage-probe' } },
-  );
+  const resumedAction = await createBeforeCaller(native);
+  await resumedAction(child, 'echo lineage-probe');
   assert.equal(readFileSync(bindingPath, 'utf8'), before);
   return {
     root,
@@ -57,38 +104,47 @@ export async function probeLineage(native, root) {
 }
 
 export async function probeLineageRecovery(native, root, exhausted) {
-  const initial = await workerPolicy(native);
-  await initial['tool.execute.before'](
-    { tool: 'bash', sessionID: root },
-    { args: { command: 'echo establish-root' } },
-  );
+  const initialAction = await createBeforeCaller(native);
+  await initialAction(root, 'echo establish-root');
   const contextPath = process.env.LCARS_WORKER_CONTEXT;
   const context = JSON.parse(readFileSync(contextPath, 'utf8'));
   const binding = readFileSync(`${contextPath}.session.json`, 'utf8');
   const work = `${contextPath}.preserved-work`;
   writeFileSync(work, 'uncommitted fixture work');
-  const child = await native.client.session.create({
-    body: { parentID: root, title: 'LCARS empty recovery fixture' },
-  });
-  assert.ok(!child.error && child.data?.id);
-  let reads = 0;
-  const hooks = await workerPolicy({
-    ...native,
-    client: {
-      session: {
-        get: async (options) => {
-          reads++;
-          if (reads === 1 || exhausted)
-            throw new Error('Injected native session API outage');
-          return native.client.session.get(options);
-        },
-      },
-    },
-  });
-  const action = hooks['tool.execute.before'](
-    { tool: 'bash', sessionID: child.data.id },
-    { args: { command: 'echo recovered-lineage' } },
+  const childId = await createEmptySession(
+    native,
+    root,
+    'LCARS empty recovery fixture',
   );
+  let reads = 0;
+  const faultyNative = isV2Context(native)
+    ? {
+        ...native,
+        session: {
+          ...native.session,
+          get: async (input, options) => {
+            reads++;
+            if (reads === 1 || exhausted)
+              throw new Error('Injected native session API outage');
+            return native.session.get(input, options);
+          },
+        },
+      }
+    : {
+        ...native,
+        client: {
+          session: {
+            get: async (options) => {
+              reads++;
+              if (reads === 1 || exhausted)
+                throw new Error('Injected native session API outage');
+              return native.client.session.get(options);
+            },
+          },
+        },
+      };
+  const faultyAction = await createBeforeCaller(faultyNative);
+  const action = faultyAction(childId, 'echo recovered-lineage');
   if (exhausted) await assert.rejects(action, /infrastructure failure/);
   else await action;
   assert.equal(reads, 2);

@@ -301,9 +301,9 @@ interface RuntimeProfile {
 const RUNTIME_PROFILES: Readonly<Record<HookRuntime, RuntimeProfile>> = {
   claude: { agent: 'claude-code', adapter: claudeCodeAdapter },
   codex: { agent: 'codex', adapter: codexAdapter },
-  // The OpenCode plugin (agents/opencode/lcars-telemetry.js) supplies an
+  // The OpenCode plugin (agents/opencode/lcars-telemetry/) supplies an
   // export-shaped snapshot as transcript_path; the same reducer that reads
-  // `opencode export` output summarizes it.
+  // `opencode session export` output summarizes it.
   opencode: { agent: 'opencode', adapter: opencodeAdapter },
   agy: { agent: 'antigravity', adapter: antigravityAdapter },
 };

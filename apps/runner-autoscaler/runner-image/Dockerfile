@@ -777,7 +777,7 @@ RUN --network=none REPO_EVAL_NATIVE_CODEX=1 node --test /opt/repo-tools/bin/skil
 
 # NodeSource's system npm uses the /usr global prefix, so package binaries land
 # in /usr/bin (not /usr/local/bin, where this image's hand-installed CLIs live).
-RUN npm install -g @vectorize-io/hindsight-coding-agents@0.8.5 && \
+RUN npm install -g --ignore-scripts @vectorize-io/hindsight-coding-agents@0.8.8 && \
     test "$(npm prefix -g)" = /usr && \
     test -x /usr/bin/hindsight-coding-agents
 
@@ -799,22 +799,25 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
     /home/runner/.config/opencode/opencode.json
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/review-overlay.json \
-    /home/runner/.config/opencode/review-overlay.json
+    /repo/agents/opencode/review-overlay-v2.json \
+    /home/runner/.config/opencode/
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/instructions.md \
-    /home/runner/.config/opencode/instructions.md
+    /repo/agents/opencode/package.json \
+    /repo/agents/opencode/package-lock.json \
+    /home/runner/.config/opencode/
 COPY --from=telemetry-watcher-build --chown=runner:runner \
-    /repo/agents/opencode/lcars-session.js \
-    /home/runner/.config/opencode/lcars-session.js
+    /repo/agents/opencode/lcars-session \
+    /home/runner/.config/opencode/lcars-session
 COPY --from=telemetry-watcher-build --chown=runner:runner \
-    /repo/agents/opencode/lcars-telemetry.js \
-    /home/runner/.config/opencode/lcars-telemetry.js
+    /repo/agents/opencode/lcars-telemetry \
+    /home/runner/.config/opencode/lcars-telemetry
 COPY --from=telemetry-watcher-build --chown=runner:runner \
-    /repo/agents/opencode/context-lifecycle.js \
-    /home/runner/.config/opencode/context-lifecycle.js
+    /repo/agents/opencode/context-lifecycle \
+    /home/runner/.config/opencode/context-lifecycle
 COPY --from=telemetry-watcher-build --chown=runner:runner \
-    /repo/agents/opencode/hindsight.js \
-    /home/runner/.config/opencode/hindsight.js
+    /repo/agents/opencode/hindsight \
+    /home/runner/.config/opencode/hindsight
 COPY --from=telemetry-watcher-build \
     /repo/apps/runner-autoscaler/runner-image/opencode-litellm-proxy.mjs \
     /usr/local/lib/agent-lcars/opencode-litellm-proxy.mjs
@@ -863,13 +866,14 @@ RUN uv --version && \
     terraform version -json | jq -e --arg expected "$TERRAFORM_VERSION" '.terraform_version == $expected'
 RUN bash /usr/local/lib/agent-lcars/python-hooks.test.sh
 
-# OpenCode installs its plugin SDK in each configuration directory on cold
-# startup. Bake the version matching the reviewed CLI here; direct-runner's
-# existing configuration copy then carries package.json, lock, and modules
-# into the attempt configuration without doing an installation during work.
+# Bake the locked plugin SDK matching the reviewed CLI so global plugins can
+# import it without an installation during work. OpenCode 2 publishes it as
+# `@opencode/plugin` (OpenCode 1 used `@opencode-ai/plugin`, which has no 2.x
+# release). direct-runner's existing configuration copy carries package.json,
+# lock, and modules into the attempt configuration.
 RUN OPENCODE_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/opencode-version)" && \
-    npm install --prefix /home/runner/.config/opencode --ignore-scripts --save-exact \
-      "@opencode-ai/plugin@${OPENCODE_VERSION#v}"
+    npm ci --prefix /home/runner/.config/opencode --omit=dev --ignore-scripts && \
+    test "$(jq -r .version /home/runner/.config/opencode/node_modules/@opencode/plugin/package.json)" = "${OPENCODE_VERSION#v}"
 
 # The store is image-owned, version-bound, and contains no sessions. Keep this
 # in its own layer so the next command exercises copy-up from the baked layer.
@@ -926,7 +930,7 @@ RUN claude plugin marketplace add GoogleChrome/modern-web-guidance && \
 
 # Stage the Hindsight coding-agent runtime and register hooks/MCP/skills for
 # Claude Code, Codex and Antigravity; OpenCode loads ~/.hindsight/coding-agents
-# through /home/runner/.config/opencode/hindsight.js. Leave coding-agent.json
+# through /home/runner/.config/opencode/hindsight/. Leave coding-agent.json
 # disabled without a token in the published image; runtime/hindsight-bootstrap.sh
 # enables per-repo agent-lcars::<repo> memory when HINDSIGHT_API_TOKEN is mounted.
 RUN hindsight-coding-agents install claude-code codex antigravity-cli \

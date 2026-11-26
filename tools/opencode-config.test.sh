@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Contract tests for opencode.json.
+# Contract tests for opencode.json and the dual v1/v2 OpenCode plugin folders.
 #
 # Every failure mode below is silent in production: OpenCode does not error on
 # a missing instructions file or a mis-scoped prompt, it just sends a
@@ -21,9 +21,6 @@ test -f "$config" || fail "opencode.json is missing"
 jq -e . "$config" >/dev/null || fail "opencode.json is not valid JSON"
 
 # --- instructions files must exist -------------------------------------------
-# A renamed or moved instructions file does not fail the run. OpenCode drops it
-# and the standing orders simply stop reaching the model, which is exactly the
-# state agent-lcars#1242 was about.
 mapfile -t instruction_paths < <(jq -r '.instructions[]? // empty' "$config")
 if [ "${#instruction_paths[@]}" -eq 0 ]; then
   fail "opencode.json declares no instructions; the standing orders reach the model through that field (#1242)"
@@ -47,22 +44,35 @@ test -f "$orders" || fail "agents/opencode/instructions.md is missing"
 grep -Fq "Commit and push at the first working slice" "$orders" ||
   fail "the standing orders no longer carry the commit-early rule they exist for"
 
-# --- native session identity reaches OpenCode tool subprocesses ----------------
-# A fresh session is created inside `opencode run`, too late for direct-runner.sh
-# to export its id. OpenCode's shell.env hook receives the authoritative native
-# sessionID at each tool call; this plugin bridges that value into the same
-# LCARS_SESSION_ID contract used by the annotation CLI.
-session_plugin="$repo_root/agents/opencode/lcars-session.js"
-test -f "$session_plugin" || fail "agents/opencode/lcars-session.js is missing"
-jq -e '.plugin == ["./lcars-session.js", "./context-lifecycle.js", "./lcars-telemetry.js", "./hindsight.js"]' "$config" >/dev/null ||
-  fail "opencode.json must load the native LCARS session environment and Hindsight plugins"
-plugin_url="data:text/javascript;base64,$(base64 -w0 "$session_plugin")"
-node --input-type=module - "$plugin_url" <<'NODE'
+# --- plugin folders & permissions --------------------------------------------
+jq -e '.plugin == ["./lcars-session", "./context-lifecycle", "./lcars-telemetry", "./hindsight"]' "$config" >/dev/null ||
+  fail "opencode.json must load the four folder plugins (./lcars-session, ./context-lifecycle, ./lcars-telemetry, ./hindsight)"
+jq -e '.permission.task == "deny" and .permission.subagent == "deny" and .permission.execute == "deny" and .permission.question == "deny" and .permission.experimental_image_generate == "deny"' "$config" >/dev/null ||
+  fail "opencode.json must deny subagent/task delegation, Code Mode execute, interactive questions, and image generation by default"
+
+for plugin_name in lcars-session context-lifecycle lcars-telemetry hindsight; do
+  plugin_dir="$repo_root/agents/opencode/$plugin_name"
+  test -f "$plugin_dir/package.json" || fail "agents/opencode/$plugin_name/package.json is missing"
+  test -f "$plugin_dir/index.js" || fail "agents/opencode/$plugin_name/index.js is missing"
+  test -f "$plugin_dir/v1.js" || fail "agents/opencode/$plugin_name/v1.js is missing"
+  jq -e '.type == "module" and .main == "./v1.js" and .exports["."] == "./v1.js" and .exports["./server"] == "./index.js"' \
+    "$plugin_dir/package.json" >/dev/null ||
+    fail "agents/opencode/$plugin_name/package.json lacks dual v1/v2 exports"
+done
+
+session_v1="$repo_root/agents/opencode/lcars-session/v1.js"
+session_v2="$repo_root/agents/opencode/lcars-session/index.js"
+node --input-type=module - "$session_v1" "$session_v2" <<'NODE'
 import assert from 'node:assert/strict';
+import { pathToFileURL } from 'node:url';
 
-const module = await import(process.argv[2]);
-const hooks = await module.default();
+const modV1 = await import(pathToFileURL(process.argv[2]).href);
+const modV2 = await import(pathToFileURL(process.argv[3]).href);
+assert.equal(modV2.default.id, 'lcars-session');
+assert.equal(modV2.default.server, modV1.default);
+assert.equal(await modV2.default.setup({}), undefined);
 
+const hooks = await modV1.default();
 const native = { env: { KEEP: 'yes', LCARS_SESSION_ID: 'stale' } };
 await hooks['shell.env'](
   { cwd: '/repo', sessionID: 'ses_native_123', callID: 'call_1' },
@@ -81,11 +91,8 @@ NODE
 # Protect request history and authoritative instructions at the plugin boundary.
 node "$repo_root/tools/opencode-context.test.mjs"
 python3 "$repo_root/tools/opencode-continuation-exit.test.py"
-grep -Fq '/repo/agents/opencode/context-lifecycle.js' "$runner_dockerfile" ||
+grep -Fq '/repo/agents/opencode/context-lifecycle' "$runner_dockerfile" ||
   fail "runner image no longer installs the context lifecycle plugin"
-# On native builds the full three-client gate owns OpenCode via an unconditional
-# exec tail; arm64 under QEMU runs only version/client probes (#3070). Check both
-# links so composing the proofs cannot silently drop native continuation.
 python3 - "$runner_dockerfile" "$repo_root/apps/runner-autoscaler/runner-image/hook-telemetry.test.sh" <<'PYTHON'
 import pathlib, sys
 image, hook = (pathlib.Path(name).read_text() for name in sys.argv[1:])
@@ -98,18 +105,11 @@ assert hook.rstrip().splitlines()[-1] == 'exec bash "$(dirname "${BASH_SOURCE[0]
 PYTHON
 
 # --- agent.*.prompt must stay unset ------------------------------------------
-# Measured 2026-08-16 against opencode 1.18.18 by capturing the wire request:
-# setting `agent.build.prompt` REPLACES OpenCode's stock system prompt rather
-# than appending to it. The system message went 19,602 -> 10,929 characters and
-# lost "You are opencode, an interactive CLI tool..." along with all of its
-# tool guidance. `instructions` is the additive field; it lands in the same
-# system message without destroying anything.
 if jq -e '.agent // {} | to_entries | map(select(.value.prompt)) | length > 0' "$config" >/dev/null; then
-  fail "agent.*.prompt REPLACES OpenCode's stock system prompt (measured, opencode 1.18.18) - use .instructions to add text"
+  fail "agent.*.prompt REPLACES OpenCode's stock system prompt - use .instructions to add text"
 fi
 
-# Explicit input plus headroom must fit the backend; a completed-turn usage
-# threshold is not a hard admission limit for the next batch of tool results.
+# Explicit input plus headroom must fit the backend.
 jq -e '
   .compaction.reserved as $reserved |
   .provider.homelab.models | to_entries | all(.[].value.limit;
@@ -118,11 +118,6 @@ jq -e '
 ' "$config" >/dev/null || fail "model limits lack a usable explicit input budget and backend headroom"
 
 # --- the runner owns the shared configuration --------------------------------
-# The provider config and standing instructions apply to every agent job, so
-# they belong in the one managed runner image, not in each consumer checkout.
-# A source-level contract catches either half of a relative instructions path
-# being moved without the other, and prevents a later workspace download from
-# recreating the retired copy-on-every-run design.
 jq -e '.provider.homelab.options.apiKey == "{file:/run/secrets/opencode-llm-api-key}"' "$config" >/dev/null ||
   fail "the OpenCode provider must read its LiteLLM key from the file mount, never an agent-inherited environment variable"
 jq -e '.skills == ["/opt/repo-tools/plugins/repo-tools/skills",
@@ -131,50 +126,59 @@ jq -e '.skills == ["/opt/repo-tools/plugins/repo-tools/skills",
   fail "OpenCode must load repo-tools skills from the shared runner checkout and the upstream guidance plugins from the runner's Claude marketplace checkouts"
 grep -Fq '/repo/agents/opencode/opencode.json' "$runner_dockerfile" ||
   fail "runner image no longer installs the shared opencode.json"
-grep -Fq '/home/runner/.config/opencode/opencode.json' "$runner_dockerfile" ||
+grep -Fq '/home/runner/.config/opencode/' "$runner_dockerfile" ||
   fail "runner image does not install opencode.json at the runner global config path"
 grep -Fq '/repo/agents/opencode/instructions.md' "$runner_dockerfile" ||
   fail "runner image no longer installs the OpenCode standing instructions"
-grep -Fq '/home/runner/.config/opencode/instructions.md' "$runner_dockerfile" ||
-  fail "runner image does not preserve opencode.json's relative instructions path"
-grep -Fq '/repo/agents/opencode/lcars-session.js' "$runner_dockerfile" ||
+grep -Fq '/repo/agents/opencode/lcars-session' "$runner_dockerfile" ||
   fail "runner image no longer installs the OpenCode LCARS session plugin"
-grep -Fq '/home/runner/.config/opencode/lcars-session.js' "$runner_dockerfile" ||
+grep -Fq '/home/runner/.config/opencode/lcars-session' "$runner_dockerfile" ||
   fail "runner image does not preserve opencode.json's relative session plugin path"
-grep -Fq '/home/runner/.config/opencode/lcars-telemetry.js' "$runner_dockerfile" ||
+grep -Fq '/home/runner/.config/opencode/lcars-telemetry' "$runner_dockerfile" ||
   fail "runner image does not install the OpenCode hook telemetry plugin beside opencode.json"
-grep -Fq '/home/runner/.config/opencode/hindsight.js' "$runner_dockerfile" ||
+grep -Fq '/home/runner/.config/opencode/hindsight' "$runner_dockerfile" ||
   fail "runner image does not install the OpenCode Hindsight plugin beside opencode.json"
-hindsight_plugin="$repo_root/agents/opencode/hindsight.js"
-HINDSIGHT_DISABLED=true node --input-type=module - \
-  "data:text/javascript;base64,$(base64 -w0 "$hindsight_plugin")" <<'NODE' ||
+grep -Fq 'npm ci --prefix /home/runner/.config/opencode --omit=dev --ignore-scripts' "$runner_dockerfile" ||
+  fail "runner image must install @opencode/plugin from the committed lockfile via npm ci --ignore-scripts"
+
+hindsight_v1="$repo_root/agents/opencode/hindsight/v1.js"
+hindsight_v2="$repo_root/agents/opencode/hindsight/index.js"
+HINDSIGHT_DISABLED=true node --input-type=module - "$hindsight_v1" "$hindsight_v2" <<'NODE' ||
 import assert from 'node:assert/strict';
-const module = await import(process.argv[2]);
-assert.deepEqual(await module.default({ client: {}, directory: '/' }), {});
+import { pathToFileURL } from 'node:url';
+const v1 = await import(pathToFileURL(process.argv[2]).href);
+const v2 = await import(pathToFileURL(process.argv[3]).href);
+assert.deepEqual(await v1.default({ client: {}, directory: '/' }), {});
+assert.equal(await v2.default.setup({}), undefined);
 NODE
-  fail "hindsight.js must be inert when HINDSIGHT_DISABLED=true"
-HINDSIGHT_CONFIG="/nonexistent/hindsight/coding-agent.json" node --input-type=module - \
-  "data:text/javascript;base64,$(base64 -w0 "$hindsight_plugin")" <<'NODE' ||
+  fail "hindsight plugin must be inert when HINDSIGHT_DISABLED=true"
+HINDSIGHT_CONFIG="/nonexistent/hindsight/coding-agent.json" node --input-type=module - "$hindsight_v1" "$hindsight_v2" <<'NODE' ||
 import assert from 'node:assert/strict';
-const module = await import(process.argv[2]);
-assert.deepEqual(await module.default({ client: {}, directory: '/' }), {});
+import { pathToFileURL } from 'node:url';
+const v1 = await import(pathToFileURL(process.argv[2]).href);
+const v2 = await import(pathToFileURL(process.argv[3]).href);
+assert.deepEqual(await v1.default({ client: {}, directory: '/' }), {});
+assert.equal(await v2.default.setup({}), undefined);
 NODE
-  fail "hindsight.js must be inert when coding-agent.json is absent"
-# The telemetry plugin must stay inert on a dispatched runner that did not
-# select hook telemetry (no LCARS_TELEMETRY_CREDENTIALS_FILE).
-telemetry_plugin="$repo_root/agents/opencode/lcars-telemetry.js"
-LCARS_RUN_ID=run-fixture LCARS_TELEMETRY_CREDENTIALS_FILE= node --input-type=module - \
-  "data:text/javascript;base64,$(base64 -w0 "$telemetry_plugin")" <<'NODE' ||
+  fail "hindsight plugin must be inert when coding-agent.json is absent"
+
+telemetry_v1="$repo_root/agents/opencode/lcars-telemetry/v1.js"
+telemetry_v2="$repo_root/agents/opencode/lcars-telemetry/index.js"
+LCARS_RUN_ID=run-fixture LCARS_TELEMETRY_CREDENTIALS_FILE= node --input-type=module - "$telemetry_v1" "$telemetry_v2" <<'NODE' ||
 import assert from 'node:assert/strict';
-const module = await import(process.argv[2]);
-assert.deepEqual(await module.default({ client: {}, directory: '/' }), {});
+import { pathToFileURL } from 'node:url';
+const v1 = await import(pathToFileURL(process.argv[2]).href);
+const v2 = await import(pathToFileURL(process.argv[3]).href);
+assert.deepEqual(await v1.default({ client: {}, directory: '/' }), {});
+assert.equal(await v2.default.setup({}), undefined);
 NODE
-  fail "lcars-telemetry.js must be inert on a runner without hook telemetry"
+  fail "lcars-telemetry must be inert on a runner without hook telemetry"
+
 # Event mapping, throttling, subagent skip, report coalescing, and snapshot
-# hygiene, against a stub SDK client and a fake `lcars` that records each
-# payload and then deletes the snapshot the way `lcars hook opencode` does.
+# hygiene across both v1 and v2 plugin entrypoints.
 plugin_tmp="$(mktemp -d)"
 mkdir -p "$plugin_tmp/home/.local/bin" "$plugin_tmp/tmp" "$plugin_tmp/capture" \
+  "$plugin_tmp/capture2" \
   "$plugin_tmp/tmp/lcars-opencode-stale01" "$plugin_tmp/tmp/lcars-opencode-fresh01"
 touch -d '1 hour ago' "$plugin_tmp/tmp/lcars-opencode-stale01"
 cat > "$plugin_tmp/home/.local/bin/lcars" <<'FAKE'
@@ -182,24 +186,21 @@ cat > "$plugin_tmp/home/.local/bin/lcars" <<'FAKE'
 n="$(date +%s%N)"
 cat > "$CAPTURE_DIR/$n.pending"
 snapshot="$(jq -r '.transcript_path // empty' "$CAPTURE_DIR/$n.pending")"
-# Lifecycle-only reports (SessionEnd) carry no snapshot. Only ever remove a
-# plugin snapshot directory under this test's TMPDIR.
 case "$snapshot" in
   "$TMPDIR"/lcars-opencode-*/export.json)
     cp "$snapshot" "$CAPTURE_DIR/$n.snapshot"
     rm -rf "$(dirname "$snapshot")"
     ;;
 esac
-# Publish only after this detached client has finished owning its snapshot.
 mv "$CAPTURE_DIR/$n.pending" "$CAPTURE_DIR/$n.payload"
 FAKE
 chmod +x "$plugin_tmp/home/.local/bin/lcars"
 HOME="$plugin_tmp/home" TMPDIR="$plugin_tmp/tmp" CAPTURE_DIR="$plugin_tmp/capture" \
-  LCARS_RUN_ID= node --input-type=module - \
-  "data:text/javascript;base64,$(base64 -w0 "$telemetry_plugin")" <<'NODE' ||
+  LCARS_RUN_ID= node --input-type=module - "$telemetry_v1" <<'NODE' ||
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const capture = process.env.CAPTURE_DIR;
 const sessions = {
@@ -233,7 +234,7 @@ async function until(count) {
   assert.equal(payloads().length, count);
 }
 
-const module = await import(process.argv[2]);
+const module = await import(pathToFileURL(process.argv[2]).href);
 const { event } = await module.default({ client, directory: '/fallback' });
 const send = (type, properties) => event({ event: { type, properties } });
 
@@ -249,10 +250,6 @@ await until(3);
 await send('message.part.updated', { part: { type: 'tool', sessionID: 'ses_main', state: { status: 'completed' } } });
 await send('session.idle', { sessionID: 'ses_main' });
 await until(4);
-// Events arriving while a report is in flight collapse to the most
-// important one, run after the current report.
-// A deleted session is gone from the server: its end report is built from
-// the event alone, never by re-reading the session.
 holdGet = true;
 await send('session.idle', { sessionID: 'ses_main' });
 await sleep(50);
@@ -283,15 +280,92 @@ const snapshot = JSON.parse(
 );
 assert.equal(snapshot.info.id, 'ses_main');
 assert.equal(snapshot.messages.length, 1);
-// The subagent's history was never fetched.
 assert.equal(messageCalls, 5);
 assert.deepEqual(
   readdirSync(process.env.TMPDIR).filter((n) => n.startsWith('lcars-opencode-')),
   ['lcars-opencode-fresh01'],
 );
 NODE
-  fail "lcars-telemetry.js event handling regressed"
+  fail "lcars-telemetry v1 event handling regressed"
+
+HOME="$plugin_tmp/home" TMPDIR="$plugin_tmp/tmp" CAPTURE_DIR="$plugin_tmp/capture2" \
+  LCARS_RUN_ID= node --input-type=module - "$telemetry_v2" <<'NODE' ||
+import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const capture = process.env.CAPTURE_DIR;
+const sessions = {
+  ses_v2: { id: 'ses_v2', location: { directory: '/work/v2' } },
+  ses_child: { id: 'ses_child', parentID: 'ses_v2', location: { directory: '/work/v2' } },
+};
+let contextCalls = 0;
+const queue = [];
+let wake;
+const push = (type, data) => {
+  queue.push({ type, data });
+  wake?.();
+};
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const payloads = () =>
+  readdirSync(capture)
+    .filter((name) => name.endsWith('.payload'))
+    .sort()
+    .map((name) => JSON.parse(readFileSync(join(capture, name), 'utf8')));
+async function until(count) {
+  for (let i = 0; i < 200 && payloads().length < count; i++) await sleep(25);
+  assert.equal(payloads().length, count);
+}
+
+const module = await import(pathToFileURL(process.argv[2]).href);
+const cleanup = await module.default.setup({
+  location: { directory: '/fallback' },
+  session: {
+    get: async ({ sessionID }) => sessions[sessionID],
+    context: async () => {
+      contextCalls += 1;
+      return [{ id: 'msg_1', type: 'user', content: [{ type: 'text', text: 'hi' }] }];
+    },
+  },
+  event: {
+    subscribe: async function* ({ signal }) {
+      while (!signal?.aborted) {
+        while (queue.length > 0) yield queue.shift();
+        await new Promise((resolve) => {
+          wake = resolve;
+          signal?.addEventListener('abort', resolve, { once: true });
+        });
+      }
+    },
+  },
+});
+
+push('session.created', { sessionID: 'ses_child', parentID: 'ses_v2' });
+push('session.execution.succeeded', { sessionID: 'ses_child' });
+push('session.execution.started', { sessionID: 'ses_v2' });
+await until(1);
+push('session.inbox.delivered', { sessionID: 'ses_v2', inboxID: 'inb_1' });
+await until(2);
+push('session.inbox.delivered', { sessionID: 'ses_v2', inboxID: 'inb_1' });
+push('session.tool.success', { sessionID: 'ses_v2' });
+await until(3);
+push('session.execution.succeeded', { sessionID: 'ses_v2' });
+await until(4);
+delete sessions.ses_v2;
+push('session.deleted', { sessionID: 'ses_v2', location: { directory: '/work/v2' } });
+await until(5);
+await cleanup();
+
+assert.deepEqual(
+  payloads().map((p) => p.hook_event_name),
+  ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop', 'SessionEnd'],
+);
+assert.equal(contextCalls, 4);
+NODE
+  fail "lcars-telemetry v2 event handling regressed"
 rm -rf "$plugin_tmp"
+
 grep -Fq 'https://github.com/jlapenna/repo-tools.git' "$runner_dockerfile" ||
   fail "runner image no longer clones repo-tools for OpenCode"
 grep -Fq 'git init /opt/repo-tools' "$runner_dockerfile" ||

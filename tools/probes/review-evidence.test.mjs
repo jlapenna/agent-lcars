@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   evaluateReview,
   completedOpenCodeChild,
+  completedOpenCode2Child,
   antigravityChildIds,
 } from './review-evidence.mjs';
 
@@ -201,6 +202,122 @@ test('OpenCode background-start or unfinished exports are not completion proof',
   input.child.messages[0].info.finish = 'tool-calls';
   assert.equal(
     completedOpenCodeChild(input.root, input.task, input.child),
+    false,
+  );
+});
+
+// Shapes captured from OpenCode v2.3.2 `session export` of a parent that
+// delegated to a background `subagent` child.
+function openCode2Export() {
+  const call = {
+    type: 'tool',
+    id: 'call_1',
+    name: 'subagent',
+    state: {
+      status: 'completed',
+      input: { agent: 'general', description: 'review', prompt: 'Review.' },
+      metadata: {
+        sessionID: 'ses_child',
+        status: 'running',
+        truncated: false,
+      },
+    },
+  };
+  return {
+    call,
+    root: {
+      info: { id: 'ses_parent' },
+      messages: [
+        { type: 'user', text: 'Review the PR.' },
+        { type: 'assistant', finish: 'tool-calls', content: [call] },
+        { type: 'idle', outcome: 'succeeded' },
+        {
+          type: 'synthetic',
+          text: '<subagent sessionID="ses_child" state="completed" description="review">\nReview evidence.\n</subagent>',
+        },
+        {
+          type: 'assistant',
+          finish: 'stop',
+          content: [{ type: 'text', text: 'Done.' }],
+        },
+      ],
+    },
+    child: {
+      info: { id: 'ses_child', parentID: 'ses_parent', outcome: 'succeeded' },
+      messages: [
+        { type: 'user', text: 'Review.' },
+        {
+          type: 'assistant',
+          finish: 'stop',
+          content: [{ type: 'text', text: 'Review evidence.' }],
+        },
+        { type: 'idle', outcome: 'succeeded' },
+      ],
+    },
+  };
+}
+
+test('OpenCode 2 background children complete through their own export and parent report', () => {
+  const input = openCode2Export();
+  assert.equal(
+    completedOpenCode2Child(input.root, input.call, input.child, 12),
+    true,
+  );
+});
+
+test('OpenCode 2 children need a native parent, a finished turn and the parent report', () => {
+  for (const mutate of [
+    (input) => (input.child.info.parentID = 'another-parent'),
+    (input) => (input.child.info.outcome = 'failed'),
+    (input) => (input.child.messages[1].finish = 'tool-calls'),
+    (input) =>
+      (input.child.messages[1].content = [{ type: 'text', text: ' ' }]),
+    (input) => (input.call.state.metadata.sessionID = 'ses_other'),
+    (input) => (input.call.state.metadata.truncated = true),
+    (input) => input.root.messages.splice(3, 1),
+    (input) => (input.call.state.input.sessionID = input.child.info.id),
+    (input) =>
+      input.child.messages.splice(2, 0, { type: 'user', text: 'Continue.' }),
+  ]) {
+    const input = openCode2Export();
+    mutate(input);
+    assert.equal(
+      completedOpenCode2Child(input.root, input.call, input.child, 12),
+      false,
+    );
+  }
+});
+
+test('OpenCode 2 step-limit summaries cannot qualify as completed passes', () => {
+  const input = openCode2Export();
+  const steps = Array.from({ length: 11 }, () => ({
+    type: 'assistant',
+    finish: 'tool-calls',
+    content: [],
+  }));
+  input.child.messages.splice(1, 0, ...steps.slice(1));
+  assert.equal(
+    completedOpenCode2Child(input.root, input.call, input.child, 12),
+    true,
+  );
+  input.child.messages.splice(1, 0, steps[0]);
+  assert.equal(
+    completedOpenCode2Child(input.root, input.call, input.child, 12),
+    false,
+  );
+
+  // Even when prior model steps are unavailable, an explicit step-limit
+  // report identifies an incomplete pass.
+  const incomplete = openCode2Export();
+  incomplete.child.messages[1].content[0].text =
+    'The maximum number of steps for this agent has been reached.';
+  assert.equal(
+    completedOpenCode2Child(
+      incomplete.root,
+      incomplete.call,
+      incomplete.child,
+      12,
+    ),
     false,
   );
 });

@@ -94,16 +94,73 @@ export const opencodeAdapter: TranscriptAdapter = {
 
     for (const messageValue of messages) {
       const message = asRecord(messageValue);
-      const messageInfo = message && asRecord(message['info']);
-      if (!message || !messageInfo) continue;
-      if (asString(messageInfo['role']) === 'user') turns++;
-      if (asString(messageInfo['role']) === 'assistant') {
-        messageModelId = asString(messageInfo['modelID']) ?? messageModelId;
-        messageProviderId =
-          asString(messageInfo['providerID']) ?? messageProviderId;
+      if (!message) continue;
+      const messageInfo = asRecord(message['info']);
+      if (messageInfo) {
+        if (asString(messageInfo['role']) === 'user') turns++;
+        if (asString(messageInfo['role']) === 'assistant') {
+          messageModelId = asString(messageInfo['modelID']) ?? messageModelId;
+          messageProviderId =
+            asString(messageInfo['providerID']) ?? messageProviderId;
+        }
+
+        const messageTime = asRecord(messageInfo['time']);
+        const messageActivity =
+          timestamp(messageTime?.['completed']) ??
+          timestamp(messageTime?.['created']);
+        if (
+          messageActivity &&
+          (!lastActivityAt || messageActivity > lastActivityAt)
+        ) {
+          lastActivityAt = messageActivity;
+        }
+
+        const messageTokens = tokenUsage(messageInfo['tokens']);
+        if (messageTokens) {
+          measuredMessageTokens = true;
+          addTokens(summedTokens, messageTokens);
+        }
+        const messageCost = asNumber(messageInfo['cost']);
+        if (messageCost !== undefined) {
+          measuredMessageCost = true;
+          summedCost += messageCost;
+        }
+
+        for (const partValue of asArray(message['parts']) ?? []) {
+          const part = asRecord(partValue);
+          if (!part || asString(part['type']) !== 'tool') continue;
+          const name = asString(part['tool']);
+          if (!name) continue;
+          toolCallCounts[name] = (toolCallCounts[name] ?? 0) + 1;
+
+          const state = asRecord(part['state']);
+          const stateTime = asRecord(state?.['time']);
+          const toolTimestamp =
+            timestamp(stateTime?.['end']) ??
+            timestamp(stateTime?.['start']) ??
+            messageActivity;
+          if (
+            toolTimestamp &&
+            (!lastToolCall || toolTimestamp > lastToolCall.timestamp)
+          ) {
+            lastToolCall = { name, timestamp: toolTimestamp };
+          }
+        }
+        continue;
       }
 
-      const messageTime = asRecord(messageInfo['time']);
+      // OpenCode 2 exports and `ctx.session.context` snapshots flatten each
+      // item to `{ id, type, time, model, content, tokens, cost }`.
+      const messageType = asString(message['type']);
+      if (messageType === 'user') turns++;
+      if (messageType === 'assistant') {
+        const msgModel = asRecord(message['model']);
+        messageModelId = asString(msgModel?.['id']) ?? messageModelId;
+        messageProviderId =
+          asString(msgModel?.['providerID']) ?? messageProviderId;
+      }
+
+      const messageTime = asRecord(message['time']);
       const messageActivity =
         timestamp(messageTime?.['completed']) ??
         timestamp(messageTime?.['created']);
@@ -114,27 +171,31 @@ export const opencodeAdapter: TranscriptAdapter = {
         lastActivityAt = messageActivity;
       }
 
-      const messageTokens = tokenUsage(messageInfo['tokens']);
+      const messageTokens = tokenUsage(message['tokens']);
       if (messageTokens) {
         measuredMessageTokens = true;
         addTokens(summedTokens, messageTokens);
       }
-      const messageCost = asNumber(messageInfo['cost']);
+      const messageCost = asNumber(message['cost']);
       if (messageCost !== undefined) {
         measuredMessageCost = true;
         summedCost += messageCost;
       }
 
-      for (const partValue of asArray(message['parts']) ?? []) {
+      for (const partValue of asArray(message['content']) ?? []) {
         const part = asRecord(partValue);
         if (!part || asString(part['type']) !== 'tool') continue;
-        const name = asString(part['tool']);
+        const name = asString(part['name']) ?? asString(part['tool']);
         if (!name) continue;
         toolCallCounts[name] = (toolCallCounts[name] ?? 0) + 1;
 
+        const partTime = asRecord(part['time']);
         const state = asRecord(part['state']);
         const stateTime = asRecord(state?.['time']);
         const toolTimestamp =
+          timestamp(partTime?.['completed']) ??
+          timestamp(partTime?.['ran']) ??
+          timestamp(partTime?.['created']) ??
           timestamp(stateTime?.['end']) ??
           timestamp(stateTime?.['start']) ??
           messageActivity;
@@ -153,15 +214,16 @@ export const opencodeAdapter: TranscriptAdapter = {
     const title = asString(info['title']);
     const infoCost = asNumber(info['cost']);
     const resolvedModel = asString(info['resolvedModel']);
+    const location = asRecord(info['location']);
+    const cwd =
+      asString(info['directory']) ?? asString(location?.['directory']);
 
     return [
       {
         sessionId,
         source: 'cli',
         agent: 'opencode',
-        ...(asString(info['directory']) && {
-          cwd: asString(info['directory']),
-        }),
+        ...(cwd && { cwd }),
         // OpenCode records the provider/model it requested. A gateway such
         // as LiteLLM may resolve this route to a different physical backend.
         ...(modelId && {
