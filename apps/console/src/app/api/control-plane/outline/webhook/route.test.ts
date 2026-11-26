@@ -41,6 +41,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   if (original === undefined)
     delete process.env.AGENT_LCARS_OUTLINE_WEBHOOK_SECRET;
@@ -89,34 +90,89 @@ describe('Outline signed shadow receiver', () => {
     }
   });
 
-  it('rejects excess concurrent deliveries before reading and frees capacity', async () => {
+  function heldDelivery() {
+    const stream = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = stream.writable.getWriter();
     const body = JSON.stringify(event);
-    const heldDelivery = () => {
-      const stream = new TransformStream<Uint8Array, Uint8Array>();
-      const writer = stream.writable.getWriter();
-      const delivery = new Request(request(body), {
-        body: stream.readable,
-        duplex: 'half',
-      } as RequestInit);
-      return { writer, response: POST(delivery) };
+    const delivery = new Request(request(body), {
+      body: stream.readable,
+      duplex: 'half',
+    } as RequestInit);
+    let sent: Promise<void> | undefined;
+    return {
+      delivery,
+      response: POST(delivery),
+      send: () =>
+        (sent ??= writer.write(Buffer.from(body)).then(() => writer.close())),
     };
+  }
+
+  it('records a ten-delivery burst while waiting bodies stay unread', async () => {
+    const deliveries = Array.from({ length: 10 }, heldDelivery);
+    try {
+      await Promise.resolve();
+      expect(deliveries.map(({ delivery }) => delivery.bodyUsed)).toEqual([
+        true,
+        true,
+        ...Array<boolean>(8).fill(false),
+      ]);
+
+      const excess = request();
+      const response = await POST(excess);
+      expect(response.status).toBe(503);
+      expect(excess.bodyUsed).toBe(false);
+    } finally {
+      await Promise.all(deliveries.map(({ send }) => send()));
+    }
+    const results = await Promise.all(
+      deliveries.map(({ response }) => response),
+    );
+    expect(results.map(({ status }) => status)).toEqual(
+      Array<number>(10).fill(200),
+    );
+  });
+
+  it('expires queued deliveries without consuming a slot or reading the body', async () => {
+    vi.useFakeTimers();
     const first = heldDelivery();
     const second = heldDelivery();
     try {
-      const excess = request(body);
-      const response = await POST(excess);
-      expect(response.status).toBe(503);
-      expect(response.headers.get('retry-after')).toBe('1');
-      expect(excess.bodyUsed).toBe(false);
+      const waiting = request();
+      const pending = POST(waiting);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect((await pending).status).toBe(503);
+      expect(waiting.bodyUsed).toBe(false);
 
-      await first.writer.write(Buffer.from(body));
-      await first.writer.close();
-      expect((await first.response).status).toBe(200);
-      expect((await POST(request(body))).status).toBe(200);
+      const next = POST(request());
+      await first.send();
+      expect((await next).status).toBe(200);
     } finally {
       await Promise.allSettled([
-        first.writer.close(),
-        second.writer.close(),
+        first.send(),
+        second.send(),
+        first.response,
+        second.response,
+      ]);
+    }
+  });
+
+  it('drops a disconnected waiter and admits the next delivery', async () => {
+    const first = heldDelivery();
+    const second = heldDelivery();
+    const controller = new AbortController();
+    const abandoned = new Request(request(), { signal: controller.signal });
+    try {
+      const pending = POST(abandoned);
+      const next = POST(request());
+      controller.abort();
+      expect((await pending).status).toBe(503);
+      expect(abandoned.bodyUsed).toBe(false);
+      await first.send();
+      expect((await next).status).toBe(200);
+    } finally {
+      await Promise.allSettled([
+        first.send(),
+        second.send(),
         first.response,
         second.response,
       ]);

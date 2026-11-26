@@ -17,7 +17,42 @@ export const OUTLINE_WEBHOOK_MAX_BYTES = 32 * 1024 * 1024;
 // (128 MiB total at the limit). Keep the slots through decoding and JSON parsing
 // to leave the rest of the 2 GiB Console instance available for shared traffic.
 const MAX_IN_FLIGHT_DELIVERIES = 2;
+// One default Outline worker can send ten tasks concurrently. Queue the
+// other eight without pulling their bodies, and leave most of Outline's
+// five-second request timeout for upload and verification after admission.
+const MAX_WAITING_DELIVERIES = 8;
+const MAX_WAIT_MS = 2_000;
 let inFlightDeliveries = 0;
+const waitingDeliveries = new Set<(admitted: boolean) => void>();
+
+async function acquireDeliverySlot(signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return false;
+  if (inFlightDeliveries < MAX_IN_FLIGHT_DELIVERIES) {
+    inFlightDeliveries++;
+    return true;
+  }
+  if (waitingDeliveries.size >= MAX_WAITING_DELIVERIES) return false;
+
+  return new Promise((resolve) => {
+    const finish = (admitted: boolean) => {
+      clearTimeout(timeout);
+      signal.removeEventListener('abort', leaveQueue);
+      waitingDeliveries.delete(finish);
+      resolve(admitted);
+    };
+    const leaveQueue = () => finish(false);
+    const timeout = setTimeout(leaveQueue, MAX_WAIT_MS);
+    waitingDeliveries.add(finish);
+    signal.addEventListener('abort', leaveQueue, { once: true });
+  });
+}
+
+function releaseDeliverySlot(): void {
+  // Transfer the slot to the oldest waiter before a new request can take it.
+  const next = waitingDeliveries.values().next().value;
+  if (next) next(true);
+  else inFlightDeliveries--;
+}
 
 /** Shadow only: authenticate and observe identifiers, never deliver. The
  * existing bridge remains responsible until the explicit cutover. API reads
@@ -50,14 +85,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     report('unauthorized');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (inFlightDeliveries >= MAX_IN_FLIGHT_DELIVERIES) {
+  if (!(await acquireDeliverySlot(request.signal))) {
     report('overloaded');
     return NextResponse.json(
       { error: 'Outline shadow intake is busy' },
       { status: 503, headers: { 'Retry-After': '1' } },
     );
   }
-  inFlightDeliveries++;
   try {
     const body = await readBoundedRequestBody(
       request,
@@ -100,6 +134,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     report('shadow', { ...parsed.notice });
     return NextResponse.json({ ok: true, mode: 'shadow', outcome: 'recorded' });
   } finally {
-    inFlightDeliveries--;
+    releaseDeliverySlot();
   }
 }
