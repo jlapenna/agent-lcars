@@ -262,7 +262,7 @@ test('@navperf Bridge summaries wrap and signal a slow navigation on phones', as
   await expect(agents).toBeVisible();
 
   const details = summaries.locator('.lcars-readout__detail');
-  await expect(details).toHaveCount(3);
+  await expect(details).toHaveCount(4);
   expect(
     await details.evaluateAll((elements) =>
       elements
@@ -270,6 +270,38 @@ test('@navperf Bridge summaries wrap and signal a slow navigation on phones', as
         .map((element) => element.textContent),
     ),
   ).toEqual([]);
+
+  const cells = await summaries.locator('.lcars-readout').evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const style = getComputedStyle(node);
+      const value = node.querySelector('.lcars-readout__value');
+      return {
+        left: Math.round(node.getBoundingClientRect().left),
+        top: Math.round(node.getBoundingClientRect().top),
+        borderLeftColor: style.borderLeftColor,
+        paddingLeft: style.paddingLeft,
+        valueFontSize: value ? getComputedStyle(value).fontSize : null,
+      };
+    }),
+  );
+  expect(cells).toHaveLength(4);
+  // 2x2 grid at 390px: row 1 (Agents, Shuttlebay) and row 2 (Inbox, Work)
+  // align column-for-column, drop the leading column's divider on both rows,
+  // and size every readout figure identically.
+  const [agentsCell, shuttlebayCell, inboxCell, workCell] = cells;
+  expect(agentsCell?.top).toBe(shuttlebayCell?.top);
+  expect(inboxCell?.top).toBe(workCell?.top);
+  expect(inboxCell?.top).toBeGreaterThan(
+    agentsCell?.top ?? Number.POSITIVE_INFINITY,
+  );
+  expect(agentsCell?.left).toBe(inboxCell?.left);
+  expect(shuttlebayCell?.left).toBe(workCell?.left);
+  expect(agentsCell?.paddingLeft).toBe(inboxCell?.paddingLeft);
+  expect(agentsCell?.borderLeftColor).toBe('rgba(0, 0, 0, 0)');
+  expect(inboxCell?.borderLeftColor).toBe('rgba(0, 0, 0, 0)');
+  expect(shuttlebayCell?.borderLeftColor).not.toBe('rgba(0, 0, 0, 0)');
+  expect(workCell?.borderLeftColor).not.toBe('rgba(0, 0, 0, 0)');
+  expect(new Set(cells.map((cell) => cell.valueFontSize)).size).toBe(1);
 
   const label = agents.locator('.lcars-readout__label');
   const background = () =>

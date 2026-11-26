@@ -207,9 +207,15 @@ details.more[open] .more-panel { position: absolute; z-index: 5; top: calc(100% 
 .content { padding: 20px; display: grid; gap: 28px; }
 
 /* ---- Readouts ---- */
-.readouts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); row-gap: 16px; }
-.readout { padding: 2px 20px; border-left: 1px solid var(--hairline); min-width: 0; }
-.readout:first-child { border-left: 0; padding-left: 4px; }
+.readouts { container: readouts / inline-size; display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); row-gap: 16px; }
+.readout { padding: 2px 16px; border-left: 1px solid var(--hairline); min-width: 0; }
+.readout:first-child { border-left-color: transparent; }
+@container readouts (inline-size < 19rem) { .readout { border-left-color: transparent; } }
+@container readouts (inline-size >= 19rem) and (inline-size < 28.5rem) { .readout:nth-child(2n + 1) { border-left-color: transparent; } }
+@container readouts (inline-size >= 28.5rem) and (inline-size < 38rem) { .readout:nth-child(3n + 1) { border-left-color: transparent; } }
+@container readouts (inline-size >= 38rem) and (inline-size < 47.5rem) { .readout:nth-child(4n + 1) { border-left-color: transparent; } }
+@container readouts (inline-size >= 47.5rem) and (inline-size < 57rem) { .readout:nth-child(5n + 1) { border-left-color: transparent; } }
+@container readouts (inline-size >= 57rem) and (inline-size < 66.5rem) { .readout:nth-child(6n + 1) { border-left-color: transparent; } }
 a.readout { display: block; color: var(--accent-ink); text-decoration: none; }
 a.readout .eyebrow { color: inherit; text-decoration: underline; text-underline-offset: .2em; }
 a.readout:is(:hover, :focus-visible) .eyebrow { text-decoration-thickness: 2px; }
@@ -346,8 +352,6 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
 
 @media (max-width: 1320px) {
   .cols { grid-template-columns: minmax(0, 1fr); }
-  .readouts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .readout:nth-child(4) { border-left: 0; padding-left: 4px; }
 }
 
 /* ---- Below 64em: the rail folds into a compact elbow around the header ---- */
@@ -369,9 +373,6 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
   .nav a small { display: none; }
   .strip { display: block; padding: 12px 0 0; }
   .body { padding: 12px 12px 24px 64px; }
-  .readouts { grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); }
-  .readout:nth-child(n) { border-left: 1px solid var(--hairline); padding-left: 16px; }
-  .readout:first-child { border-left: 0; padding-left: 4px; }
   .refresh-label { display: none; }
   .compact-link { display: inline; }
   .cost-7d { width: auto; }
@@ -406,10 +407,6 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
   .phone-only { display: flex; }
   .content { padding: 16px 0 0; gap: 24px; }
   .content > .readouts, .content > .alert { margin: 0 12px; }
-  .readouts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .readout { padding: 2px 12px; }
-  .readout:nth-child(odd) { border-left: 0; padding-left: 4px; }
-  .readout:nth-child(even) { border-left: 1px solid var(--hairline); }
   .panel { padding-right: 12px; }
   .panel-head .meta { margin-left: 0; width: 100%; }
   /* tables reflow into stacked rows */
@@ -823,6 +820,7 @@ function destinationReadouts() {
     ${cell('agents', 'Agents', '7', 'Live runs · 2 active CLI sessions')}
     ${cell('shuttlebay', 'Shuttlebay', '11 / 12', 'Runners online · fleet-wide')}
     ${cell('inbox', 'Inbox', '3', 'Decisions waiting')}
+    ${cell('work', 'Work', '1', 'Stopped work · 3 event-driven')}
   </section>`;
 }
 

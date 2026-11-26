@@ -276,3 +276,84 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
     },
   ];
 }
+
+export interface BridgeDestinationReadoutsInput {
+  agentsHref: string;
+  liveRunCount: number;
+  liveRunsAvailable: boolean;
+  activeCliSessionCount: number;
+  cliSessionsAvailable: boolean;
+  runnerCount?: string | number;
+  hasHostInventory: boolean;
+  inboxHref: string;
+  decisionCount: number;
+  nativeInboxAvailable: boolean;
+  workHref: string;
+  work: {
+    authorized: boolean;
+    error?: string;
+    stoppedCount: number;
+    hasMoreStopped: boolean;
+    eventCount: number;
+    eventWindowed: boolean;
+  };
+}
+
+/**
+ * The Bridge's destination-summary row (design/fleet-console.html): four
+ * linked summaries (Agents, Shuttlebay, Inbox, Work) drawn solely from reads
+ * the Bridge already holds. Any failed or unauthorized source reports `—`
+ * rather than zero.
+ */
+export function bridgeDestinationReadouts(
+  input: BridgeDestinationReadoutsInput,
+): ConsoleReadout[] {
+  const workAvailable = input.work.authorized && !input.work.error;
+  return [
+    {
+      id: 'agents',
+      label: 'Agents',
+      href: input.agentsHref,
+      value: input.liveRunsAvailable ? input.liveRunCount : UNAVAILABLE,
+      detail: input.cliSessionsAvailable
+        ? `Live runs · ${input.activeCliSessionCount} active CLI sessions`
+        : 'Live runs · CLI sessions unavailable',
+    },
+    {
+      id: 'shuttlebay',
+      label: 'Shuttlebay',
+      href: '/shuttlebay',
+      value: input.runnerCount ?? UNAVAILABLE,
+      detail:
+        input.runnerCount === undefined
+          ? 'Runner inventory unavailable'
+          : input.hasHostInventory
+            ? 'Runners online · fleet-wide'
+            : 'ARC runners registered · fleet-wide',
+    },
+    {
+      id: 'inbox',
+      label: 'Inbox',
+      href: input.inboxHref,
+      value: input.nativeInboxAvailable ? input.decisionCount : UNAVAILABLE,
+      detail: input.nativeInboxAvailable
+        ? 'Decisions waiting'
+        : 'Native decisions unavailable',
+    },
+    {
+      id: 'work',
+      label: 'Work',
+      href: input.workHref,
+      value: workAvailable
+        ? input.work.hasMoreStopped
+          ? `${input.work.stoppedCount}+`
+          : input.work.stoppedCount
+        : UNAVAILABLE,
+      detail: input.work.error
+        ? 'Work summary unavailable'
+        : !input.work.authorized
+          ? 'Work grant required'
+          : `Stopped work · ${input.work.eventCount}${input.work.eventWindowed ? '+' : ''} event-driven`,
+    },
+  ];
+}

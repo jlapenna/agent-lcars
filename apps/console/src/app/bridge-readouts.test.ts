@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { RunTimeline } from '../lib/run-history';
 import {
+  bridgeDestinationReadouts,
+  type BridgeDestinationReadoutsInput,
   type BridgeReadoutInput,
   bridgeReadouts,
   dayOfHours,
@@ -246,5 +248,95 @@ describe('dayOfHours', () => {
     expect(values?.at(-1)).toBe(1.5);
     expect(dayOfHours(undefined)).toBeUndefined();
     expect(dayOfHours(Array.from({ length: 24 }, () => 1))).toHaveLength(24);
+  });
+});
+
+describe('bridgeDestinationReadouts', () => {
+  const healthyDestinations: BridgeDestinationReadoutsInput = {
+    agentsHref: '/agents?repo=jlapenna%2Fagent-lcars',
+    liveRunCount: 5,
+    liveRunsAvailable: true,
+    activeCliSessionCount: 12,
+    cliSessionsAvailable: true,
+    runnerCount: '16 / 21',
+    hasHostInventory: true,
+    inboxHref: '/inbox?repo=jlapenna%2Fagent-lcars',
+    decisionCount: 2,
+    nativeInboxAvailable: true,
+    workHref: '/work?repo=jlapenna%2Fagent-lcars',
+    work: {
+      authorized: true,
+      stoppedCount: 3,
+      hasMoreStopped: false,
+      eventCount: 4,
+      eventWindowed: false,
+    },
+  };
+
+  it('builds the four linked destination summaries including Work', () => {
+    const readouts = bridgeDestinationReadouts(healthyDestinations);
+    expect(readouts.map((r) => r.id)).toEqual([
+      'agents',
+      'shuttlebay',
+      'inbox',
+      'work',
+    ]);
+    expect(readouts[3]).toEqual({
+      id: 'work',
+      label: 'Work',
+      href: '/work?repo=jlapenna%2Fagent-lcars',
+      value: 3,
+      detail: 'Stopped work · 4 event-driven',
+    });
+  });
+
+  it('marks paged stopped work and windowed event counts as lower bounds', () => {
+    const readouts = bridgeDestinationReadouts({
+      ...healthyDestinations,
+      work: {
+        authorized: true,
+        stoppedCount: 50,
+        hasMoreStopped: true,
+        eventCount: 12,
+        eventWindowed: true,
+      },
+    });
+    expect(readouts[3]).toMatchObject({
+      value: '50+',
+      detail: 'Stopped work · 12+ event-driven',
+    });
+  });
+
+  it('shows unavailable instead of zero when work is unauthorized or failed', () => {
+    const unauthorized = bridgeDestinationReadouts({
+      ...healthyDestinations,
+      work: {
+        authorized: false,
+        stoppedCount: 0,
+        hasMoreStopped: false,
+        eventCount: 0,
+        eventWindowed: false,
+      },
+    });
+    expect(unauthorized[3]).toMatchObject({
+      value: '—',
+      detail: 'Work grant required',
+    });
+
+    const errored = bridgeDestinationReadouts({
+      ...healthyDestinations,
+      work: {
+        authorized: true,
+        error: 'Could not load stopped work.',
+        stoppedCount: 0,
+        hasMoreStopped: false,
+        eventCount: 0,
+        eventWindowed: false,
+      },
+    });
+    expect(errored[3]).toMatchObject({
+      value: '—',
+      detail: 'Work summary unavailable',
+    });
   });
 });

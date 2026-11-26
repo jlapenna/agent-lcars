@@ -58,6 +58,7 @@ import {
   parseAgentsViewFilters,
 } from './agents/agents-view-filters';
 import { BridgeDetail } from './bridge-detail';
+import { bridgeDestinationReadouts } from './bridge-readouts';
 import { resolveBridgeDetail } from './bridge-rows';
 import {
   bridgeSelectionHref,
@@ -101,7 +102,11 @@ import { cancelItem, redispatchItem } from './work/actions';
 import { context as workContext } from './work/context';
 import { isEventWork } from './work/event-work';
 import { EventWorkActivity } from './work/event-work-activity';
-import { matchesWorkView, parseWorkViewFilters } from './work/work-list-query';
+import {
+  matchesWorkView,
+  parseWorkViewFilters,
+  workListHref,
+} from './work/work-list-query';
 
 function toCard(item: ActionItem): BoardCard {
   return {
@@ -131,6 +136,7 @@ async function getParkedWork(
   rawCursor?: string,
   view: AgentsViewFilters = {},
 ): Promise<{
+  authorized: boolean;
   items: WorkSummary[];
   eventItems: WorkSummary[];
   /** Event tasks read to find `eventItems`, and whether older ones exist. */
@@ -142,7 +148,12 @@ async function getParkedWork(
   try {
     const work = await workContext();
     if (!work.principal?.scopes.has('work.operator')) {
-      return { items: [], eventItems: [], hasMoreTasks: false };
+      return {
+        authorized: false,
+        items: [],
+        eventItems: [],
+        hasMoreTasks: false,
+      };
     }
     // Each read takes only tasks carrying the stored sort key (#3566): the
     // newest stopped tasks and the newest event tasks, instead of the newest
@@ -176,6 +187,7 @@ async function getParkedWork(
       ),
     );
     return {
+      authorized: true,
       items,
       eventItems,
       eventWindow: {
@@ -191,6 +203,7 @@ async function getParkedWork(
     // read with a reset link rather than presenting it as an empty queue.
     logger.error('agent-lcars: parked work panel unavailable:', error);
     return {
+      authorized: true,
       items: [],
       eventItems: [],
       hasMoreTasks: false,
@@ -251,6 +264,7 @@ async function IndexBody({
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
     {
+      authorized: workAuthorized,
       items: parkedWorkItems,
       eventItems,
       eventWindow,
@@ -438,9 +452,12 @@ async function IndexBody({
   const selectRun = (run: AgentRun) =>
     bridgeSelectionHref(runKey(run), repoFilterKey, stoppedCursor, view);
   const outcomesHref = agentsScopedHref(repoFilterKey, view);
-  const workHref = repoFilterKey
-    ? `/work?${new URLSearchParams({ repo: repoFilterKey })}`
-    : '/work';
+  const workHref = workListHref({
+    repo: repoFilterKey,
+    agent: view.agent,
+    window: view.window,
+    q: view.q,
+  });
 
   return (
     <ConsoleWorkspace
@@ -512,38 +529,27 @@ async function IndexBody({
     >
       <ConsoleReadouts
         label="Destination summaries"
-        readouts={[
-          {
-            id: 'agents',
-            label: 'Agents',
-            href: outcomesHref,
-            value: activity.queue ? filteredActivity.liveRuns.length : '—',
-            detail: cliSessionWarnings.length
-              ? 'Live runs · CLI sessions unavailable'
-              : `Live runs · ${activeCliSessions.length} active CLI sessions`,
+        readouts={bridgeDestinationReadouts({
+          agentsHref: outcomesHref,
+          liveRunCount: filteredActivity.liveRuns.length,
+          liveRunsAvailable: activity.queue !== undefined,
+          activeCliSessionCount: activeCliSessions.length,
+          cliSessionsAvailable: cliSessionWarnings.length === 0,
+          runnerCount,
+          hasHostInventory: runners !== undefined,
+          inboxHref,
+          decisionCount,
+          nativeInboxAvailable: nativeInbox.available,
+          workHref,
+          work: {
+            authorized: workAuthorized,
+            error: stoppedError,
+            stoppedCount: stoppedItems.length,
+            hasMoreStopped: hasMoreParkedTasks,
+            eventCount: eventItems.length,
+            eventWindowed: eventWindow?.windowed ?? false,
           },
-          {
-            id: 'shuttlebay',
-            label: 'Shuttlebay',
-            href: '/shuttlebay',
-            value: runnerCount ?? '—',
-            detail:
-              runnerCount === undefined
-                ? 'Runner inventory unavailable'
-                : runners
-                  ? 'Runners online · fleet-wide'
-                  : 'ARC runners registered · fleet-wide',
-          },
-          {
-            id: 'inbox',
-            label: 'Inbox',
-            href: inboxHref,
-            value: nativeInbox.available ? decisionCount : '—',
-            detail: nativeInbox.available
-              ? 'Decisions waiting'
-              : 'Native decisions unavailable',
-          },
-        ]}
+        })}
       />
       <section
         className="bridge-workspace"
