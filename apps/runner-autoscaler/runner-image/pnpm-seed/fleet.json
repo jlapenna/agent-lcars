@@ -2,7 +2,6 @@
   "repositories": [
     "jlapenna/agent-lcars",
     "supersprinklesracing/sprinkles",
-    "supersprinklesracing/www",
-    "supersprinklesracing/girosf"
+    "supersprinklesracing/www"
   ]
 }

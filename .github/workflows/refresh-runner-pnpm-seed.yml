@@ -48,7 +48,7 @@ jobs:
           client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
           private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
           owner: supersprinklesracing
-          repositories: sprinkles,www,girosf
+          repositories: sprinkles,www
           permission-contents: read
 
       # agent-lcars[bot] is in AGENT_BOT_LOGINS, so agent-automerge.yml picks
