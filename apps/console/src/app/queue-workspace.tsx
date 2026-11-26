@@ -261,6 +261,10 @@ export function QueueWorkspace({
     setSearch(next);
     syncControlsToUrl(filter, sort, next.trim());
   };
+  const clearSearch = () => {
+    applySearch('');
+    searchInputRef.current?.focus();
+  };
   const applyAgent = (next: string) => {
     setAgent(next);
     syncControlsToUrl(filter, sort, search.trim(), next);
@@ -549,7 +553,7 @@ export function QueueWorkspace({
               color="gray"
               size="xs"
               aria-label="Clear search text"
-              onClick={() => applySearch('')}
+              onClick={clearSearch}
             >
               <IconX aria-hidden="true" size={12} />
             </ActionIcon>
@@ -718,7 +722,7 @@ export function QueueWorkspace({
                     <Button
                       variant="default"
                       size="compact-sm"
-                      onClick={() => applySearch('')}
+                      onClick={clearSearch}
                     >
                       Clear search
                     </Button>

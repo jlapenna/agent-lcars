@@ -687,18 +687,23 @@ describe('inbox search', () => {
     expect(screen.queryByText('Review the next item')).toBeNull();
   });
 
-  it('offers a clear-search reset from the empty state', () => {
-    renderWorkspace([makeCard()]);
+  it.each(['Clear search text', 'Clear search'])(
+    'returns focus to the search field after using %s',
+    (buttonName) => {
+      renderWorkspace([makeCard()]);
 
-    fireEvent.change(
-      screen.getByRole('textbox', { name: 'Search the Inbox' }),
-      { target: { value: 'zzz-no-match' } },
-    );
-    expect(screen.getByText('No matches for “zzz-no-match”.')).toBeTruthy();
+      const input = screen.getByRole('textbox', { name: 'Search the Inbox' });
+      fireEvent.change(input, { target: { value: 'zzz-no-match' } });
+      expect(screen.getByText('No matches for “zzz-no-match”.')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
-    expect(screen.getByText('Responsive Inbox')).toBeTruthy();
-  });
+      const button = screen.getByRole('button', { name: buttonName });
+      button.focus();
+      fireEvent.click(button);
+      expect(input).toHaveFocus();
+      expect(input).toHaveValue('');
+      expect(screen.getByText('Responsive Inbox')).toBeTruthy();
+    },
+  );
 
   it('initializes from ?q= so a shared URL lands on the same view', () => {
     mockSearch = 'q=next';
