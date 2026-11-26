@@ -12,6 +12,7 @@ import {
 import { logger } from '@agent-lcars/logging';
 import { usesCodexCredentials } from '@agent-lcars/orchestrator';
 import {
+  agentDependencyEntryId,
   type DeliveryBinding,
   deliveryWaiting,
   externalizeRunMessage,
@@ -25,6 +26,9 @@ import {
   readRunIssue,
   type Run,
   runRecoveryDeadline,
+  type RunResult,
+  type Task,
+  taskKey,
 } from '@agent-lcars/orchestrator';
 import {
   type AgentRunStatus,
@@ -34,6 +38,7 @@ import {
   runsContract,
   storedClawWorkSpec,
   storedWorkPayloadSchema,
+  workIdSchema,
   workPayloadSchema,
 } from '@agent-lcars/work';
 import { deriveItemState } from '@agent-lcars/work/derive';
@@ -410,6 +415,73 @@ async function agentRunStatus(
           ...(report === undefined ? {} : { report }),
         }),
   };
+}
+
+function supportsAgentDependencyWait(
+  run: Run,
+  task: Task | undefined,
+): boolean {
+  return (
+    run.params?.mode === 'implement' &&
+    task !== undefined &&
+    !deliveryWaiting(task) &&
+    run.sourceRevision === undefined &&
+    workPayloadSchema.safeParse(task.work).data?.spec.deliverable !== 'report'
+  );
+}
+
+/** Evidence is anchored to the admitting run and to the child attempt
+ * observed at admission. A later child round cannot replace this report. */
+async function dependencyEvidence(store: OrchestratorStore, run: Run) {
+  const parentId = run.params?.dependencyParentRunId;
+  const childId = run.params?.dependencyChildRunId;
+  const state = run.params?.dependencyState;
+  if (
+    parentId === undefined ||
+    (state !== 'done' &&
+      state !== 'failed' &&
+      state !== 'canceled' &&
+      state !== 'parked' &&
+      state !== 'unavailable')
+  )
+    return undefined;
+  const parent = await store.readRun(parentId);
+  const workId = parent?.result?.dependencyWorkId;
+  if (
+    parent === undefined ||
+    workId === undefined ||
+    parent.runId === run.runId ||
+    taskKey(parent.task) !== taskKey(run.task)
+  )
+    return undefined;
+  const childTask = (await store.readTask({ workId }))?.task;
+  const owned =
+    storedClawWorkSpec(childTask?.work) !== undefined &&
+    storedWorkPayloadSchema.safeParse(childTask?.work).data?.origin
+      .principal === runCaller(parentId);
+  const child =
+    owned && childId !== undefined ? await store.readRun(childId) : undefined;
+  const exact =
+    child !== undefined &&
+    isWorkAnchor(child.task) &&
+    child.task.workId === workId
+      ? child
+      : undefined;
+  const result = exact?.result;
+  return {
+    workId,
+    state: owned ? state : 'unavailable',
+    ...(exact === undefined ? {} : { runId: exact.runId }),
+    ...(result === undefined ? {} : { ok: result.ok }),
+    ...(result?.summary === undefined ? {} : { summary: result.summary }),
+    ...(result?.message === undefined ? {} : { report: result.message }),
+    reportAvailability:
+      result?.message === undefined
+        ? 'unavailable'
+        : result.messageOverflow === undefined
+          ? 'complete'
+          : 'partial',
+  } as const;
 }
 
 export const runsRouter = os.router({
@@ -816,12 +888,17 @@ export const runsRouter = os.router({
         ? parsedTimeout
         : undefined;
     const issue = await readRunIssue(context.store, run);
+    const agentDependency = await dependencyEvidence(context.store, run);
     const shared = {
+      ...(agentDependency === undefined ? {} : { agentDependency }),
       ...(issue === undefined ? {} : { issue }),
       pipeline: run.pipeline,
       ...params,
       attemptId: formatAttemptId({ generation, intentId: run.runId }),
       generation,
+      ...(supportsAgentDependencyWait(run, task?.task)
+        ? { agentDependencyWait: true as const }
+        : {}),
       intentId: run.runId,
       ...(resume === undefined ? {} : { resume }),
       ...(timeoutMinutes === undefined ? {} : { timeoutMinutes }),
@@ -1124,6 +1201,16 @@ export const runsRouter = os.router({
       // The usual case: the worker reported its outcome, then exited. A
       // first report for a settled run retires its claim (physical exit).
       const current = (await context.store.readRun(run.runId)) ?? run;
+      if (
+        current.queue?.state === 'retired' &&
+        current.result?.dependencyWorkId !== undefined
+      ) {
+        await context.store.wakeOutbox({
+          entryId: agentDependencyEntryId(run.runId),
+          now: context.now().toISOString(),
+        });
+        await drainAfterCompletion(context, run.runId);
+      }
       return {
         runId: run.runId,
         state: current.state,
@@ -1167,23 +1254,42 @@ export const runsRouter = os.router({
     const target = claw === undefined ? anchorTarget(run, task) : undefined;
     // The shared outcome mapper validates exact references against this
     // stored run's anchor and mode, not caller-supplied identity metadata.
-    let result =
-      target === undefined
-        ? toClawRunResult(input.outcome, input.message)
-        : toRunResult(
-            target.repo,
-            input.outcome,
-            input.outcomeReference,
-            input.message,
-            {
-              issue: target.issue,
-              mode: run.params?.mode,
-              report:
-                isWorkAnchor(run.task) &&
-                workPayloadSchema.safeParse(task?.work).data?.spec
-                  .deliverable === 'report',
-            },
-          );
+    let dependencyWorkId: string | undefined;
+    if (input.outcome === 'wait-for-agent') {
+      const workId = workIdSchema.safeParse(input.outcomeReference);
+      if (!workId.success || !supportsAgentDependencyWait(run, task))
+        throw new ORPCError('CONFLICT', {
+          message: 'Invalid implementation dependency wait',
+        });
+      const child = (await context.store.readTask({ workId: workId.data }))
+        ?.task;
+      if (
+        storedWorkPayloadSchema.safeParse(child?.work).data?.origin
+          .principal !== runCaller(run.runId) ||
+        storedClawWorkSpec(child?.work) === undefined
+      )
+        throw new ORPCError('NOT_FOUND');
+      dependencyWorkId = workId.data;
+    }
+    let result: RunResult =
+      dependencyWorkId !== undefined
+        ? { ok: true, summary: 'waiting-for-agent', dependencyWorkId }
+        : target === undefined
+          ? toClawRunResult(input.outcome, input.message)
+          : toRunResult(
+              target.repo,
+              input.outcome,
+              input.outcomeReference,
+              input.message,
+              {
+                issue: target.issue,
+                mode: run.params?.mode,
+                report:
+                  isWorkAnchor(run.task) &&
+                  workPayloadSchema.safeParse(task?.work).data?.spec
+                    .deliverable === 'report',
+              },
+            );
     let publishTriage = false;
     if (triageBriefContext(run) !== undefined && result.ok) {
       try {
@@ -1356,6 +1462,11 @@ export const runsRouter = os.router({
             );
           });
       }
+    }
+    if (dependencyWorkId !== undefined && isRefusal(settled)) {
+      throw new ORPCError('CONFLICT', {
+        message: 'Implementation dependency wait was refused',
+      });
     }
     return {
       runId: run.runId,

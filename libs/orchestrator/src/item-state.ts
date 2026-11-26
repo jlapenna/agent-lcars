@@ -71,6 +71,7 @@ export function deriveItemState(
     // Only an explicit park is a human handoff. Missing deliverables and
     // execution failures need diagnosis, not a fabricated human decision.
     if (latest.result?.summary === 'park') return 'parked';
+    if (latest.result?.dependencyWorkId !== undefined) return 'running';
     return latest.result?.ok ? 'done' : 'failed';
   }
   // lost: the sweep retries until the budget is spent, then leaves it.

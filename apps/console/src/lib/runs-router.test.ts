@@ -1145,6 +1145,121 @@ describe('claim', () => {
   });
 });
 
+describe('implementation dependency completion', () => {
+  it('accepts only an investigator admitted by this authenticated attempt', async () => {
+    const f = fixture();
+    const runId = await seedQueuedGithubRun(f.store, f.orchestrator, 3635);
+    const claim = await call(
+      { ...context, ...f, principal: executorPrincipal(['claude']) },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+    expect(claim.status).toBe(200);
+    const runContext = {
+      ...context,
+      ...f,
+      bearerToken: (claim.json as { token: string }).token,
+    };
+    const brief = await call(runContext, 'GET', runPath(runId, '/brief'));
+    expect(brief.json).toMatchObject({ agentDependencyWait: true });
+    const admitChild = async (workId: string, principal: string) => {
+      await f.orchestrator.request({
+        taskId: { workId },
+        requestId: 'investigate',
+        pipeline: 'claw-investigator',
+        work: {
+          origin: { principal, channel: 'console' },
+          spec: {
+            pipeline: 'claw-investigator',
+            agent: 'octo/example/investigator',
+            priority: 'background',
+            title: 'Investigation',
+            description: 'Collect evidence',
+            sourceKey: 'investigate',
+          },
+        },
+      });
+    };
+    const owned = wid('owned-investigator');
+    const foreign = wid('foreign-investigator');
+    await admitChild(owned, `run:${runId}`);
+    await admitChild(foreign, 'run:another-attempt');
+    const complete = (workId: string) =>
+      call(runContext, 'POST', runPath(runId, '/complete'), {
+        outcome: 'wait-for-agent',
+        outcomeReference: workId,
+      });
+    expect((await complete(foreign)).status).toBe(404);
+    expect((await complete(wid('unknown-investigator'))).status).toBe(404);
+    expect((await complete(owned)).json).toMatchObject({ state: 'finished' });
+    expect((await f.store.readRun(runId))?.result).toEqual({
+      ok: true,
+      summary: 'waiting-for-agent',
+      dependencyWorkId: owned,
+    });
+    const parent = (await f.store.readRun(runId))!;
+    await f.orchestrator.executorExited(runId, {
+      subject: parent.queue!.claimedBySubject!,
+      runner: 'runner-1',
+      claimFingerprint: parent.queue!.tokenHash!,
+    });
+    const child = (await f.store.listRuns({ workId: owned }))[0]!;
+    await f.orchestrator.report(child.runId, {
+      ok: false,
+      summary: 'agent-failed',
+      message: 'The host returned only partial data.',
+    });
+    const successor = await f.orchestrator.request({
+      taskId: parent.task,
+      requestId: `wait-for-agent/${runId}`,
+      requestSource: 'event',
+      expectedDependency: { runId, workId: owned },
+      pipeline: parent.pipeline,
+      params: {
+        mode: 'implement',
+        context: 'original implementation context',
+        dependencyParentRunId: runId,
+        dependencyChildRunId: child.runId,
+        dependencyState: 'failed',
+      },
+    });
+    expect(successor).not.toHaveProperty('refused');
+    const successorId = successor.run!.runId;
+    await f.store.enqueueRun({ runId: successorId, now: NOW });
+    await f.orchestrator.confirmDispatch(successorId);
+    const newClaim = await call(
+      { ...context, ...f, principal: executorPrincipal(['claude']) },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-2' },
+    );
+    expect(newClaim.status).toBe(200);
+    expect(
+      (await call(runContext, 'GET', runPath(runId, '/brief'))).status,
+    ).toBe(401);
+    const successorBrief = await call(
+      {
+        ...runContext,
+        bearerToken: (newClaim.json as { token: string }).token,
+      },
+      'GET',
+      runPath(successorId, '/brief'),
+    );
+    expect(successorBrief.json).toMatchObject({
+      context: 'original implementation context',
+      agentDependency: {
+        workId: owned,
+        state: 'failed',
+        ok: false,
+        summary: 'agent-failed',
+        report: 'The host returned only partial data.',
+        reportAvailability: 'complete',
+      },
+    });
+  });
+});
+
 describe('claim -> brief -> heartbeat -> complete', () => {
   it('settles the run finished/ok and the item derives done', async () => {
     const { store, orchestrator, now } = fixture();

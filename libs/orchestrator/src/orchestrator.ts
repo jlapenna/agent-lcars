@@ -126,6 +126,8 @@ export interface RequestInput {
    * Cancellation and admission share the request transaction and its claim fence. */
   replaceQueuedRunId?: string;
   expectedParkedRunId?: string;
+  /** Trusted dependency monitor: resume only this latest yielding attempt. */
+  expectedDependency?: { runId: string; workId: string };
   githubDecisionParams?: (
     projection: GithubAnchorProjection,
   ) => Record<string, string> | undefined;
@@ -188,12 +190,15 @@ export class Orchestrator {
       requestId: input.requestId,
       requestSource,
       sourceRevision: input.sourceRevision,
-      readGithubProjection: input.githubDecisionParams !== undefined,
+      readGithubProjection:
+        input.githubDecisionParams !== undefined ||
+        input.expectedDependency !== undefined,
       ...(input.requestBinding === undefined
         ? {}
         : { requestBinding: input.requestBinding }),
       readProviderRouting:
         input.expectedParkedRunId !== undefined ||
+        input.expectedDependency !== undefined ||
         input.labelProviderRequest !== undefined ||
         input.useEffectivePipeline === true,
       decide: ({
@@ -265,6 +270,20 @@ export class Orchestrator {
             latestRun.result?.summary !== 'park')
         ) {
           return refused('stale-lease');
+        }
+        if (input.expectedDependency !== undefined) {
+          if (
+            task?.task.closedAt !== undefined ||
+            githubProjection?.state === 'closed' ||
+            latestRun?.runId !== input.expectedDependency.runId ||
+            latestRun.state !== 'finished' ||
+            latestRun.result?.dependencyWorkId !==
+              input.expectedDependency.workId ||
+            pipeline !== latestRun.pipeline
+          )
+            return refused('stale-lease');
+          if (latestRun.queue?.state === 'claimed' || retainedClaims?.length)
+            return refused('task-busy');
         }
         const decisionParams =
           githubProjection === undefined

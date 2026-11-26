@@ -672,6 +672,10 @@
                                 "ok": {
                                   "type": "boolean"
                                 },
+                                "dependencyWorkId": {
+                                  "type": "string",
+                                  "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                                },
                                 "summary": {
                                   "type": "string",
                                   "maxLength": 4096
@@ -2731,6 +2735,10 @@
                                 "ok": {
                                   "type": "boolean"
                                 },
+                                "dependencyWorkId": {
+                                  "type": "string",
+                                  "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                                },
                                 "summary": {
                                   "type": "string",
                                   "maxLength": 4096
@@ -4595,6 +4603,10 @@
                               "ok": {
                                 "type": "boolean"
                               },
+                              "dependencyWorkId": {
+                                "type": "string",
+                                "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                              },
                               "summary": {
                                 "type": "string",
                                 "maxLength": 4096
@@ -5929,6 +5941,10 @@
                             "properties": {
                               "ok": {
                                 "type": "boolean"
+                              },
+                              "dependencyWorkId": {
+                                "type": "string",
+                                "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
                               },
                               "summary": {
                                 "type": "string",
@@ -7268,6 +7284,10 @@
                             "properties": {
                               "ok": {
                                 "type": "boolean"
+                              },
+                              "dependencyWorkId": {
+                                "type": "string",
+                                "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
                               },
                               "summary": {
                                 "type": "string",
@@ -8649,6 +8669,10 @@
                               "ok": {
                                 "type": "boolean"
                               },
+                              "dependencyWorkId": {
+                                "type": "string",
+                                "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                              },
                               "summary": {
                                 "type": "string",
                                 "maxLength": 4096
@@ -9991,6 +10015,10 @@
                                     "ok": {
                                       "type": "boolean"
                                     },
+                                    "dependencyWorkId": {
+                                      "type": "string",
+                                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                                    },
                                     "summary": {
                                       "type": "string",
                                       "maxLength": 4096
@@ -11321,6 +11349,10 @@
                             "properties": {
                               "ok": {
                                 "type": "boolean"
+                              },
+                              "dependencyWorkId": {
+                                "type": "string",
+                                "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
                               },
                               "summary": {
                                 "type": "string",
@@ -12698,6 +12730,10 @@
                             "properties": {
                               "ok": {
                                 "type": "boolean"
+                              },
+                              "dependencyWorkId": {
+                                "type": "string",
+                                "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
                               },
                               "summary": {
                                 "type": "string",
@@ -14111,6 +14147,10 @@
                             "properties": {
                               "ok": {
                                 "type": "boolean"
+                              },
+                              "dependencyWorkId": {
+                                "type": "string",
+                                "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
                               },
                               "summary": {
                                 "type": "string",
@@ -18234,6 +18274,49 @@
                         "intentId": {
                           "type": "string"
                         },
+                        "agentDependencyWait": {
+                          "type": "boolean",
+                          "const": true
+                        },
+                        "agentDependency": {
+                          "type": "object",
+                          "properties": {
+                            "workId": {
+                              "type": "string",
+                              "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "done",
+                                "failed",
+                                "canceled",
+                                "parked",
+                                "unavailable"
+                              ]
+                            },
+                            "runId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "ok": {
+                              "type": "boolean"
+                            },
+                            "summary": {
+                              "type": "string"
+                            },
+                            "report": {
+                              "type": "string"
+                            },
+                            "reportAvailability": {
+                              "type": "string",
+                              "enum": ["complete", "partial", "unavailable"]
+                            }
+                          },
+                          "required": ["workId", "state", "reportAvailability"],
+                          "additionalProperties": false
+                        },
                         "resume": {
                           "type": "object",
                           "properties": {
@@ -18564,6 +18647,49 @@
                         "intentId": {
                           "type": "string"
                         },
+                        "agentDependencyWait": {
+                          "type": "boolean",
+                          "const": true
+                        },
+                        "agentDependency": {
+                          "type": "object",
+                          "properties": {
+                            "workId": {
+                              "type": "string",
+                              "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "done",
+                                "failed",
+                                "canceled",
+                                "parked",
+                                "unavailable"
+                              ]
+                            },
+                            "runId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "ok": {
+                              "type": "boolean"
+                            },
+                            "summary": {
+                              "type": "string"
+                            },
+                            "report": {
+                              "type": "string"
+                            },
+                            "reportAvailability": {
+                              "type": "string",
+                              "enum": ["complete", "partial", "unavailable"]
+                            }
+                          },
+                          "required": ["workId", "state", "reportAvailability"],
+                          "additionalProperties": false
+                        },
                         "resume": {
                           "type": "object",
                           "properties": {
@@ -18871,6 +18997,49 @@
                         },
                         "intentId": {
                           "type": "string"
+                        },
+                        "agentDependencyWait": {
+                          "type": "boolean",
+                          "const": true
+                        },
+                        "agentDependency": {
+                          "type": "object",
+                          "properties": {
+                            "workId": {
+                              "type": "string",
+                              "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "done",
+                                "failed",
+                                "canceled",
+                                "parked",
+                                "unavailable"
+                              ]
+                            },
+                            "runId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 175
+                            },
+                            "ok": {
+                              "type": "boolean"
+                            },
+                            "summary": {
+                              "type": "string"
+                            },
+                            "report": {
+                              "type": "string"
+                            },
+                            "reportAvailability": {
+                              "type": "string",
+                              "enum": ["complete", "partial", "unavailable"]
+                            }
+                          },
+                          "required": ["workId", "state", "reportAvailability"],
+                          "additionalProperties": false
                         },
                         "resume": {
                           "type": "object",

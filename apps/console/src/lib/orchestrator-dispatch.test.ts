@@ -1990,3 +1990,173 @@ describe('describeLostOutcome', () => {
     );
   });
 });
+
+describe('waiting for an admitted investigator', () => {
+  const workId = '01J5Z3K9QX8F0N2B4V6C8D1E4J';
+  const childAnchor = { workId };
+
+  async function waitingFixture() {
+    const { store, orchestrator } = fixture();
+    const parent = await requested(orchestrator);
+    const child = decidedRun(
+      await orchestrator.request({
+        taskId: childAnchor,
+        requestId: 'investigation',
+        pipeline: 'claw-investigator',
+        work: {
+          origin: { principal: `run:${parent.runId}`, channel: 'console' },
+          spec: {
+            title: 'Investigation',
+            description: 'Collect host evidence',
+            pipeline: 'claw-investigator',
+            priority: 'background',
+            agent: 'octo/example/investigator',
+            sourceKey: 'investigation',
+          },
+        },
+      }),
+    );
+    const fetchImpl = vi.fn(async () =>
+      Response.json({
+        state: 'open',
+        updated_at: NOW,
+        assignees: [{ login: 'agent-lcars-bot' }],
+      }),
+    );
+    const drain = () =>
+      drainOutbox({ store, orchestrator, tokens, fetchImpl, now: () => NOW });
+    await drain();
+    const yieldParent = () =>
+      orchestrator.report(parent.runId, {
+        ok: true,
+        summary: 'waiting-for-agent',
+        dependencyWorkId: workId,
+      });
+    return {
+      store,
+      orchestrator,
+      parent,
+      child,
+      drain,
+      yieldParent,
+      fetchImpl,
+    };
+  }
+
+  it.each([false, true])(
+    'resumes once with real failed evidence (child settled first: %s)',
+    async (childFirst) => {
+      const f = await waitingFixture();
+      const failChild = () =>
+        f.orchestrator.report(f.child.runId, {
+          ok: false,
+          summary: 'agent-failed',
+          message: 'Host denied the requested check. Disk evidence is partial.',
+        });
+      if (childFirst) await failChild();
+      await f.yieldParent();
+      const whilePending = childFirst
+        ? undefined
+        : await f.drain().then(async () => ({
+            runs: (await f.store.listRuns(TASK)).length,
+            githubCalls: f.fetchImpl.mock.calls.length,
+          }));
+      expect(whilePending).toEqual(
+        childFirst ? undefined : { runs: 1, githubCalls: 2 },
+      );
+      if (!childFirst) await failChild();
+      await f.drain();
+      await f.drain();
+      const runs = await f.store.listRuns(TASK);
+      expect(runs).toHaveLength(2);
+      expect(runs[1]?.params).toMatchObject({
+        dependencyState: 'failed',
+        dependencyChildRunId: f.child.runId,
+        dependencyParentRunId: f.parent.runId,
+      });
+      expect((await f.store.readRun(f.child.runId))?.result?.message).toContain(
+        'Disk evidence is partial.',
+      );
+      expect(await f.store.listRuns(childAnchor)).toHaveLength(1);
+      expect(f.fetchImpl.mock.calls.length).toBe(5);
+    },
+  );
+
+  it.each(['canceled', 'superseded'])(
+    'drops a %s parent wait',
+    async (change) => {
+      const f = await waitingFixture();
+      await f.yieldParent();
+      await f.drain();
+      if (change === 'canceled')
+        f.fetchImpl.mockResolvedValueOnce(
+          Response.json({ state: 'closed', updated_at: NOW }),
+        );
+      else
+        await f.orchestrator.request({
+          taskId: TASK,
+          requestId: 'replacement',
+          pipeline: 'codex',
+        });
+      await f.orchestrator.report(f.child.runId, {
+        ok: true,
+        summary: 'report',
+      });
+      await f.drain();
+      expect(await f.store.listRuns(TASK)).toHaveLength(
+        change === 'canceled' ? 1 : 2,
+      );
+      expect(
+        (await f.store.listRuns(TASK)).some(
+          (run) => run.params?.dependencyChildRunId,
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it('retains the wait until an already completed parent physically retires', async () => {
+    const f = await waitingFixture();
+    const claimant = {
+      claimedBy: 'executor',
+      claimedBySubject: 'executor@example.com',
+      tokenHash: 'a'.repeat(64),
+    };
+    expect(
+      (
+        await f.store.claimQueuedRun({
+          pipelines: ['codex'],
+          now: NOW,
+          ...claimant,
+        })
+      )?.runId,
+    ).toBe(f.parent.runId);
+    await f.yieldParent();
+    await f.orchestrator.report(f.child.runId, { ok: true, summary: 'report' });
+    await f.drain();
+    expect(await f.store.listRuns(TASK)).toHaveLength(1);
+    await f.orchestrator.executorExited(f.parent.runId, {
+      subject: claimant.claimedBySubject,
+      runner: claimant.claimedBy,
+      claimFingerprint: claimant.tokenHash,
+    });
+    const operation = (await f.store.readRun(f.parent.runId))
+      ?.credentialOperation;
+    expect(operation?.kind).toBe('cleanup');
+    await f.orchestrator.finishCredentialOperation({
+      runId: f.parent.runId,
+      operationId: operation!.id,
+      claimFingerprint: claimant.tokenHash,
+      leaseRetiredAtSequence: 0,
+      now: () => NOW,
+    });
+    expect((await f.store.readRun(f.parent.runId))?.queue?.state).toBe(
+      'retired',
+    );
+    await f.store.wakeOutbox({
+      entryId: `wait-for-agent/${f.parent.runId}`,
+      now: NOW,
+    });
+    await f.drain();
+    expect(await f.store.listRuns(TASK)).toHaveLength(2);
+  });
+});

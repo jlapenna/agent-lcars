@@ -57,13 +57,24 @@ except (OSError, UnicodeError):
 PYTHON
 }
 
+# Validate one attempt-bound Work receipt. Ownership is checked again by
+# the authenticated completion route before any durable state changes.
+agent_dependency_receipt() {
+  local receipt="${AGENT_DEPENDENCY_OUTCOME_FILE:-}" work_id
+  [ -n "$receipt" ] && [ -f "$receipt" ] && [ ! -L "$receipt" ] || return 1
+  IFS= read -r -n 27 work_id < "$receipt" || return 1
+  [[ "$work_id" =~ ^[0-9A-HJKMNP-TV-Z]{26}$ ]] || return 1
+  printf '%s\n%s\n' "$work_id" "<!-- attempt-claim:$ATTEMPT_ID -->" | cmp -s - "$receipt" || return 1
+  printf '%s\n' "$work_id"
+}
+
 # The optional third argument names the round's final-message file. Given
 # one, a report record settles the round only with a usable message, so an
 # unusable report still earns the same-session correction.
 worker_completion_needed() {
   local agent_exit="$1" deadline="$2" message_file="${3:-}" remaining probe_dir probe_exit
   [ "$agent_exit" -eq 0 ] || return 1
-  if worker_control_failed; then return 1; fi
+  if worker_control_failed || agent_dependency_receipt >/dev/null; then return 1; fi
   remaining=$((deadline - $(monotonic_seconds)))
   [ "$remaining" -gt 0 ] || return 1
   if [ "$ANCHOR_TYPE" = work ] && [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ]; then
