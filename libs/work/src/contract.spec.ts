@@ -343,6 +343,7 @@ describe('runsContract', () => {
         'evidence',
         'complete',
         'checkoutToken',
+        'reviewerCheckoutToken',
         'codexAuth',
         'persistCodexAuth',
         'recipeBrief',
@@ -390,6 +391,7 @@ describe('runsContract', () => {
       [runsContract.exit, { runId, runner: 'autoscaler-1' }],
       [runsContract.complete, { runId, outcome: 'done' }],
       [runsContract.checkoutToken, { runId }],
+      [runsContract.reviewerCheckoutToken, { runId }],
       [runsContract.codexAuth, { runId }],
       [
         runsContract.persistCodexAuth,
@@ -744,6 +746,7 @@ describe('generateWorkOpenApi', () => {
         '/runs/{runId}/evidence',
         '/runs/{runId}/complete',
         '/runs/{runId}/checkout-token',
+        '/runs/{runId}/reviewer-checkout-token',
         '/runs/{runId}/job-secrets',
         '/runs/{runId}/agents/{owner}/{repo}/{name}',
         '/runs/{runId}/agent-runs/{workId}',
@@ -772,7 +775,7 @@ describe('generateWorkOpenApi', () => {
           },
         ),
       );
-    expect(operations).toHaveLength(18);
+    expect(operations).toHaveLength(19);
     for (const { path, method, operation } of operations)
       expect(operation.parameters, `${method.toUpperCase()} ${path}`).toEqual(
         expect.arrayContaining([
@@ -788,7 +791,7 @@ describe('generateWorkOpenApi', () => {
         (scheme: Record<string, unknown>) => 'runToken' in scheme,
       ),
     );
-    expect(workers).toHaveLength(14);
+    expect(workers).toHaveLength(15);
   });
   it('gives tick a distinct presentation: the cron tag and bearer security', async () => {
     // `tick` is a service operation guarded by the server-owned work.cron
@@ -896,6 +899,10 @@ describe('generateWorkOpenApi', () => {
       ],
       'GET /runs/{runId}/agent-runs/{workId}': ['200', '401', '404'],
       'GET /runs/{runId}/checkout-token': ['200', '401', '403', '409'],
+      // Same shared `mintCheckoutToken` handler as `checkout-token`, so the
+      // same declared answers: run token, refused App binding, claw/recipe
+      // refusal, then the minted credential.
+      'GET /runs/{runId}/reviewer-checkout-token': ['200', '401', '403', '409'],
       'GET /runs/{runId}/codex-auth': ['200', '401', '404', '409', '500'],
       'PUT /runs/{runId}/codex-auth': ['200', '400', '401', '409', '500'],
       // 201 always, replay included.

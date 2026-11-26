@@ -405,6 +405,7 @@ export class Orchestrator {
     runId: string,
     claimFingerprint?: string,
     providerProcessStarted?: boolean,
+    firstHeartbeatNote?: string,
   ): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
       renewLease({
@@ -412,6 +413,7 @@ export class Orchestrator {
         task,
         run,
         providerProcessStarted,
+        firstHeartbeatNote,
         ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
       }),
     );

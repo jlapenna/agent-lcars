@@ -1418,6 +1418,55 @@ const withRunToken = (current: OpenAPIV3_2.OperationObject) => ({
 
 const runBase = oc.meta(openapi({ tags: ['runs'] }));
 
+const runCheckout = runBase
+  .errors({
+    UNAUTHORIZED: { message: 'Invalid or expired run token' },
+    CONFLICT: { message: 'Worker generation or credential refused' },
+    FORBIDDEN: { message: 'Recipe occurrence or execution profile refused' },
+  })
+  .input(z.strictObject({ runId: runIdSchema }))
+  .output(
+    z.strictObject({
+      // The anchor repo's own credential -- unchanged meaning, present
+      // and unchanged whether or not `grants` is. When `grants` is
+      // present, `token`/`expiresAt` are simply that grant's own owner's
+      // token (see `runs-router.ts`'s `checkoutToken` handler).
+      token: z.string(),
+      expiresAt: z.string().nullable(),
+      repository: z.string(),
+      /** Dedicated App identity; present only for review-mode credentials. */
+      reviewerLogin: z.string().optional(),
+      /** Explicit personal credential selection for a Goose occurrence. */
+      refreshAt: z.string().optional(),
+      identity: z
+        .strictObject({
+          login: z.string().regex(/^[a-zA-Z0-9-]{1,39}$/u),
+          git: z.strictObject({ name: z.string(), email: z.string() }),
+        })
+        .optional(),
+      gitIdentity: z
+        .strictObject({ name: z.string(), email: z.string() })
+        .optional(),
+      /** Present iff the run's `agent-option:cross-repo` was requested
+       *  (`params.crossRepo === 'true'`, #1993): one entry per distinct
+       *  GitHub owner among the fleet's watched repositories, including
+       *  the anchor's own, each token scoped to every watched repo name
+       *  under that owner. A single installation token can never span
+       *  two owners. Absent entirely -- never an empty array -- when the
+       *  option was not requested. */
+      grants: z
+        .array(
+          z.strictObject({
+            owner: z.string(),
+            repositories: z.array(z.string()),
+            token: z.string(),
+            expiresAt: z.string(),
+          }),
+        )
+        .optional(),
+    }),
+  );
+
 export const runsContract = {
   /** A dispatched run invokes a repository-owned agent (`lcars investigate`,
    *  docs/repository-agents.md) as `run:<runId>`, when the agent's profile
@@ -1633,7 +1682,13 @@ export const runsContract = {
         providerProcessStarted: z.literal(true).optional(),
       }),
     )
-    .output(z.strictObject({ runId: runIdSchema, expiresAt: z.string() })),
+    .output(
+      z.strictObject({
+        runId: runIdSchema,
+        expiresAt: z.string(),
+        reviewerLogin: z.string().optional(),
+      }),
+    ),
   placement: runBase
     .meta(
       openapi({
@@ -1823,75 +1878,25 @@ export const runsContract = {
       }),
     )
     .output(z.strictObject({ runId: runIdSchema, state: z.string() })),
-  checkoutToken: runBase
-    .meta(
-      openapi({
-        method: 'GET',
-        path: '/runs/{runId}/checkout-token',
-        operationId: 'getRunCheckoutToken',
-        summary:
-          "Mint a short-lived GitHub token for a claimed run's target repo",
-        spec: withRunToken,
-      }),
-    )
-    .errors({
-      UNAUTHORIZED: { message: 'Invalid or expired run token' },
-      CONFLICT: { message: 'Worker generation or credential refused' },
-      FORBIDDEN: { message: 'Recipe occurrence or execution profile refused' },
-    })
-    .input(z.strictObject({ runId: runIdSchema }))
-    .output(
-      z.strictObject({
-        // The anchor repo's own credential -- unchanged meaning, present
-        // and unchanged whether or not `grants` is. When `grants` is
-        // present, `token`/`expiresAt` are simply that grant's own owner's
-        // token (see `runs-router.ts`'s `checkoutToken` handler).
-        token: z.string(),
-        expiresAt: z.string().nullable(),
-        repository: z.string(),
-        /** Explicit personal credential selection for a Goose occurrence. */
-        refreshAt: z.string().optional(),
-        identity: z
-          .strictObject({
-            login: z.string().regex(/^[a-zA-Z0-9-]{1,39}$/u),
-            git: z.strictObject({ name: z.string(), email: z.string() }),
-          })
-          .optional(),
-        gitIdentity: z
-          .strictObject({ name: z.string(), email: z.string() })
-          .optional(),
-        /** Present iff the run's `agent-option:cross-repo` was requested
-         *  (`params.crossRepo === 'true'`, #1993): one entry per distinct
-         *  GitHub owner among the fleet's watched repositories, including
-         *  the anchor's own, each token scoped to every watched repo name
-         *  under that owner. A single installation token can never span
-         *  two owners. Absent entirely -- never an empty array -- when the
-         *  option was not requested. */
-        grants: z
-          .array(
-            z.strictObject({
-              owner: z.string(),
-              repositories: z.array(z.string()),
-              token: z.string(),
-              expiresAt: z.string(),
-            }),
-          )
-          .optional(),
-        /** The pull-request author App's token for the anchor repository,
-         *  present when that App is configured. The runner opens pull
-         *  requests with it, so the PR's author is never the
-         *  `agent-lcars[bot]` reviewer, whose approval GitHub would refuse
-         *  as a self-approval (#3522). Every other GitHub call keeps using
-         *  `token`. */
-        pullRequestAuthor: z
-          .strictObject({
-            login: z.string(),
-            token: z.string(),
-            expiresAt: z.string(),
-          })
-          .optional(),
-      }),
-    ),
+  checkoutToken: runCheckout.meta(
+    openapi({
+      method: 'GET',
+      path: '/runs/{runId}/checkout-token',
+      operationId: 'getRunCheckoutToken',
+      summary:
+        "Mint a short-lived GitHub token for a claimed run's target repo",
+      spec: withRunToken,
+    }),
+  ),
+  reviewerCheckoutToken: runCheckout.meta(
+    openapi({
+      method: 'GET',
+      path: '/runs/{runId}/reviewer-checkout-token',
+      operationId: 'getRunReviewerCheckoutToken',
+      summary: 'Mint a GitHub token for a run bound to the reviewer App',
+      spec: withRunToken,
+    }),
+  ),
   codexAuth: runBase
     .meta(
       openapi({

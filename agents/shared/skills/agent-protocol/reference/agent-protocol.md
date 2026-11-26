@@ -510,9 +510,24 @@ ready push or PR open only to run local E2E.
 For every ready, non-parked pull request you open, **do not request human
 review**. A fleet repository's review gate is one approving review of the
 current head, and the LCARS review supplies it; a review request to a person
-is friction, not a handoff. The one pull request LCARS cannot approve is one
-its own GitHub identity opened, because GitHub lets no account approve its own
-pull request: that one merges after a maintainer approves it. Publish new PRs as drafts: this lets you check interpreted links before a
+is friction, not a handoff. GitHub requires an approving identity distinct
+from the PR author. A passing comment from the author App leaves the required
+approval outstanding.
+
+Until the independent reviewer is verified in production for the repository,
+routine PRs can wait on the
+[reviewer rollout](https://github.com/jlapenna/agent-lcars/issues/3522).
+The operator may choose an authorized independent reviewer for a PR that needs
+to proceed sooner. Do not automatically request the repository owner, count
+the passing comment as approval, or repeatedly dispatch the same identity.
+
+Once the deployed Console and compatible runner are verified to publish
+independent approval, an authorized maintainer can use `/review` on the PR
+to recover from a same-author comment. Confirm that GitHub records an
+independent approving review on the current head. Explicit human review
+requests and approvals reserved for a human still apply.
+
+Publish new PRs as drafts: this lets you check interpreted links before a
 ready-PR auto-merge backstop can arm them. Once the closing-reference check and any required local independent
 source review pass, address known feedback and honor explicit holds. Mark the
 draft ready, refresh the check and feedback, and arm squash auto-merge as

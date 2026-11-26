@@ -117,9 +117,10 @@ describe('lcars investigate', () => {
       ),
     ).toEqual({ ok: false });
     expect(f.err).toEqual([`investigate failed: ${code}`]);
+    expect(f.out).toEqual([]);
   });
 
-  it('stops waiting at its deadline', async () => {
+  it('retains the admitted round when the local deadline expires', async () => {
     const f = fixture(
       Array.from({ length: 10 }, () => json({ workId, state: 'running' })),
       { LCARS_INVESTIGATE_TIMEOUT_SECONDS: '12' },
@@ -131,6 +132,28 @@ describe('lcars investigate', () => {
       ),
     ).toEqual({ ok: false });
     expect(f.err).toEqual(['investigate failed: deadline-exceeded']);
+    expect(f.out.map((line) => JSON.parse(line))).toEqual([{ workId }]);
+  });
+
+  it('retains only the admitted ID when the terminal response arrives too late', async () => {
+    const f = fixture(
+      [json({ workId, state: 'done', ok: true, report: 'late' })],
+      {
+        LCARS_INVESTIGATE_TIMEOUT_SECONDS: '1',
+      },
+    );
+    f.deps.monotonic = vi
+      .fn()
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValue(1_001);
+    const result = await executeInvestigateCommand(
+      ['--request-id', 'x', '--question', 'Q'],
+      f.deps,
+    );
+    expect(result.ok).toBe(false);
+    expect(f.err).toEqual(['investigate failed: deadline-exceeded']);
+    expect(f.out.map((line) => JSON.parse(line))).toEqual([{ workId }]);
   });
 
   it('passes whole milliseconds to AbortSignal.timeout from a fractional clock', async () => {

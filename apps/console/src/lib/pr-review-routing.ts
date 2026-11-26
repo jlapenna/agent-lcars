@@ -2,7 +2,6 @@ import {
   AGENT_LABELS,
   type AgentPipeline,
   DISPATCH_PIPELINES,
-  PULL_REQUEST_AUTHOR_BOT_LOGIN,
 } from '@agent-lcars/dispatch-contracts';
 
 export const UNIFIED_REVIEW_LABEL = 'review';
@@ -230,7 +229,7 @@ export function detectPullRequestAuthorPipeline(
     return fromBranch;
   }
 
-  if (login === 'agent-lcars[bot]' || login === PULL_REQUEST_AUTHOR_BOT_LOGIN) {
+  if (login === 'agent-lcars[bot]') {
     return 'codex';
   }
 

@@ -16,7 +16,8 @@ Section numbers match the main file exactly — cross-references to §8, §10,
   build) rather than because of the code, rerun the failed jobs yourself
   instead of parking: `gh run rerun <run-id> --failed`. In an Agent LCARS
   direct run, the `gh` on your `PATH` already carries a short-lived,
-  repository-scoped installation token with `actions: write`, renewed for
+  repository-scoped installation token with `actions: write` for ordinary
+  implementation runs, renewed for
   the whole run; no separate rerun variable is exported, and none is needed.
   A run whose job profile supplies its own GitHub credential uses that
   credential's permissions instead.
@@ -24,7 +25,14 @@ Section numbers match the main file exactly — cross-references to §8, §10,
   execution failure, not a human blocker (§4, §7): report the diagnosis and
   the next action, and park only when that action needs human access or a
   maintainer-reserved operation. A 403 from `gh run rerun` is a credential
-  blocker: park and name the job and the error.
+  blocker: park and name the job and the error, except in review mode as
+  described below.
+- **Review dispatches:** The dedicated reviewer App has Actions read access.
+  With that identity, leave infrastructure reruns to an authorized workflow
+  or actor. If a review run cannot rerun an infrastructure-failed check
+  (including a 403), record the affected check and the limitation in the
+  review body and finish the source review with the head-bound verdict.
+  GitHub's required checks still gate merge.
 - **What that credential deliberately is not:** it is never the dispatching
   workflow's own `GITHUB_TOKEN`. That token carries the job's full
   contents/issues/pull-requests write grant — the same class of credential
@@ -144,7 +152,11 @@ lcars investigate --request-id backup-timer-1 \
   `agent-not-found`: the investigator is not offered to runs;
   `deadline-exceeded` and `investigation-unavailable`: no answer). A settled
   round that produced no report also exits non-zero but still prints its
-  status. Do not loop.
+  status. If a wait failed after admission, stdout gives the admitted
+  `{workId}`. Record that exact dependency in the handoff. A local timeout
+  says nothing about the child's outcome. Reuse the original request key and
+  input within the same run if another read is needed; do not start a
+  duplicate round.
 - If the investigator cannot answer, park (§4) or proceed as before, and quote
   the failure code or `could_not_answer` reason so the human knows what is
   missing. Never treat a failed or partial investigation as an observed fact.

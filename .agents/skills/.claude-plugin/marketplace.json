@@ -19,6 +19,7 @@
         "./debug-agent-run",
         "./issue-triage",
         "./lcars",
+        "./lcars-handoff",
         "./lcars-session-updates",
         "./lcars-usage",
         "./verifying-console-session"
