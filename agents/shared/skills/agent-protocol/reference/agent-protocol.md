@@ -668,7 +668,7 @@ PR remains a bounded correction; a merged or completed delivery is not reopened.
 
 State the supplied runtime budget up front and pace your work against it.
 QueueExecutor stops the provider at the budget the brief states
-(`runtime.budget_minutes`, 80 minutes); the Pod's two-hour limit is only a
+(`runtime.budget_minutes`); the Pod's two-hour limit is only a
 backstop. Hosted workflows use their own `timeout-minutes`. Commit and push incrementally, and report progress
 through §3 before the deadline. The runner can verify published artifacts
 after a timeout, but cannot turn unpublished work into a deliverable.
