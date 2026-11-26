@@ -439,12 +439,13 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 /* A client navigation that outlasts 120 ms: the clicked pill flashes between
    full and resting signal until the destination commits. The pending marker
-   itself has no box; it only lets the pill select on its presence. */
+   itself has no box; it lets the initiating link select on its presence. */
 .lcars-nav-pending {
   display: none;
 }
 
-.lcars-nav-pill:has(> .lcars-nav-pending) {
+.lcars-nav-pill:has(> .lcars-nav-pending),
+a.lcars-readout:has(> .lcars-nav-pending) > .lcars-readout__label {
   animation: lcars-nav-pending 720ms steps(1, end) 120ms infinite;
 }
 
@@ -464,7 +465,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lcars-nav-pill:has(> .lcars-nav-pending) {
+  .lcars-nav-pill:has(> .lcars-nav-pending),
+  a.lcars-readout:has(> .lcars-nav-pending) > .lcars-readout__label {
     animation: none;
     color: var(--lcars-ink-on-accent);
     background: var(--lcars-accent);
@@ -937,6 +939,11 @@ a.lcars-readout:active .lcars-readout__label {
   font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+a.lcars-readout .lcars-readout__detail {
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 /* The mockup's readout sparkline is taller than the telemetry strip's. */

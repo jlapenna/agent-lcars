@@ -263,7 +263,7 @@ async function IndexBody({
   ] = await Promise.all([
     timings.time('queue', getCachedQueueItems()),
     activityRead,
-    timings.time('cliSessions', getCliSessions({ exhaustive: true })),
+    timings.time('cliSessions', getCliSessions()),
     activityRead.then(({ data }) =>
       timings.time(
         'runnerSessions',

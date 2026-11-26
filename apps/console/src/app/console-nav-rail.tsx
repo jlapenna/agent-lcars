@@ -1,6 +1,6 @@
 'use client';
 
-import Link, { useLinkStatus } from 'next/link';
+import Link from 'next/link';
 import { type ReactNode, useState } from 'react';
 
 import { archiveDaysParam, DEFAULT_ARCHIVE_DAYS } from '@/lib/archive-window';
@@ -14,6 +14,7 @@ import {
 } from './console-navigation';
 import { useConsoleNavigationKeys } from './console-navigation-context';
 import { useShellReadouts } from './console-shell-state';
+import { LinkPendingSignal } from './link-pending-signal';
 
 function navHref(
   item: (typeof CONSOLE_DESTINATIONS)[number],
@@ -44,18 +45,6 @@ function navHref(
   if (archiveQuery.q) params.set('q', archiveQuery.q);
   const queryString = params.toString();
   return queryString ? `${item.href}?${queryString}` : item.href;
-}
-
-/**
- * Client navigations keep the current page on screen until the next one is
- * ready (see NavSuspense), so the clicked pill signals the wait instead. The
- * CSS delays the signal so a fast navigation shows nothing.
- */
-function PendingSignal() {
-  const { pending } = useLinkStatus();
-  return pending ? (
-    <span className="lcars-nav-pending" aria-hidden="true" />
-  ) : null;
 }
 
 /**
@@ -147,7 +136,7 @@ export function ConsoleNavRail({
             {counts[item.key] !== undefined ? ` · ${counts[item.key]}` : ''}
           </small>
           <span className="lcars-nav-label">{item.label}</span>
-          <PendingSignal />
+          <LinkPendingSignal />
         </IntentPrefetchLink>
       ))}
     </nav>

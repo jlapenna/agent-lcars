@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
+import { LinkPendingSignal } from './link-pending-signal';
 import { Sparkline } from './ops-primitives';
 
 export interface ConsoleReadout {
@@ -71,6 +72,7 @@ export function ConsoleReadouts({
             prefetch={false}
           >
             {content}
+            <LinkPendingSignal />
           </Link>
         ) : (
           <div key={readout.id} {...attributes}>
