@@ -340,16 +340,23 @@ export function QueueWorkspace({
     draftCard &&
     (selectedItemKey === undefined ||
       selectedItemKey === inboxCardKey(draftCard));
+  const resolvedDraftCard =
+    retainedDraft && selectedItemKey !== undefined ? currentCard : undefined;
   const selectedCard = retainedDraft
-    ? ((resolvedSelectedCard &&
-      inboxCardKey(resolvedSelectedCard) === inboxCardKey(draftCard)
-        ? resolvedSelectedCard
-        : cards.find(
-            (card) => inboxCardKey(card) === inboxCardKey(draftCard),
-          )) ?? draftCard)
+    ? (resolvedDraftCard ??
+      cards.find((card) => inboxCardKey(card) === inboxCardKey(draftCard)) ??
+      draftCard)
     : currentCard;
+  // Automatic waits are intentionally absent from the queue. Only the live
+  // selected card can establish that a retained draft is still replyable.
+  const draftIsReplyableEventWait =
+    resolvedDraftCard &&
+    'work' in resolvedDraftCard &&
+    resolvedDraftCard.waitingOnEvent &&
+    resolvedDraftCard.canReply;
   const draftLeftQueue =
     retainedDraft &&
+    !draftIsReplyableEventWait &&
     !cards.some((card) => inboxCardKey(card) === inboxCardKey(draftCard));
   const onReplyDraftChange = (hasDraft: boolean) =>
     setDraftCard(hasDraft ? selectedCard : undefined);

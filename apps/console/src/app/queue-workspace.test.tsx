@@ -227,6 +227,49 @@ describe('QueueWorkspace native Reply refresh', () => {
       );
     },
   );
+  it('submits a reply from an explicitly selected automatic event wait', async () => {
+    const reply = vi.fn().mockResolvedValue([null, { resumed: false }]);
+    const waitingCard: NativeDecisionCard = {
+      ...nativeCard,
+      queued: false,
+      waitingOnEvent: {
+        key: 'github:owner/repo#123',
+        kind: 'pr.merged',
+        subscriptionId: 'subscription-1',
+      },
+    };
+    render(
+      <MantineProvider>
+        <QueueWorkspace
+          cards={[makeCard()]}
+          selectedCard={waitingCard}
+          selectedItemKey={waitingCard.work.id}
+          watchedRepos={[]}
+          replyToWorkItem={reply}
+        />
+      </MantineProvider>,
+    );
+
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Reply to the agent' }),
+      { target: { value: 'Continue without waiting.' } },
+    );
+    const submit = screen.getByRole('button', { name: 'Reply', exact: true });
+    expect(submit).toBeEnabled();
+    expect(screen.queryByText(/Your pending reply is preserved/)).toBeNull();
+    fireEvent.click(submit);
+
+    await waitFor(() =>
+      expect(reply).toHaveBeenCalledWith({
+        id: waitingCard.work.anchor.workId,
+        text: 'Continue without waiting.',
+      }),
+    );
+    expect(
+      await screen.findByTestId('native-reply-confirmation'),
+    ).toBeVisible();
+  });
+
   it('retains a draft and focus when live props remove or reorder the default decision', () => {
     const workspace = (cards: InboxCard[]) => (
       <MantineProvider>

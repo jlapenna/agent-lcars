@@ -8,14 +8,16 @@ import type { BoardCard } from './board-card';
 import { actionTypeMeta, queueReasonFor } from './queue-reason';
 
 export interface NativeDecisionCard {
+  /** A verified automatic wait, retained only when this item is selected. */
+  waitingOnEvent?: { key: string; kind: string; subscriptionId: string };
   decisionSummary?: ReactNode;
   humanNeededActions?: RunResult['humanNeededActions'];
   work: WorkSummary & { anchor: { workId: string } };
   /** `decision` waits on a human answer; `report` is a finished read-only
    * result (#2845) shown until dismissed or older than the report window. */
   kind: 'decision' | 'report';
-  /** Listed in the Inbox. False only for a selected item that no longer
-   * waits on anyone, kept so its open detail pane does not vanish. */
+  /** Listed in the Inbox. A selected item that no longer needs a human
+   * decision stays readable with false, including an automatic event wait. */
   queued: boolean;
   canReply: boolean;
   /** The parked question or report rendered as Markdown on the server, so

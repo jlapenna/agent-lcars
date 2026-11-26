@@ -3,8 +3,12 @@ import {
   Orchestrator,
   type TaskId,
 } from '@agent-lcars/orchestrator';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  agentEventSubscriptionStore,
+  type StoredAgentEventSubscription,
+} from './agent-event-store';
 import { getNativeInboxCards } from './native-inbox';
 import type { WorkPrincipal } from './work-auth';
 
@@ -30,12 +34,14 @@ beforeEach(() => {
   process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
     'jlapenna/agent-lcars';
 });
+afterEach(() => vi.restoreAllMocks());
 
 async function seed(
   store: MemoryStore,
   taskId: TaskId,
   summary: string,
   at: string,
+  message = 'Which storage should I use?',
 ) {
   const orchestrator = new Orchestrator(store, { now: () => at });
   const admitted = await orchestrator.request({
@@ -49,7 +55,7 @@ async function seed(
   await orchestrator.report(admitted.run.runId, {
     ok: summary === 'park' || summary === 'done' || summary === 'report',
     summary,
-    message: 'Which storage should I use?',
+    message,
   });
   return orchestrator;
 }
@@ -152,6 +158,138 @@ describe('native human decisions', () => {
       work: { id: `work:${ID}`, state: 'running' },
       canReply: false,
     });
+  });
+});
+
+describe('native event waits', () => {
+  const subscription: StoredAgentEventSubscription = {
+    id: '2741734dad69c6154b051a753d8822a9',
+    key: 'github:pr:jlapenna/agent-lcars#3608',
+    source: 'github:pr',
+    kinds: ['merged'],
+    until: 'merged',
+    target: { type: 'work', workId: ID },
+    createdAt: '2026-10-01T00:00:01Z',
+  };
+  const message = `Waiting on event: ${subscription.key} merged (subscription ${subscription.id})\n\nVerify delivery after the merge.`;
+  async function waitingWork() {
+    const store = new MemoryStore();
+    await seed(store, { workId: ID }, 'park', '2026-10-01T00:00:00Z', message);
+    return store;
+  }
+
+  it('removes a verified automatic wait from the human queue while keeping its selected conversation and optional reply', async () => {
+    const store = await waitingWork();
+    vi.spyOn(agentEventSubscriptionStore, 'get').mockResolvedValue(
+      subscription,
+    );
+    expect(await getNativeInboxCards(store, operator)).toEqual([]);
+    expect(
+      await getNativeInboxCards(store, operator, `work:${ID}`),
+    ).toMatchObject([
+      {
+        queued: false,
+        canReply: true,
+        waitingOnEvent: {
+          key: subscription.key,
+          kind: 'merged',
+          subscriptionId: subscription.id,
+        },
+        work: { state: 'parked' },
+      },
+    ]);
+  });
+
+  it.each([
+    undefined,
+    {
+      ...subscription,
+      target: { type: 'work' as const, workId: 'another-work' },
+    },
+    {
+      ...subscription,
+      target: { type: 'session' as const, sessionId: 'session', host: 'host' },
+    },
+    { ...subscription, key: 'github:pr:jlapenna/agent-lcars#3609' },
+    { ...subscription, kinds: ['review'] },
+  ])('keeps an unverified wait visible to humans (%j)', async (stored) => {
+    const store = await waitingWork();
+    vi.spyOn(agentEventSubscriptionStore, 'get').mockResolvedValue(stored);
+    expect(await getNativeInboxCards(store, operator)).toMatchObject([
+      { queued: true, waitingOnEvent: undefined },
+    ]);
+  });
+
+  it('keeps the handoff visible when the subscription read fails', async () => {
+    const store = await waitingWork();
+    vi.spyOn(agentEventSubscriptionStore, 'get').mockRejectedValue(
+      new Error('unavailable'),
+    );
+    expect(await getNativeInboxCards(store, operator)).toMatchObject([
+      { queued: true },
+    ]);
+  });
+
+  it('keeps an accepted event out of the human queue after its until subscription is removed', async () => {
+    const store = await waitingWork();
+    vi.spyOn(agentEventSubscriptionStore, 'get').mockResolvedValue(undefined);
+    const orchestrator = new Orchestrator(store, {
+      now: () => '2026-10-01T00:01:00Z',
+    });
+    await orchestrator.queueEventResume(
+      { workId: ID },
+      { deliveryId: `${subscription.id}:merged-event`, notice: 'PR merged' },
+    );
+    expect(await getNativeInboxCards(store, operator)).toEqual([]);
+    expect(
+      await getNativeInboxCards(store, operator, `work:${ID}`),
+    ).toMatchObject([
+      { queued: false, waitingOnEvent: { subscriptionId: subscription.id } },
+    ]);
+  });
+
+  it.each([9, 10])(
+    'requires a human after ten automatic resumes (%i)',
+    async (admitted) => {
+      const store = await waitingWork();
+      vi.spyOn(agentEventSubscriptionStore, 'get').mockResolvedValue(
+        subscription,
+      );
+      const current = await store.readTask({ workId: ID });
+      if (!current) throw new Error('missing task');
+      vi.spyOn(store, 'readTask').mockResolvedValue({
+        ...current,
+        task: {
+          ...current.task,
+          eventResumes: {
+            received: admitted,
+            admitted,
+            pending: [],
+            recent: [],
+          },
+        },
+      });
+      expect((await getNativeInboxCards(store, operator)).length).toBe(
+        admitted === 10 ? 1 : 0,
+      );
+    },
+  );
+
+  it('preserves a later human handoff even if an old subscription remains', async () => {
+    const store = new MemoryStore();
+    await seed(
+      store,
+      { workId: ID },
+      'park',
+      '2026-10-01T00:00:00Z',
+      'Human ask: Approve production rollout.',
+    );
+    vi.spyOn(agentEventSubscriptionStore, 'get').mockResolvedValue(
+      subscription,
+    );
+    expect(await getNativeInboxCards(store, operator)).toMatchObject([
+      { queued: true, waitingOnEvent: undefined },
+    ]);
   });
 });
 
