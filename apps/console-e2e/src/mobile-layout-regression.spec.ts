@@ -31,6 +31,28 @@ useE2eAdminBeforeEach();
 usePopulatedFixtures();
 
 test.describe('mobile console layout contracts @mobile-layout', () => {
+  test('can scroll to a decision after rotating to landscape', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/inbox');
+    const row = page.getByTestId(
+      `queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`,
+    );
+    await expect(row).toBeVisible();
+    await page.setViewportSize({ width: 844, height: 390 });
+
+    await page.mouse.move(420, 180);
+    await page.mouse.wheel(0, 300);
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY))
+      .toBeGreaterThan(0);
+    await row.scrollIntoViewIfNeeded();
+    await expect(row).toBeInViewport();
+    await row.getByRole('link').click();
+    await expect(page.locator('.queue-workspace__detail')).toBeInViewport();
+  });
+
   for (const viewport of PHONE_VIEWPORTS) {
     test(`keeps the action hierarchy usable at ${viewport.width}px`, async ({
       page,

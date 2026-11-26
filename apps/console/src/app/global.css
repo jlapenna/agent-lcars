@@ -4976,8 +4976,8 @@ td.costs-repo-spend__num {
    are the only scrollers. A workspace sized as `100vh - <guess at chrome>`
    instead overflows by whatever the header, readouts, toolbar and warnings
    really take, which adds a third, document-level scroller around the two
-   panes. Phones keep the document as their single scroll surface. */
-@media (min-width: 48em) {
+   panes. Short viewports need room to scroll past the header and filters. */
+@media (min-width: 48em) and (min-height: 36em) {
   .console-page-shell:has(.inbox-frame) {
     height: 100vh;
     height: 100dvh;
@@ -5008,6 +5008,23 @@ td.costs-repo-spend__num {
     height: auto;
     min-height: 0;
     flex: 1 1 auto;
+  }
+}
+
+/* Keep the wide list/detail arrangement on landscape phones, but let both
+   panes grow with their contents so a swipe anywhere scrolls the page. */
+@media (min-width: 48em) and (height < 36em) {
+  .queue-workspace {
+    height: auto;
+    min-height: 0;
+    grid-template-rows: auto;
+    overflow: visible;
+  }
+
+  .queue-workspace__rows,
+  .queue-workspace__detail {
+    overflow: visible;
+    overscroll-behavior-y: auto;
   }
 }
 
