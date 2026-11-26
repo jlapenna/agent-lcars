@@ -104,7 +104,9 @@ credentials are not used. It admits one round of a repository-owned agent
 `run:<runId>` through `POST /api/work/v1/runs/{runId}/agents/{owner}/{repo}/{name}`,
 then polls `GET /api/work/v1/runs/{runId}/agent-runs/{workId}` until the round
 settles (default deadline 20 minutes, `LCARS_INVESTIGATE_TIMEOUT_SECONDS`) and
-prints its status and report as JSON.
+prints its status and report as JSON. A failed wait after admission still
+prints the admitted `{workId}` and exits nonzero. Use that ID to inspect the
+existing investigation.
 
 A run may invoke an agent only when the agent's operator profile sets
 `runCallers: true` (`AGENT_LCARS_AGENT_PROFILES`, docs/repository-agents.md);
