@@ -262,7 +262,15 @@ test('@navperf Bridge summaries wrap and signal a slow navigation on phones', as
   await expect(agents).toBeVisible();
 
   const details = summaries.locator('.lcars-readout__detail');
-  await expect(details).toHaveCount(3);
+  await expect(details).toHaveCount(5);
+  await expect(summaries.getByRole('link', { name: /^Jobs/ })).toHaveAttribute(
+    'href',
+    '/jobs',
+  );
+  await expect(summaries.getByRole('link', { name: /^Costs/ })).toHaveAttribute(
+    'href',
+    '/costs',
+  );
   expect(
     await details.evaluateAll((elements) =>
       elements

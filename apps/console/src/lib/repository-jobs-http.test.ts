@@ -94,15 +94,15 @@ beforeEach(() => {
     enabled: true,
     refreshedAt: new Date().toISOString(),
   };
-  mocks.jobs.mockReturnValue({
-    deps: {
+  mocks.jobs.mockReturnValue(
+    new RepositoryJobs({
       store,
-      runtime: {},
+      runtime: {} as ConstructorParameters<typeof RepositoryJobs>[0]['runtime'],
       profiles: () => [],
       granted: () => true,
       now: () => new Date(),
-    },
-  });
+    }),
+  );
 });
 function request(path: string, body: unknown) {
   return new Request(`https://console.example/api/work/v1/jobs${path}`, {
