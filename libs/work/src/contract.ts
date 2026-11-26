@@ -1898,6 +1898,48 @@ export const runsContract = {
       spec: withRunToken,
     }),
   ),
+  submitReview: runBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/runs/{runId}/review',
+        operationId: 'submitRunReview',
+        summary:
+          'Submit a verdict on the claimed review run’s pull request and head',
+        spec: withRunToken,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+      FORBIDDEN: { message: 'Not a GitHub review run' },
+      CONFLICT: { message: 'Review head or verdict refused' },
+      UNPROCESSABLE_CONTENT: {
+        status: 422,
+        message: 'GitHub rejected the review payload',
+      },
+      BAD_GATEWAY: { message: 'GitHub review unavailable' },
+    })
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        commit_id: z.string().regex(/^[0-9a-f]{40}$/),
+        event: z.enum(['APPROVE', 'REQUEST_CHANGES']),
+        body: z.string().trim().min(1).max(60_000),
+        comments: z
+          .array(
+            z.strictObject({
+              path: z.string().min(1).max(4096),
+              body: z.string().trim().min(1).max(10_000),
+              line: z.number().int().positive(),
+              side: z.enum(['LEFT', 'RIGHT']),
+              start_line: z.number().int().positive().optional(),
+              start_side: z.enum(['LEFT', 'RIGHT']).optional(),
+            }),
+          )
+          .max(30),
+      }),
+    )
+    .output(z.strictObject({ id: z.number().int(), html_url: z.url() })),
   codexAuth: runBase
     .meta(
       openapi({

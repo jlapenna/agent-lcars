@@ -23,6 +23,7 @@ import {
   getGithubClient,
   type WatchedRepo,
 } from './github-client';
+import { formatGithubErrorDetail } from './github-error-detail';
 import { admitGithubWork } from './github-work-admission';
 import { recordOperatorComment } from './operator-comment-observability';
 import { describeRefusedOperatorToken } from './operator-token-check';
@@ -882,30 +883,8 @@ function githubPullRequestFailure(error: unknown, token: string): string {
   } | null;
   const data = failure?.response?.data;
   const errors = data?.errors ?? failure?.errors;
-  const clean = (value: unknown) =>
-    typeof value === 'string'
-      ? (token ? value.replaceAll(token, '[redacted]') : value)
-          .replace(/\b(?:github_pat_|gh[pousr]_)[a-z0-9_]+/gi, '[redacted]')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .slice(0, 180)
-      : '';
-  const reasons = (Array.isArray(errors) ? errors.slice(0, 3) : []).map(
-    (entry: unknown) => {
-      if (typeof entry === 'string') return clean(entry);
-      if (!entry || typeof entry !== 'object') return '';
-      const { message, field, code } = entry as Record<string, unknown>;
-      return (
-        clean(message) || [clean(field), clean(code)].filter(Boolean).join(' ')
-      );
-    },
-  );
-  const message = [clean(data?.message), ...reasons]
-    .filter(Boolean)
-    .join(' ')
-    .slice(0, 450);
   return (
-    message ||
+    formatGithubErrorDetail(data?.message, errors, token) ||
     'GitHub could not confirm the pull request action. Check the pull request before retrying.'
   );
 }
