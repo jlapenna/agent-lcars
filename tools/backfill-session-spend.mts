@@ -68,12 +68,18 @@ for (;;) {
   if (cursor === undefined) break;
 }
 if (!values.apply) {
-  // The operator's acceptance is a dry run reporting `stale: 0`, taken after
-  // every runner image carries the writer change: a session still being written
-  // by an older writer is stale again the moment it is written. --apply on its
-  // own is progress, not coverage.
+  // The operator's acceptance is a dry run reporting BOTH `stale: 0` and
+  // `unusable: 0`, taken after every runner image carries the writer change: a
+  // session an older writer is still updating is stale again the moment it is
+  // written, and an unusable one is a session no writer ever priced, which an
+  // indexed total counts as free rather than wrong. --apply on its own is
+  // progress, not coverage.
   console.log(
-    `Dry run: ${stale} stale of ${scanned} docs, ${unusable} without readable usage, ` +
-      `${outsideWindow} outside the active window. Pass --apply to write them.`,
+    `Dry run over ${scanned} docs: ${stale} stale, ${unusable} without readable usage, ` +
+      `${outsideWindow} outside the active window. ${
+        stale === 0 && unusable === 0
+          ? 'Indexed totals are covered for this window.'
+          : 'Totals cutover is not covered: stale and unusable must both be 0 (or reconciled against the ledger).'
+      }`,
   );
 }

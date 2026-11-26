@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSessionDoc,
   buildSessionWrite,
+  canonicalActiveSince,
   CLI_SESSION_RETENTION_DAYS,
   ISSUE_AGENT_SESSION_RETENTION_DAYS,
   parseSessionDoc,
@@ -751,5 +752,30 @@ describe('herdr pane', () => {
       // The stored value is left alone for the next write to clear.
       expect(Object.keys(doc)).toContain('herdrPaneId');
     }
+  });
+});
+
+describe('canonicalActiveSince', () => {
+  it('maps a cutoff in another zone onto the UTC instant it names', () => {
+    expect(canonicalActiveSince('2026-11-12T20:00:00+02:00')).toBe(
+      '2026-11-12T18:00:00.000Z',
+    );
+  });
+
+  it('adds the milliseconds a stored activity time always carries', () => {
+    // '2026-11-12T18:00:00Z' sorts after '2026-11-12T18:00:00.000Z' as text, so
+    // the stored spelling is the one a range comparison has to use.
+    expect(canonicalActiveSince('2026-11-12T18:00:00Z')).toBe(
+      '2026-11-12T18:00:00.000Z',
+    );
+  });
+
+  it('leaves an already canonical cutoff alone', () => {
+    const canonical = '2026-07-11T12:00:00.000Z';
+    expect(canonicalActiveSince(canonical)).toBe(canonical);
+  });
+
+  it('rejects a cutoff that names no instant', () => {
+    expect(() => canonicalActiveSince('last tuesday')).toThrow(RangeError);
   });
 });

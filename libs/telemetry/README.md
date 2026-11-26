@@ -119,11 +119,15 @@ pnpm exec tsx tools/backfill-session-spend.mts --project <project-id> --database
 Add `--active-since <iso>` to leave sessions older than a page's read window
 untouched, and `--start-after <cursor>` to resume an interrupted pass.
 
-Readiness for the totals cutover is a dry run reporting `stale: 0`, taken once
-every runner image carries the writer: a session an older writer is still
-updating is stale again the moment it is written, so one `--apply` is progress,
-not coverage. `unusable` counts docs with no readable `tokens` map — a writer
-that never recorded usage, not a backfill to retry.
+Readiness for the totals cutover is a dry run reporting **both `stale: 0` and
+`unusable: 0`** in the window being read, taken once every runner image carries
+the writer: a session an older writer is still updating is stale again the moment
+it is written, so one `--apply` is progress, not coverage. `unusable` counts
+in-window docs with no readable `tokens` map — a writer that never recorded
+usage, not a backfill to retry. Those sessions are not wrong in an indexed total,
+they are absent from it, which is why the gate is zero rather than "backfilled":
+either no session in the window is unpiced, or the operator reconciles their
+contribution against the ledger by hand before switching the reader.
 
 ## Running unit tests
 

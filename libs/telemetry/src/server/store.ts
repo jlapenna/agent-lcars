@@ -18,7 +18,11 @@ import {
   Timestamp as AdminTimestamp,
 } from 'firebase-admin/firestore';
 
-import { parseSessionDoc, SESSION_WRITTEN_AT_FIELD } from '../lib/session-doc';
+import {
+  canonicalActiveSince,
+  parseSessionDoc,
+  SESSION_WRITTEN_AT_FIELD,
+} from '../lib/session-doc';
 import {
   sessionSpendForWrite,
   sessionSpendFromStored,
@@ -214,9 +218,11 @@ export interface BackfillSessionSpendOptions {
   apply: boolean;
   /** The `nextCursor` of a previous page; the resumable position. */
   cursor?: string;
-  /** ISO timestamp. Sessions last active before it are counted as
-   * `outsideWindow` and left untouched: no page reads them, so materializing
-   * their spend buys nothing. Defaults to no window (the whole collection). */
+  /** Sessions last active before it are counted as `outsideWindow` and left
+   * untouched: no page reads them, so materializing their spend buys nothing.
+   * Any parseable instant is accepted and canonicalized to UTC milliseconds —
+   * see {@link canonicalActiveSince}. Defaults to no window (the whole
+   * collection). */
   activeSince?: string;
   /** Docs per page, clamped to [1, {@link MAX_SPEND_BACKFILL_PAGE_SIZE}]. */
   pageSize?: number;
@@ -232,7 +238,9 @@ export interface BackfillSessionSpendPage {
   written: number;
   /** In-window docs whose stored fields cannot yield a spend — no complete
    * `tokens` map. Left untouched; a nonzero count means a writer is not
-   * recording usage, not a backfill to retry. */
+   * recording usage, not a backfill to retry. Those sessions are absent from an
+   * indexed total rather than wrong in it, so this counter has to be zero (or
+   * reconciled) before the totals cutover, alongside `stale`. */
   unusable: number;
   scannedOutsideWindow: number;
   /** Pass back as `cursor` to resume; absent once a page came back short. */
@@ -262,12 +270,21 @@ export interface BackfillSessionSpendPage {
  * Run it again after a writer rollout reaches every runner image: a session
  * still being updated by an older writer is stale again the moment it is
  * written, which is why the operator's acceptance is a dry run reporting
- * `stale: 0`, not one pass of `--apply`.
+ * `stale: 0`, not one pass of `--apply`. And `stale: 0` alone is not coverage:
+ * in-window `unusable` docs are sessions no writer priced at all, which an
+ * indexed total silently counts as free, so the cutover gate is both counters at
+ * zero (or their contribution reconciled against the ledger by hand).
  */
 export async function backfillSessionSpend(
   options: BackfillSessionSpendOptions,
 ): Promise<BackfillSessionSpendPage> {
   const firestore = getAgentTelemetryWriterFirestore();
+  // One canonical instant for both the page filter and the re-check inside each
+  // write transaction, so the two can never disagree about the cutoff.
+  const activeSince =
+    options.activeSince === undefined
+      ? undefined
+      : canonicalActiveSince(options.activeSince);
   const pageSize = Math.min(
     Math.max(1, options.pageSize ?? MAX_SPEND_BACKFILL_PAGE_SIZE),
     MAX_SPEND_BACKFILL_PAGE_SIZE,
@@ -288,7 +305,7 @@ export async function backfillSessionSpend(
   let scannedOutsideWindow = 0;
   for (const doc of page.docs) {
     const stored = doc.data();
-    if (isOutsideWindow(stored, options.activeSince)) {
+    if (isOutsideWindow(stored, activeSince)) {
       scannedOutsideWindow += 1;
       continue;
     }
@@ -309,6 +326,12 @@ export async function backfillSessionSpend(
       const currentData = (await transaction.get(ref)).data();
       if (currentData === undefined) {
         // TTL-deleted or removed since the page read: nothing to bring up.
+        return false;
+      }
+      if (isOutsideWindow(currentData, activeSince)) {
+        // A live writer can move `lastActivityAt` back across the cutoff
+        // between the page read and this transaction, which puts the doc outside
+        // the window the operator asked for. It is not this pass's to write.
         return false;
       }
       const currentDerived = sessionSpendFromStored(
@@ -523,7 +546,11 @@ export async function listSessionDocs(
   // with the range filter needs the composite indexes documented above.
   let query: Query = collection;
   if (options.activeSince) {
-    query = query.where('lastActivityAt', '>=', options.activeSince);
+    query = query.where(
+      'lastActivityAt',
+      '>=',
+      canonicalActiveSince(options.activeSince),
+    );
   }
   if (options.source) {
     query = query.where('source', '==', options.source);

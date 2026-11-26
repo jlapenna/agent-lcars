@@ -542,5 +542,70 @@ describe('agent-telemetry store', () => {
       expect(page).toMatchObject({ stale: 1, written: 0 });
       expect(fake.written).toEqual([]);
     });
+    it('treats a cutoff written in another zone as the instant it names', async () => {
+      // 20:00+02:00 *is* 18:00Z. Compared as the raw strings the session sorts
+      // before the cutoff and would be silently skipped as out of window.
+      const fake = backfillFirestore([
+        spendDoc('session-1', { lastActivityAt: '2026-11-12T19:00:00.000Z' }),
+      ]);
+      useFakeFirestore(fake.firestore);
+
+      const page = await backfillSessionSpend({
+        apply: false,
+        activeSince: '2026-11-12T20:00:00+02:00',
+      });
+
+      expect(page).toMatchObject({
+        scanned: 1,
+        stale: 1,
+        scannedOutsideWindow: 0,
+      });
+    });
+
+    it('includes a session sitting exactly on a cutoff without milliseconds', async () => {
+      // '…T18:00:00Z' sorts *after* '…T18:00:00.000Z' as text, so an unnormalized
+      // cutoff drops the very first session the window is meant to include.
+      const fake = backfillFirestore([
+        spendDoc('session-1', { lastActivityAt: '2026-11-12T18:00:00.000Z' }),
+      ]);
+      useFakeFirestore(fake.firestore);
+
+      const page = await backfillSessionSpend({
+        apply: false,
+        activeSince: '2026-11-12T18:00:00Z',
+      });
+
+      expect(page).toMatchObject({ stale: 1, scannedOutsideWindow: 0 });
+    });
+
+    it('leaves a doc that left the window before the write transaction', async () => {
+      // The page read judged both in window; the live doc no longer qualifies, and
+      // the pass may only write what the operator's window asked for.
+      const fake = backfillFirestore(
+        [spendDoc('moved'), spendDoc('lost-field')],
+        {
+          moved: {
+            lastActivityAt: '2026-10-01T10:00:00.000Z',
+            tokens: USAGE,
+            model: 'claude-sonnet-4-5',
+            totalCostUsd: 1.25,
+          },
+          'lost-field': {
+            tokens: USAGE,
+            model: 'claude-sonnet-4-5',
+            totalCostUsd: 1.25,
+          },
+        },
+      );
+      useFakeFirestore(fake.firestore);
+
+      const page = await backfillSessionSpend({
+        apply: true,
+        activeSince: '2026-11-01T00:00:00.000Z',
+      });
+
+      expect(page).toMatchObject({ scanned: 2, stale: 2, written: 0 });
+      expect(fake.written).toEqual([]);
+    });
   });
 });

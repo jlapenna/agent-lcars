@@ -39,6 +39,31 @@ export const ISSUE_AGENT_SESSION_RETENTION_DAYS = 365;
  * part of {@link SessionDoc}: readers drop it before parsing. */
 export const SESSION_WRITTEN_AT_FIELD = 'writtenAt';
 
+/**
+ * Put an `activeSince` cutoff into the spelling `lastActivityAt` is stored in —
+ * UTC with millisecond precision, the output of `Date.toISOString()`.
+ *
+ * Every comparison against a stored activity time is a *lexicographic* one
+ * (Firestore's `>=` on the string field, and the spend backfill's window
+ * filter), which is a time comparison only while both sides are canonical. A
+ * cutoff carrying a non-UTC offset (`2026-11-12T20:00:00+02:00` is 18:00Z) or
+ * omitting the milliseconds (`…T18:00:00Z` sorts after `…T18:00:00.000Z`)
+ * silently bounds the window at the wrong instant, dropping sessions the caller
+ * asked for.
+ *
+ * @throws RangeError if the value is not a parseable instant, rather than
+ * letting a typo through as an arbitrary string bound.
+ */
+export function canonicalActiveSince(activeSince: string): string {
+  const ms = Date.parse(activeSince);
+  if (Number.isNaN(ms)) {
+    throw new RangeError(
+      `activeSince must be a parseable timestamp, got "${activeSince}"`,
+    );
+  }
+  return new Date(ms).toISOString();
+}
+
 /** `intentId` prefix of a run that belongs to a native work item
  * (`work:<ulid>/r<n>`, the orchestrator's `taskKey` plus run generation). */
 const NATIVE_WORK_INTENT_PREFIX = 'work:';

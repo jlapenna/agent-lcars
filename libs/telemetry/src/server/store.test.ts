@@ -156,6 +156,24 @@ describe('listSessionDocs', () => {
     );
   });
 
+  it('bounds the range at the stored spelling when activeSince carries an offset', async () => {
+    // The filter is a string comparison, so a cutoff in another zone has to be
+    // normalized before Firestore sorts it against UTC-stored activity times.
+    const firestore = streamingFirestore({
+      [SESSIONS_COLLECTION]: [{ id: cliSession.sessionId, ...cliSession }],
+    }) as unknown as Firestore;
+
+    await listSessionDocs(firestore, {
+      activeSince: '2026-07-11T14:00:00+02:00',
+    });
+
+    expect(mockWhere).toHaveBeenCalledWith(
+      'lastActivityAt',
+      '>=',
+      '2026-07-11T12:00:00.000Z',
+    );
+  });
+
   it('does not filter when no activeSince is given', async () => {
     const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: [{ id: cliSession.sessionId, ...cliSession }],
