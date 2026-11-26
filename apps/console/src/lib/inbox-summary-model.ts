@@ -9,7 +9,9 @@ import {
   requestSummary,
 } from './human-needed-summary';
 
-const summarySchema = z.strictObject({
+// The model supplies advisory text, not an executable contract. Discard
+// unrelated metadata instead of rejecting an otherwise valid description.
+const summarySchema = z.object({
   description: z.string().trim().min(1).max(600),
 });
 

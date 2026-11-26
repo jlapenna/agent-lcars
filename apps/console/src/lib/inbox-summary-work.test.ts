@@ -63,6 +63,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
@@ -319,5 +320,35 @@ describe('Inbox summaries through Work', () => {
     });
     await executeSummaries(runtime, generate);
     expect(generate).toHaveBeenCalledTimes(3);
+  });
+
+  it('recovers a timed-out attempt with a cached summary containing extra metadata', async () => {
+    const { runtime } = fixture();
+    const description = 'Investigate and resolve the failing CI checks.';
+    const cached = JSON.stringify({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({ description, pr_number: 1 }),
+          },
+        },
+      ],
+    });
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException('timed out', 'TimeoutError'))
+      .mockImplementation(async () => new Response(cached));
+    vi.stubGlobal('fetch', fetch);
+    await admitInboxSummary(runtime, context('a'));
+
+    await executeSummaries(runtime);
+    await executeSummaries(runtime);
+    await executeSummaries(runtime);
+
+    expect(await admitInboxSummary(runtime, context('a'))).toEqual({
+      pending: false,
+      description,
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
