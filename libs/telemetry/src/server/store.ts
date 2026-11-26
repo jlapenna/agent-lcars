@@ -18,6 +18,7 @@ import {
 } from 'firebase-admin/firestore';
 
 import { parseSessionDoc, SESSION_WRITTEN_AT_FIELD } from '../lib/session-doc';
+import { sessionSpendForWrite } from '../lib/session-spend';
 import {
   SessionDoc,
   SessionRepository,
@@ -95,12 +96,14 @@ export function getAgentTelemetryWriterFirestore(): AdminFirestore {
 export async function upsertSession(write: SessionWrite): Promise<void> {
   const { doc, clearFields } = write;
   const firestore = getAgentTelemetryWriterFirestore();
-  await firestore
-    .collection(SESSIONS_COLLECTION)
-    .doc(doc.sessionId)
-    .set(
+  const ref = firestore.collection(SESSIONS_COLLECTION).doc(doc.sessionId);
+  await firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    transaction.set(
+      ref,
       {
         ...doc,
+        spend: sessionSpendForWrite(write, snapshot.data()),
         ...(doc.expireAt && {
           expireAt: AdminTimestamp.fromDate(new Date(doc.expireAt)),
         }),
@@ -111,6 +114,7 @@ export async function upsertSession(write: SessionWrite): Promise<void> {
       },
       { merge: true },
     );
+  });
 }
 
 /**

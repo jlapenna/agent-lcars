@@ -1,5 +1,9 @@
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { estimateCostUsd, totalTokens } from '@agent-lcars/telemetry';
+import {
+  type SessionCost,
+  sessionCost as docCost,
+  totalTokens,
+} from '@agent-lcars/telemetry';
 
 import { repoItemKey, type WatchedRepo } from './github-client';
 
@@ -129,36 +133,7 @@ function isoWeekKey(iso: string): string {
   return `${isoYear}-W${String(weekNumber).padStart(2, '0')}`;
 }
 
-/** A single session's cost contribution to the ledger: its recorded
- * `totalCostUsd` when present, else an {@link estimateCostUsd} from its
- * model + token usage, else no cost at all - see `docCost`. */
-export interface SessionCost {
-  costUsd: number | undefined;
-  /** True when `costUsd` came from `estimateCostUsd` rather than a recorded
-   * `totalCostUsd`. Meaningless when `costUsd` is undefined. */
-  estimated: boolean;
-}
-
-/**
- * Resolves a session doc's cost contribution: its own recorded
- * `totalCostUsd` when the transcript reported one, otherwise a published-
- * rate estimate from its `model` + `tokens` (undefined when the model is
- * absent or unrecognized - see {@link estimateCostUsd}'s doc comment for
- * why that's the right fallback rather than treating it as a $0 session).
- * Floors a recorded cost at $0 - reducer.ts now clamps newly-ingested
- * sessions the same way, but a doc written before that fix can still carry
- * a stored negative total, which would otherwise drag a bucket's summed
- * total below what its other, correctly-priced sessions actually cost.
- */
-export function docCost(doc: SessionDoc): SessionCost {
-  if (doc.totalCostUsd !== undefined && Number.isFinite(doc.totalCostUsd)) {
-    return { costUsd: Math.max(0, doc.totalCostUsd), estimated: false };
-  }
-  return {
-    costUsd: estimateCostUsd(doc.resolvedModel ?? doc.model, doc.tokens),
-    estimated: true,
-  };
-}
+export { docCost };
 
 function accumulateTotals(
   base: LedgerTotals,
