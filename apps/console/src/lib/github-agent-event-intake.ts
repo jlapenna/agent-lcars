@@ -25,6 +25,11 @@ import {
 } from './github-agent-events';
 import { getGithubClient } from './github-client';
 import {
+  mergeabilityCandidates,
+  mergeabilityTrigger,
+  readPullRequestMergeability,
+} from './github-pr-mergeability-events';
+import {
   enqueueGitHubAgentEvents,
   type GitHubWebhookEnvelope,
 } from './hosted-webhook-queue';
@@ -134,6 +139,7 @@ export interface GithubAgentEventDeps extends AgentEventRoutingDeps {
   /** Drains the orchestrator outbox, so a Work an event resumed (#3570)
    * starts now rather than at the next maintenance drain. */
   drain?: () => Promise<unknown>;
+  readMergeability?: typeof readPullRequestMergeability;
 }
 
 /** The production dependencies, recording Work-target events through the
@@ -217,13 +223,23 @@ export async function routeGithubAgentEvents(
   delivery: GithubWebhookDelivery,
   deps: GithubAgentEventDeps,
 ): Promise<GithubAgentEventResult> {
-  const candidates = githubAgentEventCandidates(delivery);
+  const mergeability = await mergeabilityCandidates(
+    delivery,
+    deps.store,
+    deps.readMergeability,
+  );
+  const candidates = [
+    ...githubAgentEventCandidates(delivery),
+    ...mergeability.candidates,
+  ];
   const subscriptionsByKey = new Map<string, StoredAgentEventSubscription[]>();
   for (const key of new Set(candidates.map((candidate) => candidate.key)))
     subscriptionsByKey.set(key, await deps.store.listForKey(key));
 
   const events: GithubAgentEventResult['events'][number][] = [];
-  const failures: unknown[] = [];
+  const failures: unknown[] = mergeability.retry
+    ? [new Error('GitHub PR mergeability is still pending or unreadable')]
+    : [];
   let resumeQueued = false;
   for (const candidate of candidates) {
     const { key, kind } = candidate;
@@ -312,9 +328,31 @@ export async function queueGithubAgentEvents(
       payload,
       receivedAt: new Date().toISOString(),
     });
-    if (candidates.length === 0) return 'no-event';
-    return (await enqueue(envelope)).outcome;
+    const trigger = mergeabilityTrigger({
+      event: envelope.eventName,
+      deliveryId: envelope.deliveryId,
+      payload,
+      receivedAt: new Date().toISOString(),
+    });
+    if (candidates.length === 0 && trigger === undefined) return 'no-event';
+    return (
+      await enqueue({
+        ...envelope,
+        ...(trigger ? { notBefore: new Date(Date.now() + 5_000) } : {}),
+      })
+    ).outcome;
   } catch (error) {
+    logger.structured(
+      'error',
+      'LCARS agent event enqueue failed',
+      {
+        component: 'lcars-agent-events',
+        source: 'github',
+        stage: 'enqueue',
+        outcome: 'failed',
+      },
+      { enrich: false },
+    );
     logger.error(
       'agent-lcars: GitHub agent event enqueue failed for %s/%s:',
       envelope.eventName,

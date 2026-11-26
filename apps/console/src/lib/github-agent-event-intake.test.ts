@@ -16,6 +16,7 @@ import {
   queueGithubAgentEvents,
   routeGithubAgentEvents,
 } from './github-agent-event-intake';
+import type { PullRequestMergeability } from './github-pr-mergeability-events';
 import { queueWorkEventResume } from './work-event-resume';
 
 const DELIVERY = '72d3162e-cc78-11e3-81ab-4c9367dc0958';
@@ -122,6 +123,16 @@ async function setup(
       resumeWork,
       drain,
       reads: { checkRuns, threadsResolved },
+      readMergeability: async (
+        _repository: string,
+        _number: number,
+      ): Promise<PullRequestMergeability> => ({
+        state: 'open',
+        head: { sha: SHA },
+        base: { ref: 'main', sha: SHA },
+        mergeable: true,
+        mergeable_state: 'clean',
+      }),
     },
   };
 }
@@ -136,6 +147,39 @@ function notices(publish: ReturnType<typeof vi.fn>) {
 }
 
 describe('routeGithubAgentEvents', () => {
+  it('routes known mergeability before retrying an unknown PR, without duplicate notices on retry', async () => {
+    const { deps, publish } = await setup([
+      subscription('a'),
+      subscription('b', { key: 'github:pr:jlapenna/homelab#8' }),
+    ]);
+    let pending = true;
+    deps.readMergeability = async (_repository: string, number: number) => ({
+      state: 'open',
+      head: { sha: SHA },
+      base: { ref: 'main', sha: SHA },
+      mergeable: number === 8 && pending ? null : false,
+      mergeable_state: number === 8 && pending ? 'unknown' : 'dirty',
+    });
+    const push = {
+      event: 'push',
+      deliveryId: DELIVERY,
+      receivedAt: '2026-11-25T12:00:00Z',
+      payload: {
+        repository,
+        ref: 'refs/heads/main',
+        deleted: false,
+        sender: { login: 'jlapenna' },
+      },
+    };
+    await expect(routeGithubAgentEvents(push, deps)).rejects.toThrow(
+      'failed to route',
+    );
+    expect(publish).toHaveBeenCalledTimes(1);
+    pending = false;
+    await routeGithubAgentEvents(push, deps);
+    expect(publish).toHaveBeenCalledTimes(2);
+  });
+
   it('resumes a Work a dispatched run subscribed to the pull request, then drains (#3570)', async () => {
     const store = new MemoryOrchestratorStore();
     const orchestrator = new Orchestrator(store, {
@@ -451,13 +495,54 @@ describe('queueGithubAgentEvents', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
+  it('delays branch pushes before deriving asynchronous mergeability', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.UTC(2026, 10, 25, 12));
+    const enqueue = vi.fn(async () => ({ outcome: 'enqueued' as const }));
+    await expect(
+      queueGithubAgentEvents(
+        { ...envelope, eventName: 'push' },
+        {
+          repository,
+          ref: 'refs/heads/main',
+          deleted: false,
+          sender: { login: 'jlapenna' },
+        },
+        enqueue,
+      ),
+    ).resolves.toBe('enqueued');
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ notBefore: new Date('2026-11-25T12:00:05Z') }),
+    );
+  });
+
   it('never throws: a failed enqueue is logged', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.stubEnv('FORCE_STRUCTURED_LOGGING', 'true');
+    const errorLog = vi
+      .spyOn(console, 'log')
+      .mockImplementation(() => undefined);
     const enqueue = vi.fn(async () => {
       throw new Error('queue down');
     });
     await expect(
       queueGithubAgentEvents(envelope, review('jlapenna', 'OWNER'), enqueue),
     ).resolves.toBe('failed');
+    const entries = errorLog.mock.calls.flatMap((call) =>
+      call.flatMap((value) => {
+        if (typeof value !== 'string') return [];
+        try {
+          return [JSON.parse(value)];
+        } catch {
+          return [];
+        }
+      }),
+    );
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        component: 'lcars-agent-events',
+        source: 'github',
+        stage: 'enqueue',
+        outcome: 'failed',
+      }),
+    );
   });
 });

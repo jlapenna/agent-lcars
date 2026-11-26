@@ -197,7 +197,7 @@ export async function enqueueGitHubWebhook(
 export async function enqueueGitHubAgentEvents(
   envelope: Pick<
     GitHubWebhookEnvelope,
-    'rawBody' | 'deliveryId' | 'eventName' | 'signature'
+    'rawBody' | 'deliveryId' | 'eventName' | 'signature' | 'notBefore'
   >,
   queue: WebhookTaskQueue = defaultWebhookTaskQueue,
 ): Promise<{ outcome: 'enqueued' | 'duplicate' }> {
@@ -217,6 +217,13 @@ export async function enqueueGitHubAgentEvents(
         'x-hub-signature-256': envelope.signature,
       },
       body: envelope.rawBody,
+      ...(envelope.notBefore
+        ? {
+            scheduleTime: {
+              seconds: Math.floor(envelope.notBefore.getTime() / 1000),
+            },
+          }
+        : {}),
     });
     return { outcome: 'enqueued' };
   } catch (error) {

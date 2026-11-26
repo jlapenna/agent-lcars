@@ -313,17 +313,6 @@ function requireAvailableSource(
       });
     }
   }
-  if (value.source === 'github:pr') {
-    const unavailable = new Set(['conflict', 'behind']);
-    if (
-      [...(value.kinds ?? []), ...(value.until ? [value.until] : [])].some(
-        (kind) => unavailable.has(kind),
-      )
-    )
-      throw new ORPCError('FORBIDDEN', {
-        message: 'GitHub conflict and behind events are not available yet',
-      });
-  }
 }
 
 export const agentEventsRouter = os.router({

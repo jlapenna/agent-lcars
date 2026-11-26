@@ -13,6 +13,7 @@ import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
 import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
 
 const ADMITTED_EVENTS = new Set([
+  'push',
   'issues',
   'issue_comment',
   'pull_request',
@@ -140,6 +141,25 @@ export async function POST(request: Request): Promise<NextResponse> {
         reason: 'repository outside control plane',
       },
       { status: 202, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+
+  if (eventName === 'push') {
+    const outcome = await queueGithubAgentEvents(
+      {
+        rawBody,
+        deliveryId,
+        eventName,
+        signature: header(request, 'x-hub-signature-256'),
+      },
+      payload,
+    );
+    return NextResponse.json(
+      { deliveryId, eventName, outcome },
+      {
+        status: outcome === 'failed' ? 503 : 202,
+        headers: { 'Cache-Control': 'no-store' },
+      },
     );
   }
 

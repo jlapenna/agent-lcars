@@ -111,3 +111,36 @@ resource "google_monitoring_alert_policy" "dispatch_webhooks_queue_backlog" {
 
   depends_on = [google_project_service.services]
 }
+
+
+# A lost enqueue never enters the queue's backlog/error metrics. Catch that
+# boundary directly from the source's bounded structured outcome.
+resource "google_monitoring_alert_policy" "agent_event_enqueue_failed" {
+  project      = var.project_id
+  display_name = "LCARS agent event enqueue failed"
+  combiner     = "OR"
+  conditions {
+    display_name = "An agent event could not enter its durable queue"
+    condition_matched_log {
+      filter = "resource.type=\"cloud_run_revision\" AND jsonPayload.component=\"lcars-agent-events\" AND jsonPayload.stage=\"enqueue\" AND jsonPayload.outcome=\"failed\""
+    }
+  }
+  alert_strategy {
+    notification_rate_limit { period = "900s" }
+    auto_close = "1800s"
+  }
+  notification_channels = [google_monitoring_notification_channel.alert_email.name]
+  documentation {
+    mime_type = "text/markdown"
+    content   = <<-EOT
+      A GitHub agent-event enqueue failed before reaching dispatch-webhooks.
+      Subscribed agents can miss the event even while the queue is healthy.
+      Read the Console lcars-agent-events outcome and adjacent enqueue error,
+      repair Cloud Tasks access or availability, then redeliver the original
+      GitHub App delivery. Its stable delivery id prevents duplicate enqueue.
+      Owner: jlapenna. No synthetic failure or paid inference is needed to
+      check this alert; inspect its deployed log filter and natural outcomes.
+    EOT
+  }
+  depends_on = [google_project_service.services]
+}

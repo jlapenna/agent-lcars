@@ -37,6 +37,8 @@ export interface AgentEventSubscriptionStore {
   /** Subscriptions a dispatched run made on behalf of one native Work. */
   listForWork(workId: string): Promise<StoredAgentEventSubscription[]>;
   listForKey(key: string): Promise<StoredAgentEventSubscription[]>;
+  /** A source prefix, used to find subscribed PRs affected by a base push. */
+  listForKeyPrefix(prefix: string): Promise<StoredAgentEventSubscription[]>;
   /** Whether a document was removed. */
   delete(id: string): Promise<boolean>;
   /** Records that `eventId` was published for the subscription, or removes
@@ -137,6 +139,14 @@ export class FirestoreAgentEventSubscriptionStore implements AgentEventSubscript
     return result.docs.map((doc) => doc.data() as StoredAgentEventSubscription);
   }
 
+  async listForKeyPrefix(prefix: string) {
+    const result = await this.collection()
+      .where('key', '>=', prefix)
+      .where('key', '<', `${prefix}\uf8ff`)
+      .get();
+    return result.docs.map((doc) => doc.data() as StoredAgentEventSubscription);
+  }
+
   async delete(id: string) {
     const ref = this.collection().doc(id);
     return this.firestore().runTransaction(async (transaction) => {
@@ -213,6 +223,12 @@ export class MemoryAgentEventSubscriptionStore implements AgentEventSubscription
   async listForKey(key: string) {
     return [...this.documents.values()]
       .filter((doc) => doc.key === key)
+      .map((doc) => structuredClone(doc));
+  }
+
+  async listForKeyPrefix(prefix: string) {
+    return [...this.documents.values()]
+      .filter((doc) => doc.key.startsWith(prefix))
       .map((doc) => structuredClone(doc));
   }
 
