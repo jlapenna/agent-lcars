@@ -897,6 +897,25 @@ body:has(.console-header:not([data-streaming-fallback]))
   border-left: 0;
 }
 
+a.lcars-readout {
+  color: var(--lcars-accent-ink);
+  text-decoration: none;
+}
+
+a.lcars-readout .lcars-readout__label {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+a.lcars-readout:is(:hover, :focus-visible) .lcars-readout__label {
+  text-decoration-thickness: 2px;
+}
+
+a.lcars-readout:active .lcars-readout__label {
+  color: var(--lcars-ink);
+}
+
 .lcars-readout__value {
   overflow: hidden;
   margin: 10px 0 2px;

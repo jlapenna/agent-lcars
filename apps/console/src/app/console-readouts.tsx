@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import { Sparkline } from './ops-primitives';
@@ -7,6 +8,7 @@ export interface ConsoleReadout {
   id: string;
   label: string;
   value: ReactNode;
+  href?: string;
   /** One short line of context; omit rather than pad. */
   detail?: ReactNode;
   /** The mockup's sparkline under the figure. Without `values` the slot
@@ -28,37 +30,54 @@ export function ConsoleReadouts({
 }) {
   return (
     <section className="lcars-readouts" aria-label={label}>
-      {readouts.map((readout) => (
-        <div
-          key={readout.id}
-          className="lcars-readout"
-          data-testid={`readout-${readout.id}`}
-        >
-          <span className="lcars-eyebrow lcars-readout__label">
-            {readout.label}
-          </span>
-          <span className="lcars-readout__value">{readout.value}</span>
-          {readout.detail ? (
-            <span className="lcars-readout__detail">{readout.detail}</span>
-          ) : null}
-          {readout.spark &&
-            (readout.spark.values ? (
-              <Sparkline
-                values={readout.spark.values}
-                label={readout.spark.label}
-              />
-            ) : (
-              <span
-                className="lcars-readout__nospark"
-                role="img"
-                aria-label={`${readout.spark.label}: unavailable`}
-                title={`${readout.spark.label}: unavailable`}
-              >
-                —
-              </span>
-            ))}
-        </div>
-      ))}
+      {readouts.map((readout) => {
+        const attributes = {
+          className: 'lcars-readout',
+          'data-testid': `readout-${readout.id}`,
+        };
+        const content = (
+          <>
+            <span className="lcars-eyebrow lcars-readout__label">
+              {readout.label}
+            </span>
+            <span className="lcars-readout__value">{readout.value}</span>
+            {readout.detail ? (
+              <span className="lcars-readout__detail">{readout.detail}</span>
+            ) : null}
+            {readout.spark &&
+              (readout.spark.values ? (
+                <Sparkline
+                  values={readout.spark.values}
+                  label={readout.spark.label}
+                />
+              ) : (
+                <span
+                  className="lcars-readout__nospark"
+                  role="img"
+                  aria-label={`${readout.spark.label}: unavailable`}
+                  title={`${readout.spark.label}: unavailable`}
+                >
+                  —
+                </span>
+              ))}
+          </>
+        );
+
+        return readout.href ? (
+          <Link
+            key={readout.id}
+            {...attributes}
+            href={readout.href}
+            prefetch={false}
+          >
+            {content}
+          </Link>
+        ) : (
+          <div key={readout.id} {...attributes}>
+            {content}
+          </div>
+        );
+      })}
     </section>
   );
 }

@@ -27,7 +27,18 @@ test.describe('/agents page @smoke', () => {
     );
     await expect(header).toHaveCount(1);
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
-    await header.getByRole('link', { name: 'Agents' }).click();
+    const summaries = page.getByRole('region', {
+      name: 'Destination summaries',
+    });
+    const agentsSummary = summaries.getByRole('link', { name: /Agents/ });
+    await expect(agentsSummary).toContainText('2 active CLI sessions');
+    await expect(
+      summaries.getByRole('link', { name: /Shuttlebay/ }),
+    ).toHaveAttribute('href', '/shuttlebay');
+    await expect(
+      summaries.getByRole('link', { name: /Inbox/ }),
+    ).toHaveAttribute('href', '/inbox');
+    await agentsSummary.click();
     await page.waitForURL('/agents');
 
     await expect(

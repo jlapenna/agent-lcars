@@ -37,10 +37,6 @@ import { buildQueueView } from '../lib/queue-view';
 import { readTimings } from '../lib/read-timings';
 import { indexSessionsByRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
-import {
-  getSessionArchive,
-  parseSessionArchiveQuery,
-} from '../lib/session-archive';
 import { filterSessionsForRepo } from '../lib/session-repo-filter';
 import { fleetTokenRate, TOKEN_RATE_READ_FAILED } from '../lib/token-rate';
 import { getTokenRateSnapshot } from '../lib/token-rate-data';
@@ -61,7 +57,6 @@ import {
   parseAgentsViewFilters,
 } from './agents/agents-view-filters';
 import { BridgeDetail } from './bridge-detail';
-import { bridgeReadouts, fleetReadoutInput } from './bridge-readouts';
 import { resolveBridgeDetail } from './bridge-rows';
 import {
   bridgeSelectionHref,
@@ -83,7 +78,6 @@ import { ConsoleWorkspace } from './console-workspace';
 import { DataFreshness } from './data-freshness';
 import { decisionRows } from './decision-rows';
 import { DeckInboxSummary } from './deck-inbox-summary';
-import { fleetReadoutWarnings } from './fleet-readouts';
 import { formatRelativeTime } from './format';
 import { inboxCardAgent, inboxCardMetadata } from './inbox-card';
 import { LiveDashboard } from './live-dashboard';
@@ -99,6 +93,7 @@ import {
 import { NavPageLoading, PageLoading } from './page-loading';
 import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
+import { onlineRunnerCount } from './runner-rows';
 import { parseStoppedWorkCursor, stoppedWorkHref } from './stopped-work-query';
 import { withConsolePageShell } from './with-console-page-shell';
 import { cancelItem, redispatchItem } from './work/actions';
@@ -264,7 +259,6 @@ async function IndexBody({
     },
     nativeInbox,
     autoscaler,
-    spendArchive,
     tokenRateSnapshot,
   ] = await Promise.all([
     timings.time('queue', getCachedQueueItems()),
@@ -288,18 +282,6 @@ async function IndexBody({
       }),
     ),
     timings.time('autoscaler', getAutoscalerStatuses()),
-    timings.time(
-      'spend',
-      getSessionArchive(
-        parseSessionArchiveQuery({ days: '1', repo: repoFilterKey }),
-        {
-          includeSpend: true,
-        },
-      ).catch((error: unknown) => {
-        logger.error('agent-lcars: Bridge spend readout unavailable:', error);
-        return undefined;
-      }),
-    ),
     timings.time('tokenRate', getTokenRateSnapshot()),
   ]);
   timings.log();
@@ -311,7 +293,7 @@ async function IndexBody({
       ...cliSessionWarnings,
       ...runnerSessionWarnings,
       ...nativeInbox.warnings,
-      ...fleetReadoutWarnings({ activity, autoscaler, spendArchive }),
+      ...autoscaler.warnings,
       ...(tokenRateSnapshot ? [] : [TOKEN_RATE_READ_FAILED]),
     ]),
   );
@@ -373,6 +355,7 @@ async function IndexBody({
     cliSessions,
     repoFilter,
   ).filter((session) => matchesAgentsSession(session, view));
+  const activeCliSessions = filteredCliSessions.filter(isActiveCliSession);
   const matchesItem = (item: {
     repo: { owner: string; name: string };
     number: number;
@@ -412,7 +395,7 @@ async function IndexBody({
     selectedKey,
     liveRuns: filteredActivity.liveRuns,
     recentRuns: filteredActivity.recentRuns.slice(0, RECENT_OUTCOMES_LIMIT),
-    cliSessions: filteredCliSessions.filter(isActiveCliSession),
+    cliSessions: activeCliSessions,
     waitingOnDeploy: deployCards,
     blocked: blockedCards,
     parkedWork: stoppedItems,
@@ -447,17 +430,10 @@ async function IndexBody({
   if (view.q) inboxQuery.set('q', view.q);
   const inboxHref = inboxQuery.size ? `/inbox?${inboxQuery}` : '/inbox';
   const decisionCount = decisionCards.length;
-  const readouts = bridgeReadouts(
-    fleetReadoutInput({
-      activity,
-      liveRuns: filteredActivity.liveRuns,
-      cliSessions:
-        cliSessionWarnings.length === 0 ? filteredCliSessions : undefined,
-      repo: repoFilterKey,
-      autoscaler,
-      spendArchive,
-    }),
-  );
+  const runners = autoscaler.hostInventory?.runners;
+  const runnerCount = runners
+    ? `${onlineRunnerCount(runners)} / ${runners.length}`
+    : activity.fleet?.registered;
   const selectRun = (run: AgentRun) =>
     bridgeSelectionHref(runKey(run), repoFilterKey, stoppedCursor, view);
   const outcomesHref = agentsScopedHref(repoFilterKey, view);
@@ -530,7 +506,41 @@ async function IndexBody({
         </ConsoleToolbar>
       }
     >
-      <ConsoleReadouts label="Bridge readouts" readouts={readouts} />
+      <ConsoleReadouts
+        label="Destination summaries"
+        readouts={[
+          {
+            id: 'agents',
+            label: 'Agents',
+            href: outcomesHref,
+            value: activity.queue ? filteredActivity.liveRuns.length : '—',
+            detail: cliSessionWarnings.length
+              ? 'Live runs · CLI sessions unavailable'
+              : `Live runs · ${activeCliSessions.length} active CLI sessions`,
+          },
+          {
+            id: 'shuttlebay',
+            label: 'Shuttlebay',
+            href: '/shuttlebay',
+            value: runnerCount ?? '—',
+            detail:
+              runnerCount === undefined
+                ? 'Runner inventory unavailable'
+                : runners
+                  ? 'Runners online · fleet-wide'
+                  : 'ARC runners registered · fleet-wide',
+          },
+          {
+            id: 'inbox',
+            label: 'Inbox',
+            href: inboxHref,
+            value: nativeInbox.available ? decisionCount : '—',
+            detail: nativeInbox.available
+              ? 'Decisions waiting'
+              : 'Native decisions unavailable',
+          },
+        ]}
+      />
       <section
         className="bridge-workspace"
         data-sel={hasSelection ? '' : undefined}
@@ -614,7 +624,7 @@ async function IndexBody({
               hostInventory={autoscaler.hostInventory}
             />
             <CliSessionsPanel
-              sessions={filteredCliSessions.filter(isActiveCliSession)}
+              sessions={activeCliSessions}
               selectHrefFor={(session) =>
                 bridgeSelectionHref(
                   sessionKey(session),
