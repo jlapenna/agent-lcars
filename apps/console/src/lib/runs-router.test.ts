@@ -17,6 +17,7 @@ import {
   reserveCredentialOperation,
   type Run,
   runRecoveryDeadline,
+  runSchema,
 } from '@agent-lcars/orchestrator';
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -3733,132 +3734,199 @@ describe('checkoutToken', () => {
     expect(JSON.stringify(body)).not.toContain(runToken);
   });
 
-  describe('pull-request author App (#3522)', () => {
-    async function claimedRun(work: string) {
+  it.each([
+    { crossRepo: false, reviewerCheckoutV1: false },
+    { crossRepo: true, reviewerCheckoutV1: false },
+    { crossRepo: false, reviewerCheckoutV1: true },
+    { crossRepo: true, reviewerCheckoutV1: true },
+  ])(
+    'selects the review checkout App for $reviewerCheckoutV1 (crossRepo=$crossRepo)',
+    async ({ crossRepo, reviewerCheckoutV1 }) => {
       const { store, orchestrator, now } = fixture();
       const runId = await seedQueuedRun(store, orchestrator, {
-        workId: wid(work),
+        workId: wid('review-checkout'),
         now: NOW,
+        params: { mode: 'review', ...(crossRepo ? { crossRepo: 'true' } : {}) },
       });
-      const runToken = mintRunToken();
+      const bearer = mintRunToken();
       await store.claimQueuedRun({
         pipelines: ['claude'],
         now: NOW,
-        claimedBy: 'runner-1',
-        claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
-        tokenHash: hashRunToken(runToken),
+        claimedBy: 'review-runner',
+        claimedBySubject: 'executor@example.com',
+        tokenHash: hashRunToken(bearer),
       });
-      return { store, orchestrator, now, runId, runToken };
-    }
-    const expiresAt = '2026-08-26T10:53:21.000Z';
-    const checkoutTokens = {
-      tokenFor: async () => 'ghs_checkout',
-      expiringTokenFor: async () => ({ token: 'ghs_checkout', expiresAt }),
-      expiringTokenForRepositories: async () => ({
-        token: 'ghs_checkout',
-        expiresAt,
-      }),
-    };
-
-    it("returns the author App's token for the anchor repository", async () => {
-      const { store, orchestrator, now, runId, runToken } = await claimedRun(
-        'work-pr-author-token',
-      );
-      const authorTokenFor = vi.fn(async (repo: string) => ({
-        token: `ghs_author-for-${repo}`,
+      const expiresAt = '2026-08-26T10:53:21.000Z';
+      const reviewer = {
+        tokenFor: vi.fn(async () => 'review-token'),
+        expiringTokenFor: vi.fn(async () => ({
+          token: 'review-token',
+          expiresAt,
+        })),
+        expiringTokenForRepositories: vi.fn(async () => ({
+          token: 'review-token',
+          expiresAt,
+        })),
+      };
+      const fleetMint = vi.fn(async () => ({
+        token: 'fleet-token',
         expiresAt,
       }));
-      const r = await call(
-        {
-          store,
-          orchestrator,
-          now,
-          tokens: context.tokens,
-          checkoutTokens,
-          pullRequestAuthorTokens: () => ({
-            tokenFor: async (repo) => (await authorTokenFor(repo)).token,
-            expiringTokenFor: authorTokenFor,
-            expiringTokenForRepositories: async () => {
-              throw new Error('not used');
-            },
-          }),
-          codexAuth: context.codexAuth,
-          bearerToken: runToken,
+      const checkoutContext = {
+        ...context,
+        store,
+        orchestrator,
+        now,
+        bearerToken: bearer,
+        reviewerTokens: reviewer,
+        reviewerCheckoutV1,
+        checkoutTokens: {
+          tokenFor: async () => 'fleet-token',
+          expiringTokenFor: fleetMint,
+          expiringTokenForRepositories: fleetMint,
         },
-        'GET',
-        runPath(runId, '/checkout-token'),
+      };
+      for (const path of ['/checkout-token', '/reviewer-checkout-token']) {
+        const premature = await call(
+          checkoutContext,
+          'GET',
+          runPath(runId, path),
+        );
+        expect(premature.status).toBe(409);
+      }
+      expect(fleetMint).not.toHaveBeenCalled();
+      expect(reviewer.expiringTokenFor).not.toHaveBeenCalled();
+      expect(reviewer.expiringTokenForRepositories).not.toHaveBeenCalled();
+      const heartbeatPath = runPath(runId, '/heartbeat');
+      const startup = await call(checkoutContext, 'POST', heartbeatPath);
+      expect(startup.status).toBe(200);
+      const login = reviewerCheckoutV1
+        ? 'agent-lcars-reviewer[bot]'
+        : undefined;
+      expect((startup.json as { reviewerLogin?: string }).reviewerLogin).toBe(
+        login,
       );
+
+      // A fleet heartbeat models the startup acknowledged by old Console.
+      // A later capability header cannot upgrade that in-flight review.
+      const renewalContext = {
+        ...checkoutContext,
+        reviewerCheckoutV1: !reviewerCheckoutV1,
+      };
+      const later = await call(renewalContext, 'POST', heartbeatPath);
+      expect(later.status).toBe(200);
+      expect((later.json as { reviewerLogin?: string }).reviewerLogin).toBe(
+        login,
+      );
+      const selectedPath = runPath(
+        runId,
+        reviewerCheckoutV1 ? '/reviewer-checkout-token' : '/checkout-token',
+      );
+      const otherPath = runPath(
+        runId,
+        reviewerCheckoutV1 ? '/checkout-token' : '/reviewer-checkout-token',
+      );
+      const wrongRoute = await call(renewalContext, 'GET', otherPath);
+      expect(wrongRoute.status).toBe(409);
+      expect(fleetMint).not.toHaveBeenCalled();
+      expect(reviewer.expiringTokenFor).not.toHaveBeenCalled();
+      expect(reviewer.expiringTokenForRepositories).not.toHaveBeenCalled();
+      const beforeCheckout = runSchema.parse(await store.readRun(runId));
+      const r = await call(renewalContext, 'GET', selectedPath);
       expect(r.status).toBe(200);
-      expect(authorTokenFor).toHaveBeenCalledWith('jlapenna/agent-lcars');
-      const body = r.json as { token: string; pullRequestAuthor?: unknown };
-      expect(body.token).toBe('ghs_checkout');
-      expect(body.pullRequestAuthor).toEqual({
-        login: 'agent-lcars-author[bot]',
-        token: 'ghs_author-for-jlapenna/agent-lcars',
-        expiresAt,
+      expect(r.json).toMatchObject({
+        token: reviewerCheckoutV1 ? 'review-token' : 'fleet-token',
       });
-    });
+      expect(r.json).not.toHaveProperty('identity');
+      expect((r.json as { reviewerLogin?: string }).reviewerLogin).toBe(
+        reviewerCheckoutV1 ? 'agent-lcars-reviewer[bot]' : undefined,
+      );
+      expect(fleetMint.mock.calls.length > 0).toBe(!reviewerCheckoutV1);
+      expect(reviewer.expiringTokenFor.mock.calls).toEqual(
+        reviewerCheckoutV1 && !crossRepo ? [['jlapenna/agent-lcars']] : [],
+      );
+      expect(reviewer.expiringTokenForRepositories.mock.calls.length > 0).toBe(
+        reviewerCheckoutV1 && crossRepo,
+      );
+      const body = r.json as { token: string; grants?: { token: string }[] };
+      expect((body.grants?.length ?? 0) > 0).toBe(crossRepo);
+      expect(
+        body.grants?.every((grant) => grant.token === body.token) ?? true,
+      ).toBe(true);
+      const renewed = await call(renewalContext, 'GET', selectedPath);
+      expect(renewed).toEqual(r);
+      // Checkout and renewal do not alter the startup binding.
+      expect(await store.readRun(runId)).toEqual(beforeCheckout);
+      expect(fleetMint.mock.calls.length > 0).toBe(!reviewerCheckoutV1);
+      expect(
+        reviewer.expiringTokenFor.mock.calls.length +
+          reviewer.expiringTokenForRepositories.mock.calls.length >
+          0,
+      ).toBe(reviewerCheckoutV1);
+    },
+  );
 
-    it('still returns the checkout token when the author App key is malformed', async () => {
-      const { store, orchestrator, now, runId, runToken } = await claimedRun(
-        'work-pr-author-bad-key',
-      );
-      const r = await call(
-        {
-          store,
-          orchestrator,
-          now,
-          tokens: context.tokens,
-          checkoutTokens,
-          pullRequestAuthorTokens: () => {
-            throw new Error('GitHub App private key is not a valid PEM');
-          },
-          codexAuth: context.codexAuth,
-          bearerToken: runToken,
+  it.each(['absent', 'failed'])(
+    'refuses a review checkout when reviewer credentials are %s',
+    async (failure) => {
+      const { store, orchestrator, now } = fixture();
+      const runId = await seedQueuedRun(store, orchestrator, {
+        workId: wid('review-refusal'),
+        now: NOW,
+        params: { mode: 'review' },
+      });
+      const bearer = mintRunToken();
+      await store.claimQueuedRun({
+        pipelines: ['claude'],
+        now: NOW,
+        claimedBy: 'review-runner',
+        claimedBySubject: 'executor@example.com',
+        tokenHash: hashRunToken(bearer),
+      });
+      const failed = vi.fn(async () => {
+        throw new Error('reviewer mint refused');
+      });
+      const fleetMint = vi.fn(async () => ({
+        token: 'fleet-token',
+        expiresAt: NOW,
+      }));
+      const checkoutContext = {
+        ...context,
+        store,
+        orchestrator,
+        now,
+        bearerToken: bearer,
+        reviewerCheckoutV1: true,
+        ...(failure === 'failed'
+          ? {
+              reviewerTokens: {
+                tokenFor: failed,
+                expiringTokenFor: failed,
+                expiringTokenForRepositories: failed,
+              },
+            }
+          : {}),
+        checkoutTokens: {
+          tokenFor: async () => 'fleet-token',
+          expiringTokenFor: fleetMint,
+          expiringTokenForRepositories: fleetMint,
         },
-        'GET',
-        runPath(runId, '/checkout-token'),
+      };
+      const startup = await call(
+        checkoutContext,
+        'POST',
+        runPath(runId, '/heartbeat'),
       );
-      expect(r.status).toBe(200);
-      const body = r.json as { token: string; pullRequestAuthor?: unknown };
-      expect(body.token).toBe('ghs_checkout');
-      expect(body.pullRequestAuthor).toBeUndefined();
-    });
-
-    it('still returns the checkout token when the author App cannot mint', async () => {
-      const { store, orchestrator, now, runId, runToken } = await claimedRun(
-        'work-pr-author-missing',
-      );
+      expect(startup.status).toBe(200);
       const r = await call(
-        {
-          store,
-          orchestrator,
-          now,
-          tokens: context.tokens,
-          checkoutTokens,
-          pullRequestAuthorTokens: () => ({
-            tokenFor: async () => {
-              throw new Error('not installed');
-            },
-            expiringTokenFor: async () => {
-              throw new Error('not installed');
-            },
-            expiringTokenForRepositories: async () => {
-              throw new Error('not installed');
-            },
-          }),
-          codexAuth: context.codexAuth,
-          bearerToken: runToken,
-        },
+        checkoutContext,
         'GET',
-        runPath(runId, '/checkout-token'),
+        runPath(runId, '/reviewer-checkout-token'),
       );
-      expect(r.status).toBe(200);
-      const body = r.json as { token: string; pullRequestAuthor?: unknown };
-      expect(body.token).toBe('ghs_checkout');
-      expect(body.pullRequestAuthor).toBeUndefined();
-    });
-  });
+      expect(r.status).toBe(failure === 'absent' ? 409 : 500);
+      expect(fleetMint).not.toHaveBeenCalled();
+    },
+  );
 
   // #1993: `agent-option:cross-repo` -- one grant per fleet owner among
   // `getWatchedRepos()`, minted through `expiringTokenForRepositories`.

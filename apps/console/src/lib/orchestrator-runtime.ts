@@ -15,7 +15,9 @@ import { codexAuthStore } from '@/lib/codex-auth-store';
 import { recoverCodexCredentialOperations } from '@/lib/codex-credential-operations';
 import {
   createDispatchTokenProvider,
+  createReviewerTokenProvider,
   type DispatchTokenProvider,
+  lazyDispatchTokenProvider,
   ORCHESTRATOR_GITHUB_PERMISSIONS,
 } from '@/lib/github-app-tokens';
 import { issueTracker } from '@/lib/issue-trackers';
@@ -75,6 +77,7 @@ export function createScheduleStore(): ScheduleStore {
 
 interface OrchestratorGithubRuntimeDeps {
   tokens: DispatchTokenProvider;
+  reviewerTokens: DispatchTokenProvider;
   githubApiBaseUrl?: string;
 }
 
@@ -91,12 +94,16 @@ export function orchestratorGithubRuntimeDeps(
   return fixtureBaseUrl
     ? {
         tokens: { tokenFor: async () => 'e2e-fixture-token' },
+        reviewerTokens: { tokenFor: async () => 'e2e-fixture-reviewer-token' },
         githubApiBaseUrl: fixtureBaseUrl,
       }
     : {
         tokens: createDispatchTokenProvider(
           env,
           ORCHESTRATOR_GITHUB_PERMISSIONS,
+        ),
+        reviewerTokens: lazyDispatchTokenProvider(() =>
+          createReviewerTokenProvider(env),
         ),
       };
 }

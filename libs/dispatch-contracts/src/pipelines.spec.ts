@@ -29,7 +29,7 @@ describe('bot identities', () => {
     expect(AGENT_BOT_LOGINS).toEqual([
       'claude[bot]',
       'agent-lcars[bot]',
-      'agent-lcars-author[bot]',
+      'agent-lcars-reviewer[bot]',
     ]);
   });
 });

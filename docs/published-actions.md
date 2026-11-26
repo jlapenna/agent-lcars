@@ -56,24 +56,43 @@ bot and signed by GitHub (excluding LCARS's qualification-gated
 `renovate/runner-cli-runtimes`, `renovate/major-runner-cli-runtimes`,
 `renovate/anthropic-review-workflow`, and
 `renovate/major-anthropic-review-workflow` branches) get an approving review
-from the control plane, as `agent-lcars[bot]`, without a review run. It does
+from the control plane, as `agent-lcars-reviewer[bot]`, without a review run. It does
 not approve a head that carries `status:needs-human` or `status:blocked`, a
 change request, an open trusted review thread, or a dismissed LCARS review.
 A commit from anyone else ends the exemption and the PR is reviewed normally.
 
-Two limits follow from using GitHub's rule. Any identity with write access
-can approve, so `can_approve_pull_request_reviews` stays off for the Actions
-token in every gated repository. And no account can approve its own pull
-request, so dispatched runs never open pull requests as `agent-lcars[bot]`:
-the console's checkout token carries a second token from the
-`agent-lcars-author` App, and the runner's `gh pr create` uses it. The PR's
-author is `agent-lcars-author[bot]`, and the LCARS review approves it like
-any other PR. A PR that still reaches GitHub as `agent-lcars[bot]` (the
-author App not configured or not installed on the owner) falls back to the
-old path: LCARS reviews it as a `COMMENT` carrying `<!-- lcars-review:pass -->`
-or `<!-- lcars-review:block -->`, and once it passes the control plane
-requests the maintainer's review. That fallback is a configuration fault to
-fix, not a supported route.
+Compatible runners advertise `X-LCARS-Reviewer-Checkout: v1` on the startup
+heartbeat. Console atomically records the dedicated App binding with the first
+accepted heartbeat, using an executor event that older releases can read.
+Reviews started on an older Console or by a legacy runner stay on the fleet
+App for the whole claim. Later heartbeats and checkout requests cannot change
+that choice. The startup acknowledgement selects the checkout endpoint for
+both the initial grant and renewals. Dedicated reviews use an endpoint absent
+from older Console releases and fail closed if the endpoint or the dedicated
+credentials are unavailable.
+
+Before rolling back to a Console that predates reviewer binding, stop
+QueueExecutor from starting new runs and let active dedicated reviews settle,
+or cancel them and verify their run leases are no longer live. Keep new
+claims paused through the cutover. If canceling, also verify the workers have
+stopped, since already-issued GitHub grants can outlive the LCARS lease.
+Resume claims after rollback and request fresh reviews for interrupted heads.
+The dedicated App has source, issue, and Actions read access and pull-request
+write access. Automatic dependency approvals also use it.
+After both components are deployed, `/review` requests a fresh review on the
+same head if a legacy self-review comment left a PR waiting for approval. A later
+dedicated approval supersedes an older self-review block on that head. GitHub
+change requests, unresolved threads, and dismissal vetoes still apply.
+On a maintainer-authored PR, a pre-cutover `agent-lcars[bot]` change request
+can keep GitHub at `CHANGES_REQUESTED` after a dedicated reviewer approves the
+current head. The stale-review sweep skips maintainer-authored PRs. A
+maintainer with review-dismissal permission should verify that the current
+head addresses the old findings, then dismiss the obsolete fleet App review
+on GitHub with that reason. Confirm GitHub counts the current-head approval.
+Implementation authors remain unchanged, including `agent-lcars[bot]`, and
+GitHub's ordinary approving review counts because author and reviewer differ.
+The existing fleet App webhook receives these reviews and wakes auto-merge.
+Actions' `can_approve_pull_request_reviews` remains off in every gated repository.
 
 Enabling the gate in a repository is one change to its ruleset root
 (`infra/github-ruleset`), applied by Homelab's executor. Before adding it,

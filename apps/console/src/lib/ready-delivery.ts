@@ -1,6 +1,9 @@
 import 'server-only';
 
-import { AGENT_BOT_LOGINS } from '@agent-lcars/dispatch-contracts';
+import {
+  AGENT_BOT_LOGINS,
+  REVIEWER_BOT_LOGIN,
+} from '@agent-lcars/dispatch-contracts';
 import {
   formatAttemptId,
   formatClaimMarker,
@@ -194,6 +197,7 @@ async function reviews(
   repo: string,
   number: number,
   head: string,
+  pullRequestAuthor: string,
 ) {
   // Complete bounded reads only: truncation and field errors retain ownership.
   const token = await deps.tokens.tokenFor(repo);
@@ -272,7 +276,11 @@ async function reviews(
       commit: { oid: string };
     } => review.author !== null && review.commit !== null,
   );
-  const latestVerdict = new Map<string, 'blocked' | 'clear'>();
+  const latestVerdict = new Map<
+    string,
+    'blocked' | 'self-review-blocked' | 'clear'
+  >();
+  const author = pullRequestAuthor.toLowerCase();
   for (const review of usableReviews) {
     if (review.commit.oid !== head) continue;
     const login = normalizeGraphqlActorLogin(review.author);
@@ -283,12 +291,21 @@ async function reviews(
       latestVerdict.set(authorKey, 'blocked');
     } else if (review.state === 'APPROVED' || review.state === 'DISMISSED') {
       latestVerdict.set(authorKey, 'clear');
+      if (
+        review.state === 'APPROVED' &&
+        authorKey === REVIEWER_BOT_LOGIN &&
+        latestVerdict.get('agent-lcars[bot]') === 'self-review-blocked'
+      ) {
+        latestVerdict.delete('agent-lcars[bot]');
+      }
     } else if (
       review.state === 'COMMENTED' &&
-      authorKey === 'agent-lcars[bot]'
+      authorKey === author &&
+      latestVerdict.get(authorKey) !== 'blocked' &&
+      (authorKey === 'agent-lcars[bot]' || authorKey === REVIEWER_BOT_LOGIN)
     ) {
       if (hasReviewLineMarker(review.body, '<!-- lcars-review:block -->')) {
-        latestVerdict.set(authorKey, 'blocked');
+        latestVerdict.set(authorKey, 'self-review-blocked');
       } else if (
         hasReviewLineMarker(review.body, '<!-- lcars-review:pass -->')
       ) {
@@ -297,7 +314,9 @@ async function reviews(
     }
   }
   return {
-    changesRequested: [...latestVerdict.values()].includes('blocked'),
+    changesRequested: [...latestVerdict.values()].some(
+      (verdict) => verdict !== 'clear',
+    ),
     unresolved: pr.reviewThreads.nodes.some((thread) => {
       if (thread.isResolved) return false;
       const firstComment = thread.comments?.nodes[0];
@@ -557,7 +576,13 @@ export async function observeGithubDelivery(
       head: binding.head,
       reason: 'Pull request has merge conflicts with base branch',
     };
-  const review = await reviews(deps, binding.repo, binding.number, pr.head.sha);
+  const review = await reviews(
+    deps,
+    binding.repo,
+    binding.number,
+    pr.head.sha,
+    pr.user.login,
+  );
   if (review.changesRequested || review.unresolved)
     return {
       kind: 'correction',

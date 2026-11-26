@@ -51,7 +51,7 @@ review and comment-quality guidance applies.
    Select the execution tier from concrete PR and git evidence:
    - **Coordinator fast-path (single session, 0 child subagents):**
      - _Incremental re-review (`Round 2+`):_ Use when an earlier
-       `agent-lcars[bot]` review carrying an `<!-- attempt-claim:... -->` marker
+       `agent-lcars-reviewer[bot]` review carrying an `<!-- attempt-claim:... -->` marker
        exists on this PR for the same `baseRefName`, its `commit_id`
        (`prev_reviewed_sha`) is reachable in git (`git diff <prev_reviewed_sha>..HEAD`),
        and that delta has $\le 200$ changed lines (`additions + deletions`)
@@ -59,7 +59,7 @@ review and comment-quality guidance applies.
        `third_party/`, `renovate.json`, auth/credential/secret handling,
        `runner-image`, or `claw-image` paths. Inspect
        `prev_reviewed_sha..HEAD` (plus surrounding callers) and every unresolved
-       `agent-lcars[bot]` review thread directly in the coordinator session. Do
+       `agent-lcars-reviewer[bot]` review thread directly in the coordinator session. Do
        **not** re-litigate untouched files or lines already reviewed at
        `prev_reviewed_sha`.
      - _Docs-only or small low-risk diff:_ Use when either every changed file is
@@ -78,12 +78,13 @@ review and comment-quality guidance applies.
      paths.
 
    **Resolving fixed bot threads on re-review (both tiers):** Whenever unresolved
-   review threads authored by `agent-lcars[bot]` (or `agent-lcars`) exist on the
-   PR, verify each one against `HEAD`. For every `agent-lcars[bot]` thread whose
+   review threads authored by `agent-lcars-reviewer[bot]` (or `agent-lcars-reviewer`) exist on the
+   PR, verify each one against `HEAD`. Include historical `agent-lcars[bot]`
+   review threads when resolving feedback from before the reviewer cutover. For every `agent-lcars-reviewer[bot]` thread whose
    underlying issue is fixed or obsolete at `HEAD`, resolve it before submitting
    your review via `gh api graphql`:
    `mutation($id:ID!){ resolveReviewThread(input:{threadId:$id}){ thread{ id isResolved } } }`.
-   Leave genuinely unfixed `agent-lcars[bot]` blockers unresolved, and never
+   Leave genuinely unfixed `agent-lcars-reviewer[bot]` blockers unresolved, and never
    resolve human-authored threads.
 
 2. **Repository guidance and anti-pedantry bar.** In steps 2–6, discover
@@ -144,14 +145,20 @@ review and comment-quality guidance applies.
      internal state, or pre-existing behavior outside the change).
      Zero validated findings is a normal, valid outcome.
 
-5. **Tools and failures.** Use tools available to this provider; upstream's
+5. **Tools and failures.** The dedicated reviewer App has Actions read
+   access. If an infrastructure check needs a rerun that the review credential
+   cannot perform, record the check and the limitation in the review body and
+   submit the head-bound source verdict. Leave the rerun to an authorized
+   workflow or actor. Required checks continue to gate merge. See the
+   [shared rerun procedure](../index.md#8-ci-reruns-and-the-bot-push--action_required-platform-fact).
+   Use tools available to this provider; upstream's
    `allowed-tools` frontmatter does not configure this dispatch. Preserve real
    tool, access, and verification failures. Follow shared protocol §4: missing
    access or a required maintainer action can PARK with its structured park
    marker and attempt claim on the anchor comment. Provider, setup, timeout, and
    lookup failures remain execution failures; never manufacture a PARK or
    approval for them. No source edits, commits, PR creation, or unrelated GitHub
-   writes (other than resolving fixed `agent-lcars[bot]` review threads in step
+   writes (other than resolving fixed `agent-lcars-reviewer[bot]` review threads in step
    1. are part of review.
 
 6. **Publication and non-blocking inline thread ban.** Replace upstream steps
@@ -177,8 +184,10 @@ review and comment-quality guidance applies.
      with one. Notes on a passing review go in the `APPROVE` body.
    - **The one exception is this reviewer's own pull request.** Read the pull
      request's author login (`gh api repos/<repo>/pulls/<n> --jq .user.login`).
-     Only when it is the identity publishing this review (`agent-lcars[bot]`)
-     does GitHub refuse an approval or a change request; then, and only then,
+     Read `$LCARS_REVIEWER_LOGIN` for the publishing actor selected at
+     checkout. A legacy checkout uses `agent-lcars[bot]`. Only when the PR author
+     matches the publishing actor does GitHub refuse an approval or a change
+     request. In that case,
      submit `COMMENT` with `<!-- lcars-review:pass -->` (no blocking defects,
      `comments: []`) or `<!-- lcars-review:block -->` (blocking defects) on its
      own line in `body`. A pull request opened by a maintainer, by Renovate or
@@ -193,6 +202,6 @@ review and comment-quality guidance applies.
 Keep the review body concise: verdict, blocking findings (if any), reviewed SHA,
 material verification limits, and a short procedure receipt naming the packaged
 Anthropic revision, executed tier (`coordinator fast-path` or `2-pass review:
-bugs + guardrails`), validation counts, and any resolved `agent-lcars[bot]`
+bugs + guardrails`), validation counts, and any resolved `agent-lcars-reviewer[bot]`
 threads. End with `REVIEW <url>` or the shared protocol's
 `PARK <blocker and resume trigger>`.

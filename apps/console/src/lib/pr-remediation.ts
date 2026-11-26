@@ -9,6 +9,7 @@ import {
   isDispatchPipeline,
   parseRunGeneration,
   REVIEW_LABELS,
+  REVIEWER_BOT_LOGIN,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
@@ -23,11 +24,7 @@ import {
 import { workPayloadSchema } from '@agent-lcars/work';
 import { z } from 'zod';
 
-import {
-  isAdminGithubLogin,
-  isControlPlaneRepository,
-  maintainerLogin,
-} from './deployment';
+import { isAdminGithubLogin, isControlPlaneRepository } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import {
   admitGithubWork,
@@ -106,6 +103,7 @@ export interface PrRemediationDeps {
   orchestrator: Orchestrator;
   drain: (limit?: number) => Promise<DrainOutboxResult>;
   tokens: DispatchTokenProvider;
+  reviewerTokens?: DispatchTokenProvider;
   fetchImpl?: typeof fetch;
   githubApiBaseUrl?: string;
   now?: () => string;
@@ -353,7 +351,8 @@ async function approveDependencyUpdate(
   head: string,
   bot: string,
 ): Promise<number> {
-  const token = await deps.tokens.tokenFor(anchor.repo);
+  if (!deps.reviewerTokens) throw new Error('Reviewer credentials unavailable');
+  const token = await deps.reviewerTokens.tokenFor(anchor.repo);
   const response = await (deps.fetchImpl ?? fetch)(
     `${deps.githubApiBaseUrl ?? 'https://api.github.com'}/repos/${anchor.repo}/pulls/${anchor.issue}/reviews`,
     {
@@ -379,91 +378,14 @@ async function approveDependencyUpdate(
   return z.object({ id: z.number().int() }).parse(await response.json()).id;
 }
 
-/** Ask people for a review the ordinary way: a GitHub review request. */
-async function requestReview(
-  deps: PrRemediationDeps,
-  anchor: GithubAnchor,
-  reviewers: readonly string[],
-): Promise<void> {
-  const token = await deps.tokens.tokenFor(anchor.repo);
-  const response = await (deps.fetchImpl ?? fetch)(
-    `${deps.githubApiBaseUrl ?? 'https://api.github.com'}/repos/${anchor.repo}/pulls/${anchor.issue}/requested_reviewers`,
-    {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${token}`,
-        accept: 'application/vnd.github+json',
-        'content-type': 'application/json',
-      },
-      signal: AbortSignal.timeout(10_000),
-      body: JSON.stringify({ reviewers }),
-    },
-  );
-  if (!response.ok) {
-    throw new Error(
-      `requesting review on ${anchor.repo}#${anchor.issue} failed (${response.status})`,
-    );
-  }
-}
-
-/**
- * GitHub lets no account approve its own pull request, so a pull request the
- * LCARS App opened cannot get its approval from the LCARS review. Once LCARS
- * has passed the current head and nothing else stands against it, ask the
- * maintainer for that approval, once. Only {@link maintainerLogin} is asked:
- * the plural admin list authorizes console sign-in and may name people who
- * are not collaborators on this repository, which GitHub rejects as a whole.
- *
- * Read-only with respect to runs, so a delivery-owned pull request may take
- * it too. Returns whether a request was made.
- */
-async function requestMaintainerReviewIfDue(
-  deps: PrRemediationDeps,
-  anchor: GithubAnchor,
-  snapshot: PullRequestSnapshot,
-): Promise<boolean> {
-  const author = normalizeGraphqlActorLogin(snapshot.author);
-  if (
-    author?.toLowerCase() !== LCARS_REVIEWER_LOGIN ||
-    snapshot.state !== 'OPEN' ||
-    snapshot.mergedAt !== null ||
-    snapshot.isDraft ||
-    snapshot.mergeable === 'CONFLICTING' ||
-    snapshot.mergeStateStatus === 'DIRTY' ||
-    snapshot.reviews.pageInfo.hasPreviousPage ||
-    snapshot.reviewThreads.pageInfo.hasNextPage ||
-    snapshot.labels.nodes.some(
-      (node) =>
-        node?.name === 'status:needs-human' || node?.name === 'status:blocked',
-    ) ||
-    unresolvedTrustedThreadIds(snapshot).length > 0
-  ) {
-    return false;
-  }
-  const headReviews = evaluateCurrentHeadReviews(snapshot);
-  if (
-    !headReviews.lcarsPassedCurrentHead ||
-    headReviews.blockingReviewKeys.length > 0 ||
-    headReviews.approvedBy.length > 0
-  ) {
-    return false;
-  }
-  const maintainer = maintainerLogin().toLowerCase();
-  const pending = (snapshot.reviewRequests?.nodes ?? []).some(
-    (node) => node?.requestedReviewer?.login?.toLowerCase() === maintainer,
-  );
-  if (pending) return false;
-  await requestReview(deps, anchor, [maintainer]);
-  return true;
-}
-
 async function dismissReview(
   deps: PrRemediationDeps,
   anchor: GithubAnchor,
   reviewId: number,
   message: string,
 ): Promise<void> {
-  const token = await deps.tokens.tokenFor(anchor.repo);
+  if (!deps.reviewerTokens) throw new Error('Reviewer credentials unavailable');
+  const token = await deps.reviewerTokens.tokenFor(anchor.repo);
   const response = await (deps.fetchImpl ?? fetch)(
     `${deps.githubApiBaseUrl ?? 'https://api.github.com'}/repos/${anchor.repo}/pulls/${anchor.issue}/reviews/${reviewId}/dismissals`,
     {
@@ -675,7 +597,7 @@ async function readPullRequestSnapshot(
 }
 
 /** The identity every LCARS review is published as. */
-const LCARS_REVIEWER_LOGIN = 'agent-lcars[bot]';
+const LCARS_REVIEWER_LOGINS = new Set([REVIEWER_BOT_LOGIN, 'agent-lcars[bot]']);
 
 function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
   blockingReviewKeys: string[];
@@ -688,9 +610,12 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
   approvedBy: string[];
 } {
   const head = snapshot.headRefOid;
+  const pullRequestAuthor = normalizeGraphqlActorLogin(
+    snapshot.author,
+  )?.toLowerCase();
   const latestByAuthor = new Map<
     string,
-    { verdict: 'blocked' | 'clear'; key: string }
+    { verdict: 'blocked' | 'self-review-blocked' | 'clear'; key: string }
   >();
   let hasCurrentHeadLcarsReview = false;
   let hasDismissedCurrentHeadLcarsReview = false;
@@ -709,7 +634,12 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
       continue;
     }
     const authorKey = login.toLowerCase();
-    const isLcarsBot = authorKey === LCARS_REVIEWER_LOGIN;
+    const isLcarsBot = LCARS_REVIEWER_LOGINS.has(authorKey);
+    // Marker comments are verdicts only when GitHub forbids self-review.
+    const isSelfReviewComment =
+      isLcarsBot &&
+      review.state === 'COMMENTED' &&
+      authorKey === pullRequestAuthor;
     const key =
       review.databaseId !== null && review.databaseId !== undefined
         ? `${login}:${review.databaseId}`
@@ -722,7 +652,7 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
       if (
         review.state === 'APPROVED' ||
         review.state === 'CHANGES_REQUESTED' ||
-        (review.state === 'COMMENTED' &&
+        (isSelfReviewComment &&
           (hasReviewLineMarker(review.body, '<!-- lcars-review:pass -->') ||
             hasReviewLineMarker(review.body, '<!-- lcars-review:block -->')))
       ) {
@@ -730,16 +660,28 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
       }
     }
 
-    if (review.state === 'APPROVED') approvedBy.add(authorKey);
+    if (review.state === 'APPROVED') {
+      approvedBy.add(authorKey);
+      if (
+        authorKey === REVIEWER_BOT_LOGIN &&
+        latestByAuthor.get('agent-lcars[bot]')?.verdict ===
+          'self-review-blocked'
+      ) {
+        latestByAuthor.delete('agent-lcars[bot]');
+      }
+    }
     if (review.state === 'CHANGES_REQUESTED') {
       approvedBy.delete(authorKey);
       latestByAuthor.set(authorKey, { verdict: 'blocked', key });
     } else if (review.state === 'APPROVED' || review.state === 'DISMISSED') {
       if (review.state === 'DISMISSED') approvedBy.delete(authorKey);
       latestByAuthor.set(authorKey, { verdict: 'clear', key });
-    } else if (review.state === 'COMMENTED' && isLcarsBot) {
+    } else if (
+      isSelfReviewComment &&
+      latestByAuthor.get(authorKey)?.verdict !== 'blocked'
+    ) {
       if (hasReviewLineMarker(review.body, '<!-- lcars-review:block -->')) {
-        latestByAuthor.set(authorKey, { verdict: 'blocked', key });
+        latestByAuthor.set(authorKey, { verdict: 'self-review-blocked', key });
       } else if (
         hasReviewLineMarker(review.body, '<!-- lcars-review:pass -->')
       ) {
@@ -749,7 +691,7 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
   }
 
   const blockingReviewKeys = [...latestByAuthor.values()]
-    .filter((entry) => entry.verdict === 'blocked')
+    .filter((entry) => entry.verdict !== 'clear')
     .map((entry) => entry.key)
     .sort();
 
@@ -759,7 +701,9 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
     hasDismissedCurrentHeadLcarsReview,
     lcarsPassedCurrentHead:
       hasCurrentHeadLcarsReview &&
-      latestByAuthor.get(LCARS_REVIEWER_LOGIN)?.verdict === 'clear',
+      [...LCARS_REVIEWER_LOGINS].some(
+        (login) => latestByAuthor.get(login)?.verdict === 'clear',
+      ),
     approvedBy: [...approvedBy].sort(),
   };
 }
@@ -1212,13 +1156,6 @@ async function reconcilePullRequestRemediationOnce(
         await deps.drain(Math.max(10, woken.length * 2));
       }
     }
-    const owned = await readPullRequestSnapshot(deps, anchor);
-    if (
-      owned !== null &&
-      (await requestMaintainerReviewIfDue(deps, anchor, owned))
-    ) {
-      return { action: 'ignored', reason: 'maintainer-review-requested' };
-    }
     return { action: 'ignored', reason: 'delivery-owned' };
   }
 
@@ -1515,10 +1452,6 @@ async function reconcilePullRequestRemediationOnce(
     return { action: 'remediated', outcome };
   }
 
-  if (await requestMaintainerReviewIfDue(deps, anchor, snapshot)) {
-    return { action: 'ignored', reason: 'maintainer-review-requested' };
-  }
-
   // A `synchronize` push during a live run on this PR anchor is refused as
   // `task-busy` and dropped, whatever the run was doing: fixing the PR,
   // replying, or reviewing an earlier head. When that run finishes cleanly and
@@ -1803,16 +1736,12 @@ export async function reconcileOpenPullRequestRemediations(
     try {
       const active = await deps.store.readActiveRun(projection.anchor);
       if (active !== undefined && isLive(active.state)) continue;
-      // Reconciliation admits no run for a delivery-owned PR, so it is not
-      // worth one of this sweep's inspections, with one exception: a PR the
-      // LCARS App opened, which may still need its maintainer review request.
-      if (projection.author?.toLowerCase() !== LCARS_REVIEWER_LOGIN) {
-        const waitingDeliveries = await deps.store.readWaitingDeliveryTasks({
-          repo: projection.anchor.repo,
-          number: projection.anchor.issue,
-        });
-        if (waitingDeliveries.length > 0) continue;
-      }
+      // The delivery monitor owns these PRs; remediation must not race it.
+      const waitingDeliveries = await deps.store.readWaitingDeliveryTasks({
+        repo: projection.anchor.repo,
+        number: projection.anchor.issue,
+      });
+      if (waitingDeliveries.length > 0) continue;
       inspected += 1;
       await reconcilePullRequestRemediation(
         enqueueOnlyDeps,
