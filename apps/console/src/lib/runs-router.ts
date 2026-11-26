@@ -194,7 +194,10 @@ async function requireRunToken(
   context: RunsContext,
   runId: string,
 ): Promise<Run> {
-  const run = await context.store.readRun(runId);
+  return authenticateRunToken(context, await context.store.readRun(runId));
+}
+
+function authenticateRunToken(context: RunsContext, run: Run | undefined): Run {
   const token = context.bearerToken;
   if (
     run?.queue?.tokenHash === undefined ||
@@ -1393,10 +1396,38 @@ export const runsRouter = os.router({
       }
     }
 
-    // Baked legacy procedures assume the fleet App is publishing the review.
-    // Keep that identity for runners that have not negotiated reviewer checkout.
-    const review =
-      run.params?.['mode'] === 'review' && context.reviewerCheckoutV1;
+    // The runner negotiates once before launching the provider. Renewal uses
+    // the stored App even when a request carries a different capability header.
+    let reviewCheckoutApp = run.reviewCheckoutApp;
+    if (run.params?.['mode'] === 'review' && reviewCheckoutApp === undefined) {
+      const selectedApp = context.reviewerCheckoutV1 ? 'reviewer' : 'fleet';
+      const bound = await context.store.transactRun({
+        runId: run.runId,
+        decide: ({ task, run: current }) => {
+          const authenticated = authenticateRunToken(context, current);
+          if (task?.task.activeRunId !== authenticated.runId) {
+            throw new ORPCError('UNAUTHORIZED', {
+              message: 'Run is no longer active',
+            });
+          }
+          return {
+            task: task.task,
+            run: {
+              ...authenticated,
+              reviewCheckoutApp: authenticated.reviewCheckoutApp ?? selectedApp,
+            },
+            outbox: [],
+          };
+        },
+      });
+      if (isRefusal(bound) || bound.run?.reviewCheckoutApp === undefined) {
+        throw new ORPCError('CONFLICT', {
+          message: 'Review checkout App is unbound',
+        });
+      }
+      reviewCheckoutApp = bound.run.reviewCheckoutApp;
+    }
+    const review = reviewCheckoutApp === 'reviewer';
     const checkoutTokens = review
       ? context.reviewerTokens
       : context.checkoutTokens;

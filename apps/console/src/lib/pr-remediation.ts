@@ -615,7 +615,7 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
   )?.toLowerCase();
   const latestByAuthor = new Map<
     string,
-    { verdict: 'blocked' | 'clear'; key: string }
+    { verdict: 'blocked' | 'self-review-blocked' | 'clear'; key: string }
   >();
   let hasCurrentHeadLcarsReview = false;
   let hasDismissedCurrentHeadLcarsReview = false;
@@ -660,16 +660,28 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
       }
     }
 
-    if (review.state === 'APPROVED') approvedBy.add(authorKey);
+    if (review.state === 'APPROVED') {
+      approvedBy.add(authorKey);
+      if (
+        authorKey === REVIEWER_BOT_LOGIN &&
+        latestByAuthor.get('agent-lcars[bot]')?.verdict ===
+          'self-review-blocked'
+      ) {
+        latestByAuthor.delete('agent-lcars[bot]');
+      }
+    }
     if (review.state === 'CHANGES_REQUESTED') {
       approvedBy.delete(authorKey);
       latestByAuthor.set(authorKey, { verdict: 'blocked', key });
     } else if (review.state === 'APPROVED' || review.state === 'DISMISSED') {
       if (review.state === 'DISMISSED') approvedBy.delete(authorKey);
       latestByAuthor.set(authorKey, { verdict: 'clear', key });
-    } else if (isSelfReviewComment) {
+    } else if (
+      isSelfReviewComment &&
+      latestByAuthor.get(authorKey)?.verdict !== 'blocked'
+    ) {
       if (hasReviewLineMarker(review.body, '<!-- lcars-review:block -->')) {
-        latestByAuthor.set(authorKey, { verdict: 'blocked', key });
+        latestByAuthor.set(authorKey, { verdict: 'self-review-blocked', key });
       } else if (
         hasReviewLineMarker(review.body, '<!-- lcars-review:pass -->')
       ) {
@@ -679,7 +691,7 @@ function evaluateCurrentHeadReviews(snapshot: PullRequestSnapshot): {
   }
 
   const blockingReviewKeys = [...latestByAuthor.values()]
-    .filter((entry) => entry.verdict === 'blocked')
+    .filter((entry) => entry.verdict !== 'clear')
     .map((entry) => entry.key)
     .sort();
 

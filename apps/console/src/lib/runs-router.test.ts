@@ -3771,21 +3771,22 @@ describe('checkoutToken', () => {
         token: 'fleet-token',
         expiresAt,
       }));
-      const r = await call(
-        {
-          ...context,
-          store,
-          orchestrator,
-          now,
-          bearerToken: bearer,
-          reviewerTokens: reviewer,
-          reviewerCheckoutV1,
-          checkoutTokens: {
-            tokenFor: async () => 'fleet-token',
-            expiringTokenFor: fleetMint,
-            expiringTokenForRepositories: fleetMint,
-          },
+      const checkoutContext = {
+        ...context,
+        store,
+        orchestrator,
+        now,
+        bearerToken: bearer,
+        reviewerTokens: reviewer,
+        reviewerCheckoutV1,
+        checkoutTokens: {
+          tokenFor: async () => 'fleet-token',
+          expiringTokenFor: fleetMint,
+          expiringTokenForRepositories: fleetMint,
         },
+      };
+      const r = await call(
+        checkoutContext,
         'GET',
         runPath(runId, '/checkout-token'),
       );
@@ -3809,6 +3810,18 @@ describe('checkoutToken', () => {
       expect(
         body.grants?.every((grant) => grant.token === body.token) ?? true,
       ).toBe(true);
+      const renewed = await call(
+        { ...checkoutContext, reviewerCheckoutV1: !reviewerCheckoutV1 },
+        'GET',
+        runPath(runId, '/checkout-token'),
+      );
+      expect(renewed).toEqual(r);
+      expect(fleetMint.mock.calls.length > 0).toBe(!reviewerCheckoutV1);
+      expect(
+        reviewer.expiringTokenFor.mock.calls.length +
+          reviewer.expiringTokenForRepositories.mock.calls.length >
+          0,
+      ).toBe(reviewerCheckoutV1);
     },
   );
 

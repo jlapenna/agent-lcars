@@ -681,6 +681,47 @@ describe('automatic pull-request review & conflict remediation', () => {
     });
   });
 
+  it.each([
+    ['COMMENTED', 'clean'],
+    ['CHANGES_REQUESTED', 'remediated'],
+  ])(
+    'preserves only authoritative fleet blocks after dedicated approval (%s)',
+    async (state, expected) => {
+      const f = createFixture();
+      const anchor = { repo: LCARS_REPO, issue: 3500 };
+      f.setPr(LCARS_REPO, 3500, {
+        headRepository: { nameWithOwner: LCARS_REPO },
+        author: { login: 'agent-lcars[bot]' },
+        headRefName: 'codex/self-review',
+        headRefOid: HEAD_1,
+        mergeable: 'MERGEABLE',
+        mergeStateStatus: 'BLOCKED',
+        reviews: [
+          {
+            databaseId: 10,
+            state,
+            body: 'Blocking issue\n<!-- lcars-review:block -->',
+            author: { login: 'agent-lcars[bot]' },
+            commit: { oid: HEAD_1 },
+          },
+          {
+            databaseId: 11,
+            state: 'APPROVED',
+            author: { login: 'agent-lcars-reviewer[bot]' },
+            commit: { oid: HEAD_1 },
+          },
+        ],
+      });
+      expect(
+        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
+      ).toMatchObject(
+        expected === 'clean'
+          ? { action: 'ignored', reason: 'clean' }
+          : { action: expected },
+      );
+    },
+  );
+
   it('refuses fork PRs, untrusted external authors, Renovate PRs, and parked PRs', async () => {
     const f = createFixture();
     const anchor = { repo: REPO, issue: 4000 };

@@ -2196,6 +2196,38 @@ describe('nullable historical review identities', () => {
     });
   });
 
+  it.each([
+    ['COMMENTED', 'waiting'],
+    ['CHANGES_REQUESTED', 'correction'],
+  ])(
+    'preserves only authoritative fleet blocks after dedicated approval (%s)',
+    async (state, kind) => {
+      expect(
+        await observeGithubDelivery(
+          fixture({
+            pr: { user: { login: 'agent-lcars[bot]' } },
+            review: review([
+              {
+                state,
+                body: 'Blocking issue\n<!-- lcars-review:block -->',
+                authorAssociation: 'NONE',
+                author: { __typename: 'Bot', login: 'agent-lcars' },
+                commit: { oid: HEAD },
+              },
+              {
+                state: 'APPROVED',
+                authorAssociation: 'NONE',
+                author: { __typename: 'Bot', login: 'agent-lcars-reviewer' },
+                commit: { oid: HEAD },
+              },
+            ]),
+          }),
+          BINDING,
+        ),
+      ).toMatchObject({ kind, head: HEAD });
+    },
+  );
+
   it('requests delivery correction on merge conflicts or blocking self-review comments', async () => {
     expect(
       await observeGithubDelivery(

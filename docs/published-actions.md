@@ -65,10 +65,13 @@ Runners that advertise `X-LCARS-Reviewer-Checkout: v1` can authenticate reviews
 as the dedicated `agent-lcars-reviewer` App, with read access to source, issues
 and CI plus pull-request write access. Automatic dependency approvals also use
 that App. Missing credentials for a negotiated reviewer checkout refuse the run.
-Legacy runners keep using the fleet App during rollout. A running review keeps
-its initial actor across renewals, including when the Console upgrades.
+Legacy runners keep using the fleet App during rollout. Console records the App
+chosen at the first checkout before the review workload starts and uses that
+binding for later requests. The runner also rejects an actor change on renewal.
 After both components are deployed, `/review` requests a fresh review on the
-same head if a legacy self-review comment left a PR waiting for approval.
+same head if a legacy self-review comment left a PR waiting for approval. A later
+dedicated approval supersedes an older self-review block on that head. GitHub
+change requests, unresolved threads, and dismissal vetoes still apply.
 Implementation authors remain unchanged, including `agent-lcars[bot]`, and
 GitHub's ordinary approving review counts because author and reviewer differ.
 The existing fleet App webhook receives these reviews and wakes auto-merge.
