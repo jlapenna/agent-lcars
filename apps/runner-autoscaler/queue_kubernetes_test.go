@@ -596,3 +596,83 @@ func TestQueueConfigValidatesReviewResources(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewReservationBehindUnschedulablePod(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		freeMemory string
+		withClaw   bool
+		wantReview bool
+	}{
+		{"review cannot fit", "2Gi", false, false},
+		{"review fits", "3Gi", false, true},
+		{"review fits with Claw configured", "3Gi", true, true},
+		{"waiting job fits", "6Gi", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			node := queueReadyNode()
+			q, client := kubeQueueFixture(node)
+			q.config.MaxConcurrent = 4
+			q.config.Requests = map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"}
+			q.config.ReviewResources = map[string]string{"cpu": "1", "memory": "3Gi", "ephemeral-storage": "8Gi"}
+			if tc.withClaw {
+				q.config.Runtimes = map[string]queueRuntimeConfig{"claw-investigator": testClawRuntime()}
+			}
+			job, err := q.job(directRunnerLaunch{runID: "work:pending/r1", pipeline: "codex"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			job.Spec.Suspend = new(false)
+			job, err = client.BatchV1().Jobs(q.config.Namespace).Create(ctx, job, meta.CreateOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pod := core.Pod{ObjectMeta: meta.ObjectMeta{Name: "pending", OwnerReferences: []meta.OwnerReference{*meta.NewControllerRef(job, batch.SchemeGroupVersion.WithKind("Job"))}}, Spec: job.Spec.Template.Spec, Status: core.PodStatus{Phase: core.PodPending, Conditions: []core.PodCondition{{Type: core.PodScheduled, Status: core.ConditionFalse, Reason: "Unschedulable"}}}}
+			if _, err := client.CoreV1().Pods(q.config.Namespace).Create(ctx, &pod, meta.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			used := resource.MustParse("8Gi")
+			used.Sub(resource.MustParse(tc.freeMemory))
+			other := core.Pod{ObjectMeta: meta.ObjectMeta{Name: "existing"}, Spec: core.PodSpec{NodeName: node.Name, Containers: []core.Container{{Name: "app", Resources: core.ResourceRequirements{Requests: core.ResourceList{core.ResourceMemory: used}}}}}}
+			if _, err := client.CoreV1().Pods("other").Create(ctx, &other, meta.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			res, err := q.reserve(ctx)
+			if err != nil || (res != nil) != tc.wantReview || (res != nil && !res.reviewOnly) {
+				t.Fatalf("reservation=%v err=%v, want review-only=%v", res, err, tc.wantReview)
+			}
+			if res == nil {
+				return
+			}
+			res.release()
+			backfill, err := q.job(directRunnerLaunch{runID: "work:review/r1", pipeline: "codex", mode: "review", backfillFor: string(job.UID)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			backfill.Spec.Suspend = new(false)
+			backfill.UID = "review-uid"
+			if err = client.Tracker().Create(batch.SchemeGroupVersion.WithResource("jobs"), backfill, q.config.Namespace); err != nil {
+				t.Fatal(err)
+			}
+			placed := pod.DeepCopy()
+			placed.Name = "placed-review"
+			placed.OwnerReferences = []meta.OwnerReference{*meta.NewControllerRef(backfill, batch.SchemeGroupVersion.WithKind("Job"))}
+			placed.Spec = backfill.Spec.Template.Spec
+			placed.Spec.NodeName = node.Name
+			placed.Status = core.PodStatus{Phase: core.PodRunning}
+			if _, err = client.CoreV1().Pods(q.config.Namespace).Create(ctx, placed, meta.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			// Even as other tenants release room, only one review can occupy
+			// capacity alongside this same waiting Job.
+			if err = client.CoreV1().Pods("other").Delete(ctx, other.Name, meta.DeleteOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if another, err := q.reserve(ctx); err != nil || another != nil {
+				t.Fatalf("second concurrent backfill: reservation=%v err=%v", another, err)
+			}
+
+		})
+	}
+}

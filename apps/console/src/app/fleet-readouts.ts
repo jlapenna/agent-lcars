@@ -33,7 +33,7 @@ export const SPEND_READ_FAILED =
   'Spend unavailable (session archive read failed).';
 
 /**
- * The readout row the mockup opens Bridge and Costs with (runners online,
+ * The readout row the mockup opens Costs with (runners online,
  * busy, queue depth, agents running, spend today), for routes that do not
  * already hold these reads. Scoped to `repo` (`owner/name`) when given.
  */

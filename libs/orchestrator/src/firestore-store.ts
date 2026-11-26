@@ -4,8 +4,10 @@ import {
   plainRunEvidence,
   type RunEvidence,
   runEvidenceSchema,
+  type TrackerIssue,
   type TrackerIssueProjection,
   trackerIssueProjectionSchema,
+  trackerIssueSchema,
 } from '@agent-lcars/dispatch-contracts';
 import {
   type CollectionReference,
@@ -26,6 +28,7 @@ import {
   isRefusal,
   type Refusal,
 } from './decide';
+import { prepareIssueSnapshot } from './issue-snapshot';
 import { itemStateEventOutbox, taskDerivedFrom } from './item-state';
 import {
   type LifecycleMetricRead,
@@ -42,6 +45,7 @@ import {
   githubAnchorSchema,
   isClaimant,
   isLive,
+  issueSnapshotIdSchema,
   isWorkAnchor,
   type LeasedOutboxEntry,
   type OutboxEntry,
@@ -50,6 +54,7 @@ import {
   queueOrderAt,
   type RequestSource,
   type Run,
+  runIssueSnapshotSchema,
   type RunMessageOverflow,
   runRecoveryDeadline,
   runSchema,
@@ -80,6 +85,7 @@ import {
 } from './queue-admission-status';
 import { joinRunMessage } from './run-message';
 import {
+  fitsReviewSlot,
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
@@ -141,7 +147,8 @@ export interface FirestoreStoreOptions {
   readonly projectId: string;
   readonly databaseId: string;
   /** Defaults to `orchestrator-`. Collections are `<prefix>tasks`,
-   *  `<prefix>runs`, `<prefix>outbox`, `<prefix>request-bindings`,
+   *  `<prefix>runs`, `<prefix>issue-snapshots`, `<prefix>outbox`,
+   *  `<prefix>request-bindings`,
    *  `<prefix>github-anchors`, `<prefix>provider-cooldowns`, and
    *  `<prefix>priority-positions`. */
   readonly collectionPrefix?: string;
@@ -203,6 +210,7 @@ export class FirestoreStore implements OrchestratorStore {
   readonly #firestore: Firestore;
   readonly #tasks: CollectionReference;
   readonly #runs: CollectionReference;
+  readonly #issueSnapshots: CollectionReference;
   readonly #outbox: CollectionReference;
   readonly #sourceWorkIds: CollectionReference;
   readonly #requestBindings: CollectionReference;
@@ -229,6 +237,9 @@ export class FirestoreStore implements OrchestratorStore {
     this.#sourceWorkIds = this.#firestore.collection(`${prefix}work-sources`);
     this.#tasks = this.#firestore.collection(`${prefix}tasks`);
     this.#runs = this.#firestore.collection(`${prefix}runs`);
+    this.#issueSnapshots = this.#firestore.collection(
+      `${prefix}issue-snapshots`,
+    );
     this.#outbox = this.#firestore.collection(`${prefix}outbox`);
     this.#requestBindings = this.#firestore.collection(
       `${prefix}request-bindings`,
@@ -360,6 +371,103 @@ export class FirestoreStore implements OrchestratorStore {
         outboxEntrySchema.parse(doc.data()),
       ),
       complete: true,
+    };
+  }
+
+  async readIssueSnapshot(id: string): Promise<TrackerIssue | undefined> {
+    const doc = await this.#issueSnapshots
+      .doc(issueSnapshotIdSchema.parse(id))
+      .get();
+    return doc.exists ? trackerIssueSchema.parse(doc.get('issue')) : undefined;
+  }
+
+  async readIssueSnapshots(
+    ids: readonly string[],
+  ): Promise<Map<string, TrackerIssue>> {
+    const unique = [...new Set(ids)];
+    const result = new Map<string, TrackerIssue>();
+    for (let index = 0; index < unique.length; index += this.#readPageSize) {
+      const docs = await this.#firestore.getAll(
+        ...unique
+          .slice(index, index + this.#readPageSize)
+          .map((id) =>
+            this.#issueSnapshots.doc(issueSnapshotIdSchema.parse(id)),
+          ),
+      );
+      for (const doc of docs) {
+        if (doc.exists)
+          result.set(doc.id, trackerIssueSchema.parse(doc.get('issue')));
+      }
+    }
+    return result;
+  }
+
+  async #writeIssueSnapshot(
+    tx: Transaction,
+    snapshot: Decision['newIssueSnapshot'],
+  ): Promise<void> {
+    if (snapshot === undefined) return;
+    const ref = this.#issueSnapshots.doc(snapshot.reference.id);
+    if (!(await tx.get(ref)).exists) tx.create(ref, { issue: snapshot.issue });
+  }
+
+  /**
+   * Backfill a bounded page, re-reading candidates in their write transaction.
+   * The document ID cursor can be persisted after each successful page.
+   */
+  async migrateRunIssueSnapshots(input: {
+    apply: boolean;
+    cursor?: string;
+  }): Promise<{
+    scanned: number;
+    candidates: number;
+    migrated: number;
+    nextCursor?: string;
+  }> {
+    const pageSize = Math.min(this.#readPageSize, 200);
+    const query = this.#runs.orderBy(FieldPath.documentId()).select('issue');
+    const page = await (
+      input.cursor === undefined ? query : query.startAfter(input.cursor)
+    )
+      .limit(pageSize)
+      .get();
+    const candidates = page.docs.filter(
+      (doc) => doc.get('issue') !== undefined,
+    );
+    let migrated = 0;
+    if (input.apply) {
+      for (const candidate of candidates) {
+        const changed = await this.#firestore.runTransaction(async (tx) => {
+          const current = await tx.get(candidate.ref);
+          const legacy: unknown = current.get('issue');
+          if (legacy === undefined) return false;
+          const snapshot = prepareIssueSnapshot(legacy);
+          const reference: unknown = current.get('issueSnapshot');
+          if (
+            reference !== undefined &&
+            runIssueSnapshotSchema.parse(reference).id !== snapshot.reference.id
+          ) {
+            throw new Error(
+              `Conflicting issue snapshots on run document ${current.id}`,
+            );
+          }
+          await this.#writeIssueSnapshot(tx, snapshot);
+          tx.update(candidate.ref, {
+            issue: FieldValue.delete(),
+            issueSnapshot: snapshot.reference,
+          });
+          return true;
+        });
+        if (changed) migrated += 1;
+      }
+    }
+    const nextCursor =
+      page.size === pageSize ? page.docs.at(-1)?.id : undefined;
+    return {
+      scanned: page.size,
+      candidates: candidates.length,
+      migrated,
+      ...(nextCursor === undefined ? {} : { nextCursor }),
     };
   }
 
@@ -668,6 +776,8 @@ export class FirestoreStore implements OrchestratorStore {
             outcome.run,
             ...(outcome.additionalRuns ?? []),
           ]);
+      if (!isRefusal(outcome))
+        await this.#writeIssueSnapshot(tx, outcome.newIssueSnapshot);
       if (bindingToCreate !== undefined && bindingRef !== undefined) {
         tx.create(bindingRef, bindingToCreate);
       }
@@ -733,6 +843,7 @@ export class FirestoreStore implements OrchestratorStore {
         ...(decision.additionalRuns ?? []),
       ]);
 
+      await this.#writeIssueSnapshot(tx, decision.newIssueSnapshot);
       const revision = (expectedRevision ?? 0) + 1;
       const written = taskWrite({
         previous: current?.task,
@@ -840,6 +951,7 @@ export class FirestoreStore implements OrchestratorStore {
         outcome.run,
         ...(outcome.additionalRuns ?? []),
       ]);
+      await this.#writeIssueSnapshot(tx, outcome.newIssueSnapshot);
       const revision = (task?.revision ?? 0) + 1;
       const written = taskWrite({
         previous: task?.task,
@@ -1464,6 +1576,7 @@ export class FirestoreStore implements OrchestratorStore {
     claimedBySubject: string;
     tokenHash: string;
     placementAware?: boolean;
+    reviewOnly?: boolean;
   }): Promise<Run | undefined> {
     return this.#firestore.runTransaction(async (tx) => {
       // One query per candidate pipeline for queued work and each live state.
@@ -1477,7 +1590,7 @@ export class FirestoreStore implements OrchestratorStore {
       // occupancy, priority and credential reads below are skipped and an
       // idle poll is one round trip. Only live runs are candidates; a run
       // canceled while queued can keep `queue.state: queued`.
-      const queuedByPipeline = await Promise.all(
+      const snapshots = await Promise.all(
         requested.map((pipeline) =>
           tx.get(
             this.#runs
@@ -1487,8 +1600,14 @@ export class FirestoreStore implements OrchestratorStore {
           ),
         ),
       );
-      if (queuedByPipeline.every((snapshot) => snapshot.empty))
-        return undefined;
+      const queuedByPipeline = snapshots.map((snapshot) =>
+        input.reviewOnly
+          ? snapshot.docs.filter((doc) =>
+              fitsReviewSlot(doc.get('pipeline'), doc.get('params.mode')),
+            )
+          : snapshot.docs,
+      );
+      if (queuedByPipeline.every((docs) => docs.length === 0)) return undefined;
       const cooldowns = await Promise.all(
         requested.map((pipeline) =>
           tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
@@ -1503,7 +1622,7 @@ export class FirestoreStore implements OrchestratorStore {
       const queuedSnapshots = grantedIndexes.map(
         (index) => queuedByPipeline[index]!,
       );
-      if (queuedSnapshots.every((snapshot) => snapshot.empty)) return undefined;
+      if (queuedSnapshots.every((docs) => docs.length === 0)) return undefined;
       const [prioritySnapshots, windowSnapshots] = await Promise.all([
         Promise.all(
           granted.map((pipeline) =>
@@ -1539,7 +1658,7 @@ export class FirestoreStore implements OrchestratorStore {
         ),
       );
       const queued = queuedSnapshots
-        .flatMap((snapshot) => snapshot.docs)
+        .flat()
         .map((doc) => ({ doc, run: runSchema.parse(doc.data()) }));
       const live = liveSnapshots
         .flatMap((snapshots) => snapshots)
@@ -1557,6 +1676,7 @@ export class FirestoreStore implements OrchestratorStore {
             windowSnapshots[index]?.data(),
           ]),
         ),
+        input.reviewOnly,
       );
       const first = queued.find(({ run }) => run.runId === selected?.runId);
       if (first === undefined) return undefined;

@@ -9828,87 +9828,13 @@
                                       "minLength": 1,
                                       "maxLength": 256
                                     },
-                                    "description": {
-                                      "type": "string",
-                                      "maxLength": 65536
-                                    },
-                                    "oversized": {
-                                      "type": "boolean",
-                                      "const": true
-                                    },
                                     "state": {
                                       "type": "string",
                                       "enum": ["open", "closed"]
                                     },
-                                    "updatedAt": {
-                                      "type": "string",
-                                      "format": "date-time",
-                                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                                    },
-                                    "teamId": {
-                                      "type": "string",
-                                      "format": "uuid",
-                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                                    },
-                                    "status": {
-                                      "type": "object",
-                                      "properties": {
-                                        "id": {
-                                          "type": "string",
-                                          "minLength": 1,
-                                          "maxLength": 256
-                                        },
-                                        "name": {
-                                          "type": "string",
-                                          "maxLength": 256
-                                        },
-                                        "type": {
-                                          "type": "string",
-                                          "maxLength": 128
-                                        }
-                                      },
-                                      "required": ["id", "name", "type"],
-                                      "additionalProperties": false
-                                    },
-                                    "labels": {
-                                      "maxItems": 256,
-                                      "type": "array",
-                                      "items": {
-                                        "type": "object",
-                                        "properties": {
-                                          "id": {
-                                            "type": "string",
-                                            "minLength": 1,
-                                            "maxLength": 256
-                                          },
-                                          "name": {
-                                            "type": "string",
-                                            "maxLength": 256
-                                          }
-                                        },
-                                        "required": ["id", "name"],
-                                        "additionalProperties": false
-                                      }
-                                    },
-                                    "assignees": {
-                                      "maxItems": 256,
-                                      "type": "array",
-                                      "items": {
-                                        "type": "object",
-                                        "properties": {
-                                          "id": {
-                                            "type": "string",
-                                            "minLength": 1,
-                                            "maxLength": 256
-                                          },
-                                          "name": {
-                                            "type": "string",
-                                            "maxLength": 256
-                                          }
-                                        },
-                                        "required": ["id", "name"],
-                                        "additionalProperties": false
-                                      }
+                                    "oversized": {
+                                      "type": "boolean",
+                                      "const": true
                                     }
                                   },
                                   "required": [
@@ -9916,11 +9842,7 @@
                                     "identifier",
                                     "url",
                                     "title",
-                                    "description",
-                                    "state",
-                                    "updatedAt",
-                                    "labels",
-                                    "assignees"
+                                    "state"
                                   ],
                                   "additionalProperties": false
                                 },
@@ -17600,6 +17522,10 @@
                     "maxLength": 256
                   },
                   "placementAware": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "reviewOnly": {
                     "type": "boolean",
                     "const": true
                   }

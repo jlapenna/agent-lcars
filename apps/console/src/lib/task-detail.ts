@@ -25,6 +25,7 @@ import {
   type WatchedRepo,
 } from './github-client';
 import { withHandoffActions } from './handoff-summary-work';
+import { withItemRunIssues } from './item-run-issues';
 import {
   coarsenRunStates,
   deriveLogicalWork,
@@ -153,7 +154,11 @@ export async function getTaskDetail(
               store,
               await withFullRunMessages(
                 store,
-                await withHandoffActions(store, state.item.runs),
+                await withItemRunIssues(
+                  store,
+                  await withHandoffActions(store, state.item.runs),
+                  state.runs,
+                ),
                 (runId) =>
                   logger.error(
                     'agent-lcars: stored final message unreadable for run %s; serving its preview',

@@ -17,6 +17,7 @@ import type { z } from 'zod';
 import { sessionReferencesItemNumber } from './claimed-idle';
 import type { CliSession } from './cli-sessions';
 import { issueReferenceForTask, readSourceWorkBinding } from './issue-trackers';
+import { withItemRunIssues } from './item-run-issues';
 import type { WorkContext } from './work-mint';
 
 /** The handler's side of the contract: `z.input`, because oRPC validates the
@@ -77,9 +78,16 @@ async function readTaskOwner(
       runs,
     });
     const { activeRunId } = versioned.task;
-    const run =
+    const selected =
       item.runs.find((candidate) => candidate.runId === activeRunId) ??
       item.runs.at(-1);
+    const [run] = selected
+      ? await withItemRunIssues(
+          context.runtime.store,
+          [selected],
+          runs.filter(({ runId }) => runId === selected.runId),
+        )
+      : [];
     task = {
       state: item.state,
       pipeline: item.spec.pipeline,

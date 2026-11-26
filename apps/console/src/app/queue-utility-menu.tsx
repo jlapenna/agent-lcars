@@ -1,6 +1,7 @@
 'use client';
 
 import { ActionIcon, Anchor, Menu } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import { IconDotsVertical } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -10,6 +11,17 @@ import type { ActionItem } from '../lib/action-items';
 import { consoleDestinations, type NavKey } from './console-navigation';
 import { useConsoleNavigationKeys } from './console-navigation-context';
 import { useItemOverflowMenu } from './item-overflow-menu';
+
+async function sharePage() {
+  const permalink = window.location.href;
+  try {
+    await navigator.clipboard.writeText(permalink);
+  } catch {
+    window.prompt('Copy this page link', permalink);
+    return;
+  }
+  notifications.show({ message: 'Page link copied' });
+}
 
 export function QueueUtilityMenu({
   signOutControl,
@@ -85,6 +97,7 @@ export function QueueUtilityMenu({
             <Menu.Divider />
           </>
         )}
+        <Menu.Item onClick={sharePage}>Share</Menu.Item>
         <Menu.Item
           component={Link}
           href="/settings"

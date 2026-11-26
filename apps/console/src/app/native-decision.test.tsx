@@ -52,6 +52,29 @@ const card: NativeDecisionCard = {
 };
 
 describe('native decision Reply', () => {
+  it('labels a selected automatic wait without presenting a human decision, while allowing an optional reply', () => {
+    render(
+      <MantineProvider>
+        <NativeDecisionDetail
+          card={{
+            ...card,
+            queued: false,
+            waitingOnEvent: {
+              key: 'github:pr:owner/repo#123',
+              kind: 'merged',
+              subscriptionId: '2741734dad69c6154b051a753d8822a9',
+            },
+          }}
+          replyToWorkItem={vi.fn()}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByText(/Waiting on event/)).toBeTruthy();
+    expect(screen.queryByText('Human needed')).toBeNull();
+    expect(
+      screen.getByRole('textbox', { name: 'Reply to the agent' }),
+    ).toBeTruthy();
+  });
   it('shows the decision brief while preserving the full handoff and reply', () => {
     render(
       <MantineProvider>

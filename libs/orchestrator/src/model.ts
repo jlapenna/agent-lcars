@@ -10,6 +10,7 @@ import {
 import {
   RUN_PARAMS_MAX_BYTES,
   serializedJsonBytes,
+  trackerIssueDisplaySchema,
   trackerIssueSchema,
   WORK_PARAM_TEXT_MAX_BYTES,
   WORK_PAYLOAD_MAX_BYTES,
@@ -586,6 +587,11 @@ export const runParamsSchema = z
     message: `run parameters exceed ${RUN_PARAMS_MAX_BYTES} bytes`,
   });
 
+export const issueSnapshotIdSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+export const runIssueSnapshotSchema = trackerIssueDisplaySchema.extend({
+  id: issueSnapshotIdSchema,
+});
+
 export const runSchema = z.strictObject({
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
   task: taskIdSchema,
@@ -603,6 +609,8 @@ export const runSchema = z.strictObject({
    *  Bounded by `runParamsSchema`; the Work API refuses oversized reply
    *  and context text before it reaches here. */
   params: runParamsSchema.optional(),
+  issueSnapshot: runIssueSnapshotSchema.optional(),
+  /** Legacy embedded snapshot, read until backfill is complete. */
   issue: trackerIssueSchema.optional(),
   sourceRevision: workRevisionSchema.optional(),
   revisionAttempt: z.number().int().positive().optional(),
