@@ -279,12 +279,15 @@ export async function backfillSessionSpend(
   options: BackfillSessionSpendOptions,
 ): Promise<BackfillSessionSpendPage> {
   const firestore = getAgentTelemetryWriterFirestore();
-  // One canonical instant for both the page filter and the re-check inside each
-  // write transaction, so the two can never disagree about the cutoff.
-  const activeSince =
+  // Both window checks below compare instants, not the strings they were written
+  // as: a stored activity time can carry a different fractional-second precision
+  // than the cutoff, and only as numbers do they order the way the operator means.
+  // The cutoff is canonicalized first so an offset (or a cutoff without
+  // milliseconds) still names the instant it says it does.
+  const activeSinceMs =
     options.activeSince === undefined
       ? undefined
-      : canonicalActiveSince(options.activeSince);
+      : Date.parse(canonicalActiveSince(options.activeSince));
   const pageSize = Math.min(
     Math.max(1, options.pageSize ?? MAX_SPEND_BACKFILL_PAGE_SIZE),
     MAX_SPEND_BACKFILL_PAGE_SIZE,
@@ -305,7 +308,7 @@ export async function backfillSessionSpend(
   let scannedOutsideWindow = 0;
   for (const doc of page.docs) {
     const stored = doc.data();
-    if (isOutsideWindow(stored, activeSince)) {
+    if (isOutsideWindow(stored, activeSinceMs)) {
       scannedOutsideWindow += 1;
       continue;
     }
@@ -328,7 +331,7 @@ export async function backfillSessionSpend(
         // TTL-deleted or removed since the page read: nothing to bring up.
         return false;
       }
-      if (isOutsideWindow(currentData, activeSince)) {
+      if (isOutsideWindow(currentData, activeSinceMs)) {
         // A live writer can move `lastActivityAt` back across the cutoff
         // between the page read and this transaction, which puts the doc outside
         // the window the operator asked for. It is not this pass's to write.
@@ -367,15 +370,20 @@ export async function backfillSessionSpend(
 
 function isOutsideWindow(
   stored: Record<string, unknown> | undefined,
-  activeSince: string | undefined,
+  activeSinceMs: number | undefined,
 ): boolean {
-  if (activeSince === undefined) {
+  if (activeSinceMs === undefined) {
     return false;
   }
-  // `lastActivityAt` is stored as an ISO 8601 UTC string (see listSessionDocs),
-  // so the lexicographic comparison is the time comparison.
+  // Compared as instants: `lastActivityAt` is written as a UTC ISO string, but
+  // stored docs need not all carry the same fractional-second precision, and two
+  // fixed-width prefixes followed by `Z` and `.500Z` do not sort as times.
   const lastActivityAt = stored?.['lastActivityAt'];
-  return typeof lastActivityAt !== 'string' || lastActivityAt < activeSince;
+  if (typeof lastActivityAt !== 'string') {
+    return true;
+  }
+  const ms = Date.parse(lastActivityAt);
+  return Number.isNaN(ms) || ms < activeSinceMs;
 }
 
 function spendInputsFromStored(

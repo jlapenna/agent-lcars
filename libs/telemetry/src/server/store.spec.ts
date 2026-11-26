@@ -578,6 +578,27 @@ describe('agent-telemetry store', () => {
       expect(page).toMatchObject({ stale: 1, scannedOutsideWindow: 0 });
     });
 
+    it('excludes a session recorded without milliseconds before the cutoff', async () => {
+      // '…T10:00:00Z' is an earlier instant than '…T10:00:00.500Z' but sorts after
+      // it as text, so the window is decided on the instants, not the spelling.
+      const fake = backfillFirestore([
+        spendDoc('session-1', { lastActivityAt: '2026-11-20T10:00:00Z' }),
+      ]);
+      useFakeFirestore(fake.firestore);
+
+      const page = await backfillSessionSpend({
+        apply: true,
+        activeSince: '2026-11-20T10:00:00.500Z',
+      });
+
+      expect(page).toMatchObject({
+        scanned: 1,
+        stale: 0,
+        scannedOutsideWindow: 1,
+      });
+      expect(fake.written).toEqual([]);
+    });
+
     it('leaves a doc that left the window before the write transaction', async () => {
       // The page read judged both in window; the live doc no longer qualifies, and
       // the pass may only write what the operator's window asked for.

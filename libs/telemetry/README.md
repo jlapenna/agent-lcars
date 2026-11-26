@@ -116,18 +116,22 @@ pnpm exec tsx tools/backfill-session-spend.mts --project <project-id> --database
 pnpm exec tsx tools/backfill-session-spend.mts --project <project-id> --database <database-id> --apply
 ```
 
-Add `--active-since <iso>` to leave sessions older than a page's read window
-untouched, and `--start-after <cursor>` to resume an interrupted pass.
+`--active-since <iso>` leaves sessions older than a page's read window untouched;
+it is compared as an instant, so any zone or precision is accepted.
+`--start-after <cursor>` resumes an interrupted pass — and reports only its own
+suffix, so the gate below is read from a run that covered the whole window
+(starting without a cursor, or adding the suffix counts to the earlier ones).
 
-Readiness for the totals cutover is a dry run reporting **both `stale: 0` and
-`unusable: 0`** in the window being read, taken once every runner image carries
-the writer: a session an older writer is still updating is stale again the moment
-it is written, so one `--apply` is progress, not coverage. `unusable` counts
-in-window docs with no readable `tokens` map — a writer that never recorded
-usage, not a backfill to retry. Those sessions are not wrong in an indexed total,
-they are absent from it, which is why the gate is zero rather than "backfilled":
-either no session in the window is unpiced, or the operator reconciles their
-contribution against the ledger by hand before switching the reader.
+Readiness for the totals cutover is a full dry run of the window the reader will
+query reporting **both `stale: 0` and `unusable: 0`**, taken once every runner
+image carries the writer: a session an older writer is still updating is stale
+again the moment it is written, so one `--apply` is progress, not coverage.
+`unusable` counts in-window docs with no readable `tokens` map — a writer that
+never recorded usage, not a backfill to retry. Those sessions are not wrong in an
+indexed total, they are absent from it, and `stale: 0` says nothing about them
+because they are counted before `stale` is reached. So the gate is zero in both
+counters: either nothing in the window is unpriced, or the operator reconciles
+their contribution against the ledger by hand before switching the reader.
 
 ## Running unit tests
 
