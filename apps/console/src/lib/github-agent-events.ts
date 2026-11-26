@@ -33,11 +33,10 @@ import { isTrustedGitHubActor } from '@/lib/github-actor-trust';
  *
  * Not mapped: `ready_for_review` and `converted_to_draft` (the model has no
  * draft kind), review comments on their own (each arrives with its
- * `review`), and every other action. `conflict` and `behind` are not
- * produced yet: GitHub computes mergeability asynchronously and sends no
- * pull request event when the base branch moves, so both need a base-branch
- * `push` consumer that re-reads each subscribed pull request later. That is
- * left to a follow-up (#3569).
+ * `review`), and every other action. `conflict` and `behind` are produced
+ * by the asynchronous `github-pr-mergeability-events.ts` adapter after base
+ * pushes, trusted head changes, and base-ref edits. The durable queue delays
+ * its first read and retries GitHub's unknown mergeability.
  *
  * `threads-resolved` and `checks-finished` are derived: the candidate
  * carries a {@link GithubDerivedRead}, and the caller makes that one GitHub
@@ -266,7 +265,7 @@ function senderAssociation(
   return sameName(author.login, sender) ? author.association : 'COLLABORATOR';
 }
 
-function trustedSender(
+export function trustedGitHubSender(
   sender: string | undefined,
   author: { login?: string; association?: string },
 ): boolean {
@@ -303,15 +302,15 @@ function pullRequestEvents(
   ];
   switch (action) {
     case 'closed':
-      if (!trustedSender(actor, author)) return [];
+      if (!trustedGitHubSender(actor, author)) return [];
       return pr.merged === true
         ? event('merged', { occurredAt: pr.merged_at ?? base.occurredAt })
         : event('closed', { occurredAt: pr.closed_at ?? base.occurredAt });
     case 'reopened':
-      return trustedSender(actor, author) ? event('reopened') : [];
+      return trustedGitHubSender(actor, author) ? event('reopened') : [];
     case 'auto_merge_enabled':
     case 'auto_merge_disabled':
-      return trustedSender(actor, author)
+      return trustedGitHubSender(actor, author)
         ? event('auto-merge', {
             detail: action === 'auto_merge_enabled' ? 'enabled' : 'disabled',
           })
@@ -378,7 +377,7 @@ function reviewThreadEvents(
   const { action, repository, sender, pull_request: pr } = parsed.data;
   const actor = sender?.login;
   if (
-    !trustedSender(actor, {
+    !trustedGitHubSender(actor, {
       login: pr.user?.login,
       association: pr.author_association,
     })
@@ -454,7 +453,7 @@ function issuesEvents(
   if (issue.pull_request !== undefined) return [];
   const actor = sender?.login;
   if (
-    !trustedSender(actor, {
+    !trustedGitHubSender(actor, {
       login: issue.user?.login,
       association: issue.author_association,
     })

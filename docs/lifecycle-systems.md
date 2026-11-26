@@ -277,8 +277,7 @@ the outbox gauges.
 
 GitHub subscriptions are admitted only for the configured control-plane
 repositories, whose App webhooks feed the source. Registrations for other
-repositories, Outline, or explicit `conflict`/`behind` kinds are refused until
-their producers are available. A default PR subscription receives the kinds
+repositories and Outline are refused until their producers are available. A default PR subscription receives the kinds
 currently produced and automatically includes newly enabled kinds. A successful registration must correspond to a working
 source so callers can safely end their turn.
 
@@ -292,6 +291,14 @@ GitHub read. See
 [`github-app-webhook-events.md`](github-app-webhook-events.md#agent-events-from-webhook-deliveries)
 for the path and `apps/console/src/lib/github-agent-events.ts` for the
 payload-to-kind mapping and the actor rule per kind.
+
+Base pushes and trusted PR head/base-ref changes also schedule a delayed
+mergeability read. Only subscribed PR keys are read, once per PR; a base push
+is limited to PRs targeting that branch. Known `conflict`/`behind` outcomes
+are routed before unknown or unreadable PRs trigger a durable task retry.
+Stable delivery IDs suppress repeats. A bounded `lcars-agent-events` enqueue
+failure outcome feeds the repository-owned GCP log alert, because a failed
+enqueue never appears in queue backlog telemetry.
 
 ## Event-resume for dispatched Work
 

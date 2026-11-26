@@ -129,17 +129,20 @@ describe('POST /api/control-plane/webhook repository admission', () => {
     expect(enqueueGitHubWebhook).not.toHaveBeenCalled();
   });
 
-  it.each([HOME_REPO, 'jlapenna/repo-tools'])(
-    'ignores push events for %s without queueing work',
+  it.each([HOME_REPO])(
+    'queues push events for %s only for agent-event delivery',
     async (repo) => {
+      queueGithubAgentEvents.mockResolvedValue('enqueued');
       const response = await POST(
         webhookRequest(repo, { 'x-github-event': 'push' }),
       );
       expect(response.status).toBe(202);
       await expect(response.json()).resolves.toMatchObject({
-        outcome: 'ignored',
-        reason: 'unsupported event',
+        deliveryId: expect.any(String),
+        eventName: 'push',
+        outcome: 'enqueued',
       });
+      expect(queueGithubAgentEvents).toHaveBeenCalledOnce();
       expect(enqueueGitHubWebhook).not.toHaveBeenCalled();
     },
   );
