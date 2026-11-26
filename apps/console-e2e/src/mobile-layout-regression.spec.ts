@@ -35,7 +35,7 @@ test.describe('mobile console layout contracts @mobile-layout', () => {
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto('/inbox');
+    await page.goto('/inbox?sort=newest');
     const row = page.getByTestId(
       `queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`,
     );
@@ -49,8 +49,16 @@ test.describe('mobile console layout contracts @mobile-layout', () => {
       .toBeGreaterThan(0);
     await row.scrollIntoViewIfNeeded();
     await expect(row).toBeInViewport();
+    await expect(
+      page.getByRole('heading', { name: 'Decision inbox', exact: true }),
+    ).not.toBeInViewport();
     await row.getByRole('link').click();
-    await expect(page.locator('.queue-workspace__detail')).toBeInViewport();
+    await expect(
+      page.locator('.queue-workspace__detail').getByRole('link', {
+        name: 'feat(console): tap-icon refresh on the queue header',
+        exact: true,
+      }),
+    ).toBeInViewport();
   });
 
   for (const viewport of PHONE_VIEWPORTS) {
