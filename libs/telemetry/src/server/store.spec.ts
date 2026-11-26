@@ -374,7 +374,10 @@ describe('agent-telemetry store', () => {
               get: (ref: { id: string }) => Promise<{
                 data: () => Record<string, unknown> | undefined;
               }>;
-              update: (ref: { id: string }, fields: unknown) => void;
+              update: (
+                ref: { id: string },
+                fields: Record<string, unknown>,
+              ) => void;
             }) => Promise<boolean>,
           ) =>
             work({

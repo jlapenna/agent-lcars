@@ -101,6 +101,30 @@ regressions exercise a sanitized version of #2461's delayed transport shape.
 Normal installed-producer adoption and stored real publication evidence are
 separate runtime acceptance gates; source tests do not satisfy them.
 
+## Session spend backfill
+
+Every session write materializes `spend: { tokens, costUsd }` (see
+`src/lib/session-spend.ts`) so the Sessions pages can sum it with an indexed
+aggregation instead of reading sessions. Documents written before that change —
+or by a runner image that predates it — carry none, so `backfillSessionSpend`
+re-derives it from each doc's own pricing inputs through the same function the
+writers use. It walks `sessions` in document-id order (no composite index), is
+resumable and idempotent, and writes nothing unless `--apply`:
+
+```sh
+pnpm exec tsx tools/backfill-session-spend.mts --project <project-id> --database <database-id>
+pnpm exec tsx tools/backfill-session-spend.mts --project <project-id> --database <database-id> --apply
+```
+
+Add `--active-since <iso>` to leave sessions older than a page's read window
+untouched, and `--start-after <cursor>` to resume an interrupted pass.
+
+Readiness for the totals cutover is a dry run reporting `stale: 0`, taken once
+every runner image carries the writer: a session an older writer is still
+updating is stale again the moment it is written, so one `--apply` is progress,
+not coverage. `unusable` counts docs with no readable `tokens` map — a writer
+that never recorded usage, not a backfill to retry.
+
 ## Running unit tests
 
 Run `./tools/nx run @agent-lcars/telemetry:test` to execute the unit tests via
