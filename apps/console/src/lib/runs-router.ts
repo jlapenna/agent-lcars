@@ -64,6 +64,7 @@ import type {
   ExpiringDispatchTokenProvider,
 } from './github-app-tokens';
 import { createDispatchTokenProvider } from './github-app-tokens';
+import { formatGithubErrorDetail } from './github-error-detail';
 import { dismissGithubReview } from './github-review-dismissal';
 import { issueReferenceForTask, issueTracker } from './issue-trackers';
 import { workAtRun } from './issue-work-brief';
@@ -1748,24 +1749,53 @@ export const runsRouter = os.router({
     if (head !== commit_id) {
       throw errors.CONFLICT({ message: 'Pull request head changed' });
     }
-    let published: { id: number; html_url: string };
-    try {
-      const response = await fetch(`${url}/reviews`, {
-        method: 'POST',
-        headers,
-        redirect: 'error',
-        signal: AbortSignal.timeout(10_000),
-        body: JSON.stringify({ commit_id, event, body: verdict, comments }),
+    const response = await fetch(`${url}/reviews`, {
+      method: 'POST',
+      headers,
+      redirect: 'error',
+      signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify({ commit_id, event, body: verdict, comments }),
+    }).catch(() => {
+      logger.warn(
+        'agent-lcars: GitHub review publication request failed for %s',
+        runId,
+      );
+      throw errors.BAD_GATEWAY({
+        message: 'GitHub review publication unavailable',
       });
-      if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
-      published = z
-        .object({ id: z.number().int(), html_url: z.url() })
-        .parse(await response.json());
-    } catch {
+    });
+    if (!response.ok) {
+      logger.warn(
+        'agent-lcars: GitHub review publication returned HTTP %s for %s',
+        response.status,
+        runId,
+      );
+      if (response.status === 422) {
+        const detail = await response.json().catch(() => undefined);
+        throw errors.UNPROCESSABLE_CONTENT({
+          message:
+            formatGithubErrorDetail(detail?.message, detail?.errors, token) ||
+            'GitHub rejected the review payload',
+        });
+      }
       throw errors.BAD_GATEWAY({
         message: 'GitHub review publication unavailable',
       });
     }
+
+    const publication = z
+      .object({ id: z.number().int(), html_url: z.url() })
+      .safeParse(await response.json().catch(() => undefined));
+    if (!publication.success) {
+      logger.warn(
+        'agent-lcars: GitHub returned an invalid review receipt for %s',
+        runId,
+      );
+      throw errors.BAD_GATEWAY({
+        message: 'GitHub review publication unavailable',
+      });
+    }
+    const published = publication.data;
 
     if (event === 'APPROVE') {
       // GitHub can accept the approval for a historical commit after the push

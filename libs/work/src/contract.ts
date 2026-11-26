@@ -1913,6 +1913,10 @@ export const runsContract = {
       UNAUTHORIZED: { message: 'Invalid or expired run token' },
       FORBIDDEN: { message: 'Not a GitHub review run' },
       CONFLICT: { message: 'Review head or verdict refused' },
+      UNPROCESSABLE_CONTENT: {
+        status: 422,
+        message: 'GitHub rejected the review payload',
+      },
       BAD_GATEWAY: { message: 'GitHub review unavailable' },
     })
     .input(

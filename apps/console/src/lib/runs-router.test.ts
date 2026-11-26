@@ -3996,6 +3996,46 @@ describe('submitReview', () => {
       calls: 4,
     },
     {
+      name: 'GitHub rejects an inline comment',
+      changesRequested: true,
+      inline: true,
+      publicationStatus: 422,
+      publicationBody: {
+        message: 'Validation Failed',
+        errors: [
+          { message: 'Line is outside the diff (reviewer-token)' },
+          { message: 'Invalid value ghp_example' },
+        ],
+      },
+      expectedError: {
+        code: 'UNPROCESSABLE_CONTENT',
+        message:
+          'Validation Failed Line is outside the diff ([redacted]) Invalid value [redacted]',
+      },
+      status: 422,
+      calls: 2,
+    },
+    {
+      name: 'GitHub rejects a payload without JSON details',
+      publicationStatus: 422,
+      expectedError: {
+        code: 'UNPROCESSABLE_CONTENT',
+        message: 'GitHub rejected the review payload',
+      },
+      status: 422,
+      calls: 2,
+    },
+    {
+      name: 'GitHub publication fails upstream',
+      publicationStatus: 503,
+      expectedError: {
+        code: 'BAD_GATEWAY',
+        message: 'GitHub review publication unavailable',
+      },
+      status: 502,
+      calls: 2,
+    },
+    {
       name: 'accepted change request',
       changesRequested: true,
       inline: true,
@@ -4064,7 +4104,17 @@ describe('submitReview', () => {
           },
         }),
       )
-      .mockResolvedValueOnce(Response.json({ id: 7, html_url: reviewUrl }))
+      .mockResolvedValueOnce(
+        'publicationStatus' in scenario
+          ? 'publicationBody' in scenario
+            ? Response.json(scenario.publicationBody, {
+                status: scenario.publicationStatus,
+              })
+            : new Response('No JSON details', {
+                status: scenario.publicationStatus,
+              })
+          : Response.json({ id: 7, html_url: reviewUrl }),
+      )
       .mockResolvedValueOnce(
         'verificationUnavailable' in scenario
           ? new Response(null, { status: 503 })
@@ -4117,6 +4167,11 @@ describe('submitReview', () => {
       expect(github).toHaveBeenCalledTimes(scenario.calls);
       expect(scenario.status === 200 ? result.json : undefined).toEqual(
         scenario.status === 200 ? { id: 7, html_url: reviewUrl } : undefined,
+      );
+      const expectedError =
+        'expectedError' in scenario ? scenario.expectedError : undefined;
+      expect(expectedError ? result.json : {}).toMatchObject(
+        expectedError ?? {},
       );
       const expectedPublication = [
         'https://api.github.com/repos/jlapenna/agent-lcars/pulls/42/reviews',

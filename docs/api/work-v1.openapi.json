@@ -142,6 +142,26 @@
         },
         "required": ["defined", "code", "status", "message"]
       },
+      "UnprocessableContent": {
+        "title": "UNPROCESSABLE_CONTENT",
+        "type": "object",
+        "properties": {
+          "defined": {
+            "const": true
+          },
+          "code": {
+            "const": "UNPROCESSABLE_CONTENT"
+          },
+          "status": {
+            "const": 422
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {}
+        },
+        "required": ["defined", "code", "status", "message"]
+      },
       "BadGateway": {
         "title": "BAD_GATEWAY",
         "type": "object",
@@ -20901,6 +20921,23 @@
                   "oneOf": [
                     {
                       "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "GitHub rejected the review payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/UnprocessableContent"
                     },
                     {
                       "$ref": "#/components/schemas/UndefinedError"

@@ -918,7 +918,7 @@ describe('generateWorkOpenApi', () => {
       // same declared answers: run token, refused App binding, claw/recipe
       // refusal, then the minted credential.
       'GET /runs/{runId}/reviewer-checkout-token': ['200', '401', '403', '409'],
-      'POST /runs/{runId}/review': ['200', '401', '403', '409', '502'],
+      'POST /runs/{runId}/review': ['200', '401', '403', '409', '422', '502'],
       'GET /runs/{runId}/codex-auth': ['200', '401', '404', '409', '500'],
       'PUT /runs/{runId}/codex-auth': ['200', '400', '401', '409', '500'],
       // 201 always, replay included.
