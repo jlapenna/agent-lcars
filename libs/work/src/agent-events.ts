@@ -27,6 +27,17 @@ interface SourceDefinition {
   readonly caseInsensitive?: boolean;
 }
 
+/** Native GitHub preview streams cover fewer kinds than App webhooks.
+ * Head changes trigger a state reread, but do not name the pusher. */
+export const GITHUB_STREAM_KINDS = [
+  'review',
+  'merged',
+  'closed',
+  'reopened',
+  'checks-finished',
+  'conflict',
+] as const;
+
 export const AGENT_EVENT_SOURCES = {
   'lcars:session': {
     id: new RegExp(`^${sessionId}$`, 'u'),

@@ -114,6 +114,14 @@ finishing (`all passed` or `<n> failed`, counting the newest run of each
 check) and merging or closing. Merge conflicts and falling behind the base
 branch have no event yet; check those with `gh`.
 
+For PRs outside App coverage, an updated host agent uses GitHub's preview
+stream with that host's existing `gh` identity. It confirms attachment and a
+state read before reporting success. Supported kinds are `review`, `merged`,
+`closed`, `reopened`, `checks-finished`, and `conflict`; explicit unsupported
+kinds are refused. Issue and Actions-run sources still require App coverage.
+Preview access/quota errors are source failures, not successful waits. Native
+Work cannot use a host preview stream. Read the PR state once after registering.
+
 `lcars session subscribe --help` lists every source, its kinds and what a
 notice looks like. Use `--kinds` to receive only some kinds and `--until` to
 end the subscription on one; a terminal kind (a session `ended`, Work

@@ -2,6 +2,8 @@ export * from './agent-events';
 export * from './contract';
 export * from './cron';
 export * from './derive';
+export * from './github-actor-trust';
+export * from './github-checks';
 export * from './job-secrets';
 export * from './openapi';
 export * from './repository-agents';

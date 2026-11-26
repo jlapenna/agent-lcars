@@ -40,6 +40,13 @@ const LATENCY_BUCKETS = [1, 5, 15, 30, 60, 300, 900, 3_600, 21_600] as const;
 const PREFIX = 'lcars_events_agent';
 
 export class DeliveryMetrics {
+  githubRestoreReady = 0;
+  githubSourcesFailed = 0;
+  githubStreamsWanted = 0;
+  githubStreamsOpen = 0;
+  githubOldestSnapshot = 0;
+  githubSnapshots = 0;
+  githubErrors = 0;
   configured = 0;
   streamOpen = 0;
   inFlight = 0;
@@ -104,6 +111,48 @@ export class DeliveryMetrics {
         `${PREFIX}_${name} ${value}`,
       );
     };
+    gauge(
+      'github_sources_failed',
+      'Wanted PR sources whose latest attach/read/publish failed; idle is zero.',
+      this.githubSourcesFailed,
+    );
+    gauge(
+      'github_restore_ready',
+      'One after the console registration inventory has been restored; zero is unknown or failed.',
+      this.githubRestoreReady,
+    );
+    gauge(
+      'github_streams_wanted',
+      'Non-App PR streams requested on this host; zero is idle.',
+      this.githubStreamsWanted,
+    );
+    gauge(
+      'github_streams_open',
+      'Non-App PR listener processes that have attached.',
+      this.githubStreamsOpen,
+    );
+    gauge(
+      'github_oldest_snapshot_timestamp_seconds',
+      'Oldest successful state read among wanted PR streams; zero means unknown or idle.',
+      this.githubOldestSnapshot,
+    );
+    for (const [name, help, value] of [
+      [
+        'github_snapshots',
+        'Successful authoritative PR state reads after stream attach or events.',
+        this.githubSnapshots,
+      ],
+      [
+        'github_errors',
+        'GitHub stream attach, state read or publication failures.',
+        this.githubErrors,
+      ],
+    ] as const)
+      lines.push(
+        `# HELP ${PREFIX}_${name}_total ${help}`,
+        `# TYPE ${PREFIX}_${name}_total counter`,
+        `${PREFIX}_${name}_total ${value}`,
+      );
     gauge(
       'configured',
       'One when this host has a subscription credential; zero means the agent is deliberately idle.',

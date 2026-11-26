@@ -1,4 +1,5 @@
 import {
+  type AgentEvent,
   agentEventsContract,
   type AgentEventSubscriptionRequest,
   type AgentEventSubscriptionView,
@@ -35,11 +36,13 @@ export interface SubscriptionForwarder {
   subscribe(
     sessionId: string,
     request: AgentEventSubscriptionRequest,
+    githubStream?: boolean,
   ): Promise<ForwardResult<AgentEventSubscriptionView>>;
   list(
     sessionId: string | undefined,
   ): Promise<ForwardResult<readonly AgentEventSubscriptionView[]>>;
   unsubscribe(id: string): Promise<ForwardResult<{ readonly id: string }>>;
+  reportGithub?(event: AgentEvent): Promise<ForwardResult<SessionReportResult>>;
   /** Reports that a session on this host went idle or ended. */
   reportSession(
     sessionId: string,
@@ -124,9 +127,10 @@ export function forwardError(
         ok: false,
         error: 'forbidden',
         message:
-          context.sessionId === undefined
+          said ??
+          (context.sessionId === undefined
             ? (said ?? 'the console refused this host (403)')
-            : `session ${context.sessionId} is not a live session that LCARS telemetry reports on this host (403)`,
+            : `session ${context.sessionId} is not a live session that LCARS telemetry reports on this host (403)`),
         retryable: false,
       };
     case 404:
@@ -186,12 +190,13 @@ export function workApiSubscriptionForwarder(
   };
   return {
     client,
-    subscribe: (sessionId, request) =>
+    subscribe: (sessionId, request, githubStream) =>
       call(
         (signal) =>
           client.subscribe(
             {
               sessionId,
+              ...(githubStream ? { githubStream: true } : {}),
               key: request.key,
               ...(request.kinds === undefined ? {} : { kinds: request.kinds }),
               ...(request.until === undefined ? {} : { until: request.until }),
@@ -213,6 +218,8 @@ export function workApiSubscriptionForwarder(
         const { id: deleted } = await client.unsubscribe({ id }, { signal });
         return { id: deleted };
       }),
+    reportGithub: (event) =>
+      call((signal) => client.reportGithub({ event }, { signal })),
     reportSession: (sessionId, kind, occurredAt) =>
       call((signal) =>
         client.reportSession({ sessionId, kind, occurredAt }, { signal }),

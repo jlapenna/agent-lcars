@@ -4,6 +4,7 @@ import { auth } from '@/auth';
 import {
   defaultAgentEventPublisher,
   routeAgentEvent,
+  routeAgentEventToSubscriptions,
 } from '@/lib/agent-event-routing';
 import { agentEventSubscriptionStore } from '@/lib/agent-event-store';
 import { createAgentEventsHandler } from '@/lib/agent-event-subscriptions-router';
@@ -131,6 +132,22 @@ async function handle(request: Request): Promise<Response> {
         store: agentEventSubscriptionStore,
         getSessionDoc: sessionForResume,
         now: () => new Date(),
+        routeGithubEvent: async (event, host) =>
+          routeAgentEventToSubscriptions(
+            event,
+            (await agentEventSubscriptionStore.listForKey(event.key)).filter(
+              (subscription) =>
+                subscription.target.type === 'session' &&
+                subscription.target.host === host,
+            ),
+            {
+              store: agentEventSubscriptionStore,
+              publisher: defaultAgentEventPublisher,
+              resumeWork: async () => {
+                throw new Error('Host GitHub source cannot resume Work');
+              },
+            },
+          ),
         routeEvent: async (event) => {
           const routed = await routeAgentEvent(event, {
             store: agentEventSubscriptionStore,
