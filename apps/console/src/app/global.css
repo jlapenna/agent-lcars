@@ -4379,6 +4379,13 @@ td.costs-repo-spend__num {
   white-space: nowrap;
 }
 
+.ops-dispatch-item :is(.ops-item-title, .bridge-row-select) {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
 .ops-subtle-link {
   margin-right: 8px;
   color: var(--lcars-ink-dim);
