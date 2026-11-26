@@ -38,7 +38,7 @@ unset HINDSIGHT_API_TOKEN HINDSIGHT_DISABLED HINDSIGHT_CONFIG HINDSIGHT_BANK_ID
 # bootstrap at the caller's real config and install the worker hook there
 # (#3379: a review-qualification run rewrote the operator's settings.json).
 unset CLAUDE_CONFIG_DIR CODEX_HOME ANTIGRAVITY_CONFIG_DIR OPENCODE_CONFIG \
-  OPENCODE_CONFIG_DIR OPENCODE_BASE_CONFIG_DIR XDG_CONFIG_HOME
+  OPENCODE_CONFIG_DIR OPENCODE_BASE_CONFIG_DIR OPENCODE_CONFIG_CONTENT XDG_CONFIG_HOME
 cleanup() {
   local result=$?
   trap - EXIT
@@ -1070,7 +1070,7 @@ run_scenario() {
   export OPENCODE_BIN="$dir/bin/opencode"
   export OPENCODE_STORE_CHECK="$here/check-opencode-store.sh"
   export OPENCODE_VERSION_FILE="$dir/opencode-version"
-  printf 'v1.18.30\n' > "$OPENCODE_VERSION_FILE"
+  printf 'v%s\n' "${FIXTURE_OPENCODE_PIN:-1.18.30}" > "$OPENCODE_VERSION_FILE"
   if [ "${FAKE_OPENCODE_BAKED_STORE:-}" = 1 ]; then
     mkdir -p "$HOME/.local/share/opencode"
     printf '%s\n' "${FAKE_OPENCODE_STORE_VERSION:-1.18.30}" > "$HOME/.local/share/opencode/.lcars-baked-version"
@@ -2466,7 +2466,12 @@ jq -e '.outcome == "review" and .outcomeReference == {kind:"review",number:42,id
 
 echo "scenario github-review: OK"
 
+export FIXTURE_OPENCODE_PIN=2.4.2 FAKE_OPENCODE_VERSION=2.4.2
+export OPENCODE_CONFIG_CONTENT='{"automations":true}'
 run_scenario implement-delegation-policy opencode
+unset FIXTURE_OPENCODE_PIN FAKE_OPENCODE_VERSION OPENCODE_CONFIG_CONTENT
+jq -e '.automations == false' "$OPENCODE_ENV_LOG.config" >/dev/null ||
+  fail "implement delegation policy: OpenCode inline config must force automations off"
 [ "$rc" -eq 0 ] || fail "implement delegation policy: expected exit 0, got $rc"
 jq -e '.agent["lcars-review"] == null' "$OPENCODE_ENV_LOG.config" >/dev/null ||
   fail "implement delegation policy: review-only inline agent settings leaked into implementation"
