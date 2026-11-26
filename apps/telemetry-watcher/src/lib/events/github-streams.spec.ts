@@ -269,6 +269,32 @@ describe('host GitHub stream lifecycle', () => {
       ),
     );
   });
+  it('never moves a catch-up cursor before registration while covering skew', async () => {
+    const t = setup();
+    await t.subscribe();
+    expect(Date.parse(t.checkpoints.get('github:pr:acme/widgets#8')!)).toBe(
+      now,
+    );
+    t.api.pages.mockImplementation(async (path) =>
+      path.includes('/reviews')
+        ? [
+            [
+              {
+                id: 13,
+                user: { login: 'maintainer' },
+                author_association: 'MEMBER',
+                submitted_at: new Date(now - 2 * 60_000).toISOString(),
+                state: 'APPROVED',
+              },
+            ],
+          ]
+        : [[]],
+    );
+    t.handles[0].attach();
+    await vi.waitFor(() => expect(t.api.get).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(t.metrics.githubSnapshots).toBe(2));
+    expect(t.base.reportGithub).not.toHaveBeenCalled();
+  });
   it('restores only marked native sources after agent restart', async () => {
     const t = setup({ existing: true });
     await t.streams.restore();

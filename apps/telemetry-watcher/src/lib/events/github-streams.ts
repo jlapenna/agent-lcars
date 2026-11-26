@@ -318,7 +318,10 @@ export class GithubStreams {
         // Cover the API's entire supported host clock skew plus timestamp
         // granularity. Router and delivery IDs deduplicate this overlap.
         const watermark = new Date(
-          now - MAX_AGENT_EVENT_CLOCK_SKEW_MS - 1000,
+          Math.max(
+            Date.parse(stream.since),
+            now - MAX_AGENT_EVENT_CLOCK_SKEW_MS - 1000,
+          ),
         ).toISOString();
         this.deps.checkpoints?.set(stream.key, watermark);
         stream.since = watermark;
