@@ -220,6 +220,11 @@ export class GithubStreams {
   }
 
   private start(stream: Stream): Promise<void> {
+    if (stream.starting) return stream.starting;
+    if (stream.retry) {
+      clearTimeout(stream.retry);
+      stream.retry = undefined;
+    }
     stream.starting = (async () => {
       const listener = this.deps.open(
         `https://github.com/${stream.repository}/pull/${stream.number}`,

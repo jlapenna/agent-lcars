@@ -711,6 +711,7 @@ describe('generateWorkOpenApi', () => {
         '/claw/agents/{owner}/{repo}/{name}/runs',
         '/dispatches/github',
         '/dispatches/github/redispatch',
+        '/events/github',
         '/events/session',
         '/events/subscriptions',
         '/events/subscriptions/{id}',
@@ -898,6 +899,7 @@ describe('generateWorkOpenApi', () => {
       'GET /runs/{runId}/codex-auth': ['200', '401', '404', '409', '500'],
       'PUT /runs/{runId}/codex-auth': ['200', '400', '401', '409', '500'],
       // 201 always, replay included.
+      'POST /events/github': ['200', '400', '403'],
       'POST /events/session': ['200', '400', '403'],
       'POST /events/subscriptions': ['201', '400', '403', '409'],
       'GET /events/subscriptions': ['200'],

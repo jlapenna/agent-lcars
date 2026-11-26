@@ -189,6 +189,39 @@ describe('host GitHub stream lifecycle', () => {
     expect(t.handles[0].stop).toHaveBeenCalledTimes(1);
     expect(t.metrics.githubStreamsWanted).toBe(0);
   });
+  it('keeps one listener when a new subscriber attaches during retry backoff', async () => {
+    vi.useFakeTimers();
+    const t = setup({ attachFailure: true, existing: true });
+    expect(await t.subscribe()).toMatchObject({ ok: false });
+    let finishAttach!: () => void;
+    let close!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      close = resolve;
+    });
+    const stop = vi.fn(async () => close());
+    vi.mocked(t.open).mockImplementationOnce((_url, attach) => ({
+      ready: new Promise<void>((resolve) => {
+        finishAttach = () => {
+          attach();
+          resolve();
+        };
+      }),
+      closed,
+      stop,
+    }));
+    const pending = t.subscribe('s2');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.open).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(t.open).toHaveBeenCalledTimes(2);
+    finishAttach();
+    expect(await pending).toMatchObject({ ok: true });
+    await t.streams.forwarder.unsubscribe('s2');
+    expect(stop).not.toHaveBeenCalled();
+    await t.streams.forwarder.unsubscribe('s1');
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(t.metrics.githubStreamsWanted).toBe(0);
+  });
   it('rereads on every reconnect and ignores malformed notices', async () => {
     const t = setup();
     await t.subscribe();
