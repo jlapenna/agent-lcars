@@ -590,6 +590,20 @@ describe('dispatched worker policy', () => {
     }
   });
 
+  it('denies OpenCode automation tools in implementation and review', () => {
+    for (const mode of ['implement', 'review']) {
+      expect(
+        verdict({ tool_name: 'automation_create' }, { ...context, mode }),
+      ).toBe('deny');
+      expect(
+        verdict(
+          { toolCall: { name: 'automation.list' } },
+          { ...context, mode },
+        ),
+      ).toBe('deny');
+    }
+  });
+
   it('denies Code Mode execute, session_move, and forced or out-of-worktree worktree mutations', () => {
     const deps = dependencies();
     expect(verdict({ tool_name: 'execute', tool_input: { code: '1+1' } })).toBe(

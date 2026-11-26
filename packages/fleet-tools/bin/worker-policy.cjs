@@ -661,6 +661,11 @@ function nativeOutcomeDecision(input, context) {
 function evaluate(input, context, dependencies = {}) {
   const toolName = input.tool_name ?? input.toolCall?.name;
   const toolArgs = input.tool_input ?? input.toolCall?.args ?? {};
+  if (typeof toolName === 'string' && /^automation[_.]/.test(toolName))
+    return decision(
+      'deny',
+      'OpenCode automations are disabled in dispatched workers.',
+    );
   if (toolName === 'execute')
     return decision(
       'deny',

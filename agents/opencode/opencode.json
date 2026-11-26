@@ -1,5 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "automations": false,
   "instructions": ["~/.config/opencode/instructions.md"],
   "plugin": [
     "./lcars-session",
