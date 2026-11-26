@@ -67,8 +67,9 @@ pnpm exec tsx tools/migrate-run-issue-snapshots.mts --project <project-id> --dat
 The tool prints JSON progress after every page. On interruption, repeat the
 command or use `--start-after '<nextCursor>'` with the last successfully
 printed cursor. A scan from the beginning with zero candidates verifies that
-backfill is complete. Keep snapshot-aware readers and writers in use once
-referenced runs exist. Remove legacy reads in a follow-up after verification.
+backfill is complete. Current run readers require the reference format for
+tracker issues. Keep snapshot-aware readers and writers in use once
+referenced runs exist.
 
 ## The decision layer
 

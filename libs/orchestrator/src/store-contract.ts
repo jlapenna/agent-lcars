@@ -231,9 +231,11 @@ export function runOrchestratorStoreContract(
       expect((await store.readTask(TASK))?.task.issue).toEqual(edited);
     });
 
-    it('strictly parses legacy embedded issue snapshots and reads them without a reference', async () => {
+    it('supports issue-less runs and rejects embedded issue snapshots', async () => {
       const store = await makeStore();
-      const { run } = await started(new Orchestrator(store, new TestClock(T0)));
+      const clock = new TestClock(T0);
+      const orchestrator = new Orchestrator(store, clock);
+      const { run } = await started(orchestrator);
       const issue = {
         reference: { tracker: 'github', ...TASK },
         identifier: 'octo/example#7',
@@ -245,11 +247,23 @@ export function runOrchestratorStoreContract(
         labels: [],
         assignees: [],
       } satisfies TrackerIssue;
-      const legacy = runSchema.parse({ ...run, issue });
-      expect(await readRunIssue(store, legacy)).toEqual(issue);
-      expect(await readRunIssues(store, [legacy])).toEqual(
-        new Map([[legacy.runId, issue]]),
-      );
+      expect(runSchema.safeParse({ ...run, issue }).success).toBe(false);
+      const stored = await store.readRun(run.runId);
+      assert(stored);
+      expect(stored.issueSnapshot).toBeUndefined();
+      expect(await readRunIssue(store, stored)).toBeUndefined();
+      expect(await readRunIssues(store, [stored])).toEqual(new Map());
+
+      await orchestrator.confirmDispatch(run.runId);
+      await orchestrator.refreshIssue(TASK, issue);
+      expect((await store.readTask(TASK))?.task.issue).toEqual(issue);
+      clock.advanceMinutes(180);
+      const { retried } = await orchestrator.sweepExpired();
+      const retry = retried.find(({ lostRunId }) => lostRunId === run.runId);
+      assert(retry);
+      const successor = await store.readRun(retry.newRunId);
+      assert(successor);
+      expect(successor.issueSnapshot).toBeUndefined();
     });
 
     it('binds a source to one time-ordered Work identity under concurrent admission', async () => {

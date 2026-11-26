@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import {
   RUN_MESSAGE_MAX_BYTES,
   RUN_MESSAGE_PREVIEW_MAX,
+  type TrackerIssue,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
@@ -1790,8 +1791,21 @@ describe('brief', () => {
 
   it('serves a GitHub issue or pull-request anchor with all direct-runner metadata', async () => {
     const { store, orchestrator, now } = fixture();
+    const taskId = { repo: 'octo/example', issue: 42 };
+    const issue = {
+      reference: { tracker: 'github', ...taskId },
+      identifier: 'octo/example#42',
+      title: 'Admitted issue',
+      description: 'Admitted issue body.',
+      url: 'https://github.com/octo/example/issues/42',
+      state: 'open',
+      updatedAt: '2026-08-26T09:00:00.000Z',
+      labels: [],
+      assignees: [],
+    } satisfies TrackerIssue;
     const outcome = await orchestrator.request({
-      taskId: { repo: 'octo/example', issue: 42 },
+      taskId,
+      issue,
       requestId: 'github-brief',
       pipeline: 'opencode',
       work: {
@@ -1825,6 +1839,13 @@ describe('brief', () => {
       tokenHash: hashRunToken(token),
     });
 
+    expect(outcome.run.issueSnapshot?.id).toBeDefined();
+    await orchestrator.refreshIssue(taskId, {
+      ...issue,
+      description: 'Edited issue body.',
+      updatedAt: NOW,
+    });
+
     const r = await call(
       { store, orchestrator, now, ...context, bearerToken: token },
       'GET',
@@ -1839,6 +1860,7 @@ describe('brief', () => {
         issue: 42,
         html_url: 'https://github.com/octo/example/issues/42',
       },
+      issue,
       pipeline: 'opencode',
       mode: 'review',
       reply: '/opencode review this',
@@ -1851,7 +1873,8 @@ describe('brief', () => {
     expect(r.json).toMatchObject({
       work: {
         spec: {
-          title: 'GitHub brief',
+          title: issue.title,
+          description: issue.description,
           pipeline: 'opencode',
           target: { repo: 'octo/example' },
         },

@@ -17,7 +17,7 @@ import type { OrchestratorStore } from './store';
 
 const NOW = '2026-10-10T02:00:00.000Z';
 const PIPELINES = ['claude', 'codex', 'opencode'];
-const TASK: TaskId = { repo: 'octo/example', issue: 2198 };
+const TASK = { repo: 'octo/example', issue: 2198 } satisfies TaskId;
 const WORK = { spec: { title: 'Explicit fallback contract' } };
 
 function runFallbackContract(
@@ -335,6 +335,20 @@ function runFallbackContract(
           resumeTranscriptGcsUri: 'gs://example/old-provider',
         },
       });
+      await f.orchestrator.refreshIssue(TASK, {
+        reference: { tracker: 'github', ...TASK },
+        identifier: 'octo/example#2198',
+        title: 'First observed after admission',
+        description: 'Current issue body.',
+        url: 'https://github.com/octo/example/issues/2198',
+        state: 'open',
+        updatedAt: NOW,
+        labels: [],
+        assignees: [],
+      });
+      expect((await f.store.readTask(TASK))?.task.issue?.title).toBe(
+        'First observed after admission',
+      );
       const outcome = await f.limit(run);
       expect(outcome).toMatchObject({
         run: {
@@ -364,6 +378,7 @@ function runFallbackContract(
       });
       const runs = await f.store.listRuns(TASK);
       const next = runs.find((candidate) => candidate.runId !== run.runId);
+      expect(next?.issueSnapshot).toBeUndefined();
       expect(next?.params).not.toHaveProperty('resumeSessionId');
       expect(next?.params).not.toHaveProperty('resumeTranscriptGcsUri');
       expect(runSchema.parse(next)).toEqual(next);

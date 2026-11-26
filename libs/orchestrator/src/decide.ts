@@ -550,7 +550,7 @@ function advanceSourceRevision(decision: Decision, now: string): Decision {
     now,
     taskId: run.task,
     task: resetLossBudgets(decision.task),
-    issue: superseded ? decision.task.issue : run.issue,
+    issue: superseded ? decision.task.issue : undefined,
     issueSnapshot: superseded ? undefined : run.issueSnapshot,
     requestId: superseded ? desired.key : `retry:${run.runId}`,
     requestSource: superseded ? 'caller' : 'auto-retry',
@@ -595,7 +595,7 @@ function mintRun(input: {
     input;
   const runCount = task.runCount + 1;
   const runId = `${taskKey(taskId)}/r${runCount}`;
-  const issue = Object.hasOwn(input, 'issue') ? input.issue : task.issue;
+  const issue = input.issue;
   const newIssueSnapshot =
     input.issueSnapshot === undefined && issue !== undefined
       ? prepareIssueSnapshot(issue)
@@ -808,7 +808,7 @@ export function renewLease(input: {
       input.claimFingerprint !== undefined &&
       run.queue?.state === 'claimed' &&
       run.queue.providerProcessStartedAt === undefined &&
-      (run.issueSnapshot ?? run.issue)?.reference.tracker === 'linear' &&
+      run.issueSnapshot?.reference.tracker === 'linear' &&
       run.sourceRevision === undefined
         ? [
             {
@@ -1253,7 +1253,6 @@ function settleLostAndRetry(
     now: input.now,
     taskId: lostRun.task,
     task: lost.task,
-    issue: lostRun.issue,
     issueSnapshot: lostRun.issueSnapshot,
     requestId: `retry:${lostRun.runId}`,
     requestSource: 'auto-retry',
@@ -1645,6 +1644,7 @@ export function admitEventResume(input: {
       updatedAt: now,
     },
     requestId,
+    issue: task.issue,
     requestSource: 'event',
     pipeline: input.pipeline,
     priority: input.priority,

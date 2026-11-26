@@ -347,7 +347,7 @@ it('projects known queue clocks without claim credentials or invented historical
   }
 });
 
-it('projects the same bounded issue fields for referenced and legacy runs', () => {
+it('projects bounded issue fields only for runs with a snapshot reference', () => {
   const issue = {
     reference: { tracker: 'github' as const, repo: 'octo/example', issue: 7 },
     identifier: 'octo/example#7',
@@ -358,23 +358,15 @@ it('projects the same bounded issue fields for referenced and legacy runs', () =
   const current = run(2, 'running', {
     issueSnapshot: { id: 'a'.repeat(64), ...issue },
   });
-  const legacy = run(1, 'finished', {
-    issue: {
-      ...issue,
-      description: 'Legacy body',
-      updatedAt: T,
-      labels: [],
-      assignees: [],
-    },
-  });
+  const issueLess = run(1, 'finished');
   for (const makeView of [toItemView, toWorkSummary]) {
     const view = makeView({
       task: task(),
       workId: WORK_ID,
-      runs: [legacy, current],
+      runs: [issueLess, current],
     });
     expect(view.runs.map((projected) => projected.issue)).toEqual([
-      issue,
+      undefined,
       issue,
     ]);
   }
