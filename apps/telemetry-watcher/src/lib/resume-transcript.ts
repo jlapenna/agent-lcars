@@ -3,6 +3,7 @@ import { claudeProjectSlugFor, isSafeIdentifier } from '@agent-lcars/telemetry';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { z } from 'zod';
 
 import { defaultAntigravityBrainDir } from './config';
 import {
@@ -16,6 +17,11 @@ import { downloadTranscript } from './transcript-upload';
 /** OpenCode's `import` prints little more than "Imported session: <id>" --
  *  a small, fixed bound rather than reusing the much larger export caps. */
 const IMPORT_MAX_BYTES = 64 * 1024;
+
+const codexHeader = z.object({
+  type: z.literal('session_meta'),
+  payload: z.object({ id: z.string() }),
+});
 
 export interface ResumeTranscriptOptions {
   /** Defaults to 'claude-code' so existing callers are unchanged. */
@@ -140,6 +146,25 @@ export async function resumeTranscript(
     const contents = await download(options.transcriptGcsUri, {
       projectId: options.projectId,
     });
+    if (options.agent === 'codex') {
+      const newline = contents.indexOf('\n');
+      let header: unknown;
+      try {
+        header = JSON.parse(
+          newline < 0 ? contents : contents.slice(0, newline),
+        );
+      } catch {
+        // Parse errors can contain private transcript text.
+      }
+      if (
+        codexHeader.safeParse(header).data?.payload.id !== options.sessionId
+      ) {
+        logger.warn(
+          'Codex archive header does not identify the requested session',
+        );
+        return undefined;
+      }
+    }
     mkdir(path.dirname(file));
     writeFile(file, contents);
     return file;

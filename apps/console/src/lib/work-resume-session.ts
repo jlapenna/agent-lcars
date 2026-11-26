@@ -1,7 +1,4 @@
-import {
-  isClaudeSubagentSessionId,
-  type SessionDoc,
-} from '@agent-lcars/telemetry';
+import { parentSessionIdOf, type SessionDoc } from '@agent-lcars/telemetry';
 
 /** The pipelines whose CLI session can be restored. Values are
  *  `SessionAgent` members (`libs/telemetry/src/lib/types.ts`), matching
@@ -26,7 +23,7 @@ export function resumeUriFor(doc: SessionDoc): string | undefined {
   if (doc.source !== 'issue-agent' || doc.transcriptGcsUri === undefined) {
     return undefined;
   }
-  if (doc.agent === 'claude-code' && isClaudeSubagentSessionId(doc.sessionId)) {
+  if (parentSessionIdOf(doc) !== undefined) {
     return undefined;
   }
   if (doc.agent === 'opencode') {

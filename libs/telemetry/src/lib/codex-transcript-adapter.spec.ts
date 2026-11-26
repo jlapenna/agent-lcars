@@ -67,7 +67,9 @@ describe('codexAdapter', () => {
       },
     };
 
-    expect(codexAdapter.reduce([meta(child, spawned)])[0]).toMatchObject({
+    expect(
+      codexAdapter.reduce([meta(child, spawned), meta(root, 'exec')])[0],
+    ).toMatchObject({
       sessionId: child,
       parentSessionId: root,
     });
