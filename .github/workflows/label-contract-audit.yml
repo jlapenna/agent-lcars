@@ -29,9 +29,6 @@ jobs:
           - full_name: supersprinklesracing/sprinkles
             owner: supersprinklesracing
             repository: sprinkles
-          - full_name: supersprinklesracing/www
-            owner: supersprinklesracing
-            repository: www
           - full_name: supersprinklesracing/girosf
             owner: supersprinklesracing
             repository: girosf
