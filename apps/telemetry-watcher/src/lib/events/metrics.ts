@@ -40,6 +40,11 @@ const LATENCY_BUCKETS = [1, 5, 15, 30, 60, 300, 900, 3_600, 21_600] as const;
 const PREFIX = 'lcars_events_agent';
 
 export class DeliveryMetrics {
+  outlineConfigured = 0;
+  outlineSourcesFailed = 0;
+  outlineJobs = 0;
+  outlineErrors = 0;
+  outlineLastSuccess = 0;
   githubRestoreReady = 0;
   githubSourcesFailed = 0;
   githubStreamsWanted = 0;
@@ -111,6 +116,30 @@ export class DeliveryMetrics {
         `${PREFIX}_${name} ${value}`,
       );
     };
+    gauge(
+      'outline_configured',
+      'Trusted Outline API source configured on this host; zero is disabled.',
+      this.outlineConfigured,
+    );
+    gauge(
+      'outline_sources_failed',
+      'Outline source jobs awaiting a successful retry.',
+      this.outlineSourcesFailed,
+    );
+    gauge(
+      'outline_last_success_timestamp_seconds',
+      'Last successful Outline source job; age alone does not indicate failure.',
+      this.outlineLastSuccess,
+    );
+    for (const [name, value] of [
+      ['jobs', this.outlineJobs],
+      ['errors', this.outlineErrors],
+    ] as const) {
+      lines.push(
+        `# TYPE ${PREFIX}_outline_${name}_total counter`,
+        `${PREFIX}_outline_${name}_total ${value}`,
+      );
+    }
     gauge(
       'github_sources_failed',
       'Wanted PR sources whose latest attach/read/publish failed; idle is zero.',

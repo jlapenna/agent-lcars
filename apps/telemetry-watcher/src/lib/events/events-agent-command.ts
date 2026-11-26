@@ -40,6 +40,10 @@ import {
   serveEventsSocket,
 } from './local-socket-server';
 import { DeliveryMetrics } from './metrics';
+import { outlineSourceApi } from './outline-client';
+import { outlineJobHandler } from './outline-job-handler';
+import { OutlineSource } from './outline-source';
+import { fileOutlineTextHashes } from './outline-source-state';
 import {
   listRecentHookSessions,
   SESSION_REPORT_TICK_MS,
@@ -77,6 +81,9 @@ Environment:
   LCARS_CONSOLE_URL, LCARS_URL   the LCARS console (default https://lcars.jlapenna.net)
   LCARS_AUDIENCE                 Work API ID-token audience (default agent-lcars-work)
   AGENT_TELEMETRY_HOST           host name, as the telemetry hook reports it
+  LCARS_OUTLINE_API_KEY          pike only: existing Agents account API key
+  LCARS_OUTLINE_AGENT_USER_ID    pike only: expected Agents account UUID
+  LCARS_OUTLINE_FALLBACK_ENABLED true only after the Outline delivery cutover
   HC                             the herdr-core client (default ~/.local/bin/hc)`;
 
 /** The host's key, installed the way the telemetry writer key is. */
@@ -495,6 +502,7 @@ export async function executeEventsAgentCommand(
 
   let stop: (() => Promise<void>) | undefined;
   let stopReporting: (() => void) | undefined;
+  let stopOutline: (() => Promise<void>) | undefined;
   if (config.credentialsFile && forwarder) {
     metrics.configured = 1;
     const socketPath = herdrCoreSocketPath(proc.env, proc.home);
@@ -512,13 +520,64 @@ export async function executeEventsAgentCommand(
         },
         sessionId,
       );
+    const outlineKey = proc.env['LCARS_OUTLINE_API_KEY'];
+    const outlineUserId = proc.env['LCARS_OUTLINE_AGENT_USER_ID'];
+    let outlineSource: OutlineSource | undefined;
+    if (
+      config.host === 'pike' &&
+      outlineKey &&
+      outlineUserId &&
+      forwarder.reportOutline &&
+      forwarder.observeOutline
+    ) {
+      // Fail visibly on corrupt hashes or an incomplete source configuration;
+      // normal session deliveries can still progress through the same pull.
+      try {
+        const report = forwarder.reportOutline;
+        const observe = forwarder.observeOutline;
+        const source = new OutlineSource({
+          api: outlineSourceApi(outlineKey),
+          agentUserId: outlineUserId,
+          hashes: fileOutlineTextHashes(eventsState),
+          sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+          fallbackEnabled:
+            proc.env['LCARS_OUTLINE_FALLBACK_ENABLED'] === 'true',
+          report: async (input) => {
+            if (!(await report(input)).ok)
+              throw new Error('Outline source report failed');
+          },
+          observe: async (id, created) => {
+            if (!(await observe(id, created)).ok)
+              throw new Error('Outline observation report failed');
+          },
+        });
+        outlineSource = source;
+        metrics.outlineConfigured = 1;
+        stopOutline = () => source.stop();
+      } catch {
+        metrics.outlineSourcesFailed = 1;
+        log({
+          component: 'outline-source',
+          stage: 'restore',
+          outcome: 'failed',
+        });
+      }
+    }
     const agent = new DeliveryAgent({
       host: config.host,
       checkTarget,
       send: (address, text) =>
         herdrCoreSend(defaultRunFile, config.hc, address, text),
       delivered: fileDeliveredStore(eventsState),
-      onUndeliverable: recordOnlyUndeliverable,
+      onUndeliverable: async (delivery, reason) => {
+        if (!delivery.event.key.startsWith('outline:doc:'))
+          return recordOnlyUndeliverable(delivery, reason);
+        if (
+          !forwarder.fallbackOutline ||
+          !(await forwarder.fallbackOutline(delivery.deliveryId)).ok
+        )
+          throw new Error('Outline fallback could not be queued');
+      },
       metrics,
       log,
       now: Date.now,
@@ -526,7 +585,21 @@ export async function executeEventsAgentCommand(
     });
     stop = startPulling(config, {
       openSubscriber: proc.openSubscriber ?? openPubSubSubscriber,
-      agent,
+      agent: {
+        handle: outlineJobHandler({
+          host: config.host,
+          ...(outlineSource ? { source: outlineSource } : {}),
+          delivered: fileDeliveredStore(
+            eventsState,
+            Date.now,
+            'outline-processed.json',
+          ),
+          metrics,
+          log,
+          now: Date.now,
+          deliver: (message) => agent.handle(message),
+        }),
+      },
       metrics,
       log,
       now: Date.now,
@@ -572,6 +645,7 @@ export async function executeEventsAgentCommand(
   stopReporting?.();
   await githubStreams?.stop();
   await stop?.();
+  await stopOutline?.();
   await socket?.close();
   server.close();
   return 0;

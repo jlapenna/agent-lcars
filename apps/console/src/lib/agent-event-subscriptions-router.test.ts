@@ -16,11 +16,147 @@ import {
   sessionLiveOnHost,
   sessionReportedByHost,
 } from './agent-event-subscriptions-router';
+import type {
+  OutlineDocumentObservation,
+  OutlineEventStore,
+} from './outline-event-store';
 import { hashRunToken } from './run-token';
 import type { WorkPrincipal } from './work-auth';
 
 const NOW = new Date('2026-11-25T12:00:00.000Z');
 const handler = createAgentEventsHandler();
+
+function outlineFixture() {
+  const documents = new Map<string, OutlineDocumentObservation>();
+  const store: OutlineEventStore = {
+    wasRouted: vi.fn(async () => false),
+    markRouted: vi.fn(async () => undefined),
+    saveNotice: vi.fn(async () => undefined),
+    notice: vi.fn(async () => undefined),
+    document: vi.fn(async (id) => documents.get(id)),
+    observe: vi.fn(async (id, agentCreated) => {
+      documents.set(id, { agentCreated, everSubscribed: false });
+    }),
+    subscribed: vi.fn(async (id) => {
+      documents.set(id, { agentCreated: true, everSubscribed: true });
+    }),
+    saveReceipt: vi.fn(async () => undefined),
+    receipt: vi.fn(async () => undefined),
+  };
+  const ctx = context();
+  const publish = vi.fn(async () => undefined);
+  ctx.outline = {
+    enabled: true,
+    store,
+    publish,
+    routing: {
+      store: ctx.store,
+      publisher: { publish: vi.fn(async () => 'message') },
+      resumeWork: vi.fn(async () => ({
+        outcome: 'queued' as const,
+        runId: 'work:a/r2',
+      })),
+    },
+  };
+  return { ctx, documents, store, publish };
+}
+
+describe('Outline source and creator authority', () => {
+  const documentId = '00000000-0000-4000-8000-000000000001';
+  const request = { sessionId: 'session-a', key: `outline:doc:${documentId}` };
+  it.each([true, false])(
+    'imports legacy subscription history only with positive creator evidence (%s)',
+    async (agentCreated) => {
+      const f = outlineFixture();
+      expect(
+        (
+          await call(f.ctx, 'POST', '/events/outline/observations', {
+            documentId,
+            agentCreated,
+            previouslySubscribed: true,
+          })
+        ).status,
+      ).toBe(200);
+      expect(f.store.subscribed).toHaveBeenCalledTimes(agentCreated ? 1 : 0);
+      expect(await f.ctx.store.listForKey(request.key)).toEqual([]);
+    },
+  );
+  it('does not leave a successful registration while creator verification is pending', async () => {
+    const f = outlineFixture();
+    expect(
+      (await call(f.ctx, 'POST', '/events/subscriptions', request)).status,
+    ).toBe(503);
+    expect(await f.ctx.store.listForKey(request.key)).toEqual([]);
+    expect(f.publish).toHaveBeenCalledWith({
+      type: 'outline-observe',
+      documentId,
+    });
+    f.documents.set(documentId, { agentCreated: true, everSubscribed: false });
+    expect(
+      (await call(f.ctx, 'POST', '/events/subscriptions', request)).status,
+    ).toBe(201);
+    expect(f.documents.get(documentId)?.everSubscribed).toBe(true);
+  });
+  it('rejects another creator even when the session is local and live', async () => {
+    const f = outlineFixture();
+    f.documents.set(documentId, { agentCreated: false, everSubscribed: false });
+    expect(
+      (await call(f.ctx, 'POST', '/events/subscriptions', request)).status,
+    ).toBe(403);
+    expect(await f.ctx.store.listForKey(request.key)).toEqual([]);
+  });
+  it('accepts creator observations only from the verified pike identity', async () => {
+    const f = outlineFixture();
+    f.ctx.principal = deliveryPrincipal('laforge');
+    expect(
+      (
+        await call(f.ctx, 'POST', '/events/outline/observations', {
+          documentId,
+          agentCreated: true,
+        })
+      ).status,
+    ).toBe(403);
+    expect(f.store.observe).not.toHaveBeenCalled();
+    f.ctx.principal = deliveryPrincipal('pike');
+    expect(
+      (
+        await call(f.ctx, 'POST', '/events/outline/observations', {
+          documentId,
+          agentCreated: true,
+        })
+      ).status,
+    ).toBe(200);
+    expect(f.store.observe).toHaveBeenCalledWith(documentId, true);
+  });
+  it('refuses a non-source host before accepting a notice report', async () => {
+    const f = outlineFixture();
+    f.ctx.principal = deliveryPrincipal('laforge');
+    expect(
+      (
+        await call(f.ctx, 'POST', '/events/outline', {
+          noticeId: documentId,
+          outcome: 'accepted',
+          agentCreated: true,
+        })
+      ).status,
+    ).toBe(403);
+    expect(f.store.notice).not.toHaveBeenCalled();
+  });
+  it('does not let an unverified bearer act as a source host', async () => {
+    const f = outlineFixture();
+    f.ctx.principal = undefined;
+    f.ctx.bearerToken = 'unverified';
+    expect(
+      (
+        await call(f.ctx, 'POST', '/events/outline/observations', {
+          documentId,
+          agentCreated: true,
+        })
+      ).status,
+    ).toBe(401);
+    expect(f.store.observe).not.toHaveBeenCalled();
+  });
+});
 
 function deliveryPrincipal(host: string): WorkPrincipal {
   return {

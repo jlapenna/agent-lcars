@@ -623,3 +623,74 @@ review threads), those with a live run or a waiting delivery owner, and
 `stalled` PRs with neither and no PR or run activity for two hours, plus
 `complete=false` when the census could not read everything. Homelab turns
 both into `node_lcars_pr_remediation_*` gauges and alerts.
+
+## Outline shadow receiver
+
+`/api/control-plane/outline/webhook` is a signed shadow receiver for the
+artifact-bridge migration (#3571). It verifies Outline's raw-body HMAC and
+five-minute signing timestamp before parsing. Only event/delivery, actor,
+document and model identifiers and event time reach its bounded
+`lcars-outline-events` structured outcomes; document titles, Markdown,
+comments and supplied links are discarded. Both source and delivery activation
+default off. The existing bridge remains active until the explicit cutover.
+
+The receiver stays unavailable until its separate signing secret is provisioned
+and pinned in App Hosting. Terraform owns the secret container and its narrow
+App Hosting grants, never the value. The trusted host keeps the existing
+Outline API credential for administrator/creator checks, text hashes
+and ended-session fallback. The console has no Outline API credential or
+trusted-network access.
+
+Rollout order is secret container/apply, secret version, runtime reference,
+then a second Outline webhook for shadow evidence. Host authorization and the
+explicit delivery cutover precede enabling subscription admission. Reuse the
+existing host agent; do not expose another LAN listener or copy the bridge's
+registry into console application state. Retirement and the one-day proof
+remain acceptance gates on #3571.
+
+With `AGENT_LCARS_OUTLINE_SOURCE_ENABLED=true`, signed identifier-only jobs
+share the existing `agent-event-deliveries` topic and pike's filtered pull.
+Pike's existing agent requires `LCARS_OUTLINE_API_KEY` and the independent
+`LCARS_OUTLINE_AGENT_USER_ID`; it refuses a key for another user. It rereads
+the creator and the actor's current admin role. Own document updates prime
+private hashes with revision metadata only when the authoritative own revision
+matches the notification. Own comments and repeated observations cannot advance
+an existing baseline. External edits
+settle for eight seconds before reading Markdown; an unchanged hash suppresses
+comment highlights. Baselines distinguish observed/own text from an accepted
+admin edit, so reordered bursts coalesce while a delayed own event cannot hide
+an administrator's newer change. Failed reads or reports leave hashes unchanged and nack
+the job. The Console logs bounded authorization outcomes in shadow mode.
+
+`AGENT_LCARS_OUTLINE_DELIVERY_ENABLED=true` additionally activates routing and
+admission. An unobserved document queues a creator check and returns 503;
+it creates no subscription. Only a positive pike observation admits a document.
+The CLI preserves the setup explanation and marks it retryable. Host and
+native Work subscriptions use the normal router, identity and resume rules.
+Notices contain generated identifiers and canonical links, never Markdown or
+comment text. Deliberately excluded kinds do not trigger fallback comments.
+
+Before publishing a session delivery, the Console saves a metadata-only
+receipt naming its host and the signed source notice. A durable routing marker
+precedes terminal subscription settlement and survives repeated intake, so a
+lost report response cannot create a false unsubscribed fallback. Only that verified host
+may report it undeliverable. The Console queues pike's fallback, where
+`LCARS_OUTLINE_FALLBACK_ENABLED=true` and a fresh creator check are required.
+Pike resolves the parent thread through Outline and supplies a deterministic
+comment UUID (supported by [Outline's API](https://www.getoutline.com/developers));
+a retry checks that ID before writing. Normal health probes never create
+comments. Fallback transport failures nack the original delivery instead of
+acknowledging lost work. Source/receipt metadata expires after fourteen days,
+beyond Pub/Sub's seven-day retention; creator observations retain only creator
+status and whether the document ever had a subscription, with no terminal map.
+Pike's observation endpoint can import `previouslySubscribed:true` from the
+actual legacy registry only after a positive creator read. This preserves
+ended-document fallback without assigning a stale terminal alias to a new
+session. Re-subscribe a live legacy target only after its exact session
+ownership is verified; a terminal name alone is insufficient evidence.
+
+The existing protected host metrics expose Outline configuration, pending
+failed source jobs, successful work, errors and last success. An old last-success
+timestamp alone is idle, not failure. Source enqueue failures use the deployed
+`lcars-agent-events`/`enqueue`/`failed` alert contract. Complete the owning
+Homelab dashboard, loaded rules and Loki verification before activation.

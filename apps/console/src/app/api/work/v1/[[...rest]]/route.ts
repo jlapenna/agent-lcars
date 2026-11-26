@@ -32,6 +32,11 @@ import {
   createOrchestratorRuntime,
   createScheduleStore,
 } from '@/lib/orchestrator-runtime';
+import {
+  outlineDeliveryEnabled,
+  publishOutlineSourceJob,
+} from '@/lib/outline-event-source';
+import { outlineEventStore } from '@/lib/outline-event-store';
 import { repositoryJobsHttp } from '@/lib/repository-jobs-http';
 import { createRunsHandler } from '@/lib/runs-router';
 import {
@@ -128,6 +133,19 @@ async function handle(request: Request): Promise<Response> {
         // A run subscribing its Work presents its run token (#3570).
         ...(bearerToken === undefined ? {} : { bearerToken }),
         githubRepositories: controlPlaneRepositories(),
+        outline: {
+          store: outlineEventStore,
+          enabled: outlineDeliveryEnabled(),
+          publish: publishOutlineSourceJob,
+          drain: async () => {
+            await runtime.drain();
+          },
+          routing: {
+            store: agentEventSubscriptionStore,
+            publisher: defaultAgentEventPublisher,
+            resumeWork: queueWorkEventResume(runtime.orchestrator),
+          },
+        },
         readRun: (runId) => runtime.store.readRun(runId),
         store: agentEventSubscriptionStore,
         getSessionDoc: sessionForResume,

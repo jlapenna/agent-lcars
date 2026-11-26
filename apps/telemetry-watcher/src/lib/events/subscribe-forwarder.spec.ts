@@ -56,6 +56,25 @@ const orpcError = (status: number, code: string, message: string) =>
   Response.json({ defined: true, code, status, message }, { status });
 
 describe('workApiSubscriptionForwarder', () => {
+  it('preserves a retryable creator-verification setup refusal', async () => {
+    const { forwarder } = harness(() =>
+      orpcError(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Outline creator verification is pending on pike',
+      ),
+    );
+    expect(
+      await forwarder.subscribe('s1', {
+        key: 'outline:doc:00000000-0000-4000-8000-000000000001',
+      }),
+    ).toEqual({
+      ok: false,
+      error: 'unavailable',
+      retryable: true,
+      message: 'Outline creator verification is pending on pike',
+    });
+  });
   it('subscribes through the Work API with the host ID token and no host field', async () => {
     const { forwarder, seen } = harness();
     expect(

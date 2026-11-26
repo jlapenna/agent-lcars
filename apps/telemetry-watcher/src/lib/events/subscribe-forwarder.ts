@@ -3,6 +3,7 @@ import {
   agentEventsContract,
   type AgentEventSubscriptionRequest,
   type AgentEventSubscriptionView,
+  type OutlineSourceReport,
 } from '@agent-lcars/work';
 import {
   COMMON_ERROR_STATUS_MAP,
@@ -43,6 +44,14 @@ export interface SubscriptionForwarder {
   ): Promise<ForwardResult<readonly AgentEventSubscriptionView[]>>;
   unsubscribe(id: string): Promise<ForwardResult<{ readonly id: string }>>;
   reportGithub?(event: AgentEvent): Promise<ForwardResult<SessionReportResult>>;
+  reportOutline?(
+    report: OutlineSourceReport,
+  ): Promise<ForwardResult<SessionReportResult>>;
+  observeOutline?(
+    documentId: string,
+    agentCreated: boolean,
+  ): Promise<ForwardResult<{ ok: true }>>;
+  fallbackOutline?(deliveryId: string): Promise<ForwardResult<{ ok: true }>>;
   /** Reports that a session on this host went idle or ended. */
   reportSession(
     sessionId: string,
@@ -149,6 +158,13 @@ export function forwardError(
           'this session has too many subscriptions; remove one with lcars session unsubscribe',
         retryable: false,
       };
+    case 503:
+      return {
+        ok: false,
+        error: 'unavailable',
+        message: said ?? 'the LCARS console is temporarily unavailable',
+        retryable: true,
+      };
     default:
       return {
         ok: false,
@@ -220,6 +236,14 @@ export function workApiSubscriptionForwarder(
       }),
     reportGithub: (event) =>
       call((signal) => client.reportGithub({ event }, { signal })),
+    reportOutline: (report) =>
+      call((signal) => client.reportOutline(report, { signal })),
+    observeOutline: (documentId, agentCreated) =>
+      call((signal) =>
+        client.observeOutline({ documentId, agentCreated }, { signal }),
+      ),
+    fallbackOutline: (deliveryId) =>
+      call((signal) => client.fallbackOutline({ deliveryId }, { signal })),
     reportSession: (sessionId, kind, occurredAt) =>
       call((signal) =>
         client.reportSession({ sessionId, kind, occurredAt }, { signal }),
