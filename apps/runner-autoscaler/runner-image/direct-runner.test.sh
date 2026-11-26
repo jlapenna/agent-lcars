@@ -75,7 +75,7 @@ cat >> "$baked/runtime/worker-completion.sh" <<'FAKE'
 monotonic_seconds() {
   local value deadline scenario provider
   value="$(fixture_production_monotonic_seconds)" || return $?
-  deadline="${CLAUDE_DEADLINE:-${CODEX_DEADLINE:-${OPENCODE_DEADLINE:-${AGY_DEADLINE:-}}}}"
+  deadline="${PROVIDER_DEADLINE:-}"
   scenario="${FIXTURE_SCENARIO:?}"
   provider="${FAKE_PIPELINE:?}"
   # Clock diagnostics must not launch another process inside the deadline
@@ -323,6 +323,10 @@ JSON
   */codex-auth)
     if printf '%s\n' "$config_body" | grep -qF 'request = "PUT"'; then
       [ -n "$data_binary_file" ] && cat "$data_binary_file" >> "$CODEX_AUTH_PERSIST_LOG"
+      if [ -n "${FAKE_CODEX_PERSIST_ELAPSED:-}" ]; then
+        read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
+        printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_CODEX_PERSIST_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
+      fi
       echo '{"status":"updated"}'
     else
       attempt=1
@@ -2992,6 +2996,35 @@ for provider in claude codex opencode; do
   [ "$rc" -eq 0 ] || fail "$provider default runtime: run failed"
   grep -q -- '--signal=TERM --kill-after=30s 4800s' "$scenario_runner_temp/timeout-args.log" || fail "$provider default runtime is not the 80-minute budget"
 done
+
+# A stalled GitHub review settles through the worker timeout, allowing
+# Console to fall back before the Kubernetes deadline. SIGKILL after the
+# deadline and a premature process death have different outcomes.
+for elapsed in 1200 1; do
+  FAKE_ANCHOR=github FAKE_GITHUB_PR=1 FAKE_MODE=review FAKE_CLOCK=1 \
+    FAKE_GH_NO_MATCH=1 FAKE_WORKER_ELAPSED="$elapsed" FAKE_WORKER_EXIT=137 \
+    run_scenario "review-budget-$elapsed" agy
+  [ "$rc" -ne 0 ] || fail "review budget: expected the review to fail"
+  jq -e '.runtime.budget_minutes == 20' "$scenario_runner_temp/agent-dispatch/context.json" >/dev/null ||
+    fail "review budget: dispatch did not advertise the provider budget"
+  grep -q -- '--signal=TERM --kill-after=30s 1200s' "$TIMEOUT_ARGS_LOG" ||
+    fail "review budget: provider did not receive the 20-minute timeout"
+  expected_outcome=agent-failed
+  if [ "$elapsed" -eq 1200 ]; then
+    expected_outcome=agent-timeout
+  fi
+  jq -e --arg expected "$expected_outcome" '.outcome == $expected' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+    fail "review budget: elapsed $elapsed did not report $expected_outcome"
+done
+
+# Credential persistence can cross the deadline after an early SIGKILL.
+FAKE_ANCHOR=github FAKE_GITHUB_PR=1 FAKE_MODE=review FAKE_CLOCK=1 \
+  FAKE_GH_NO_MATCH=1 FAKE_WORKER_ELAPSED=1 FAKE_WORKER_EXIT=137 \
+  FAKE_CODEX_PERSIST_ELAPSED=1200 run_scenario codex-review-early-kill codex
+[ "$rc" -ne 0 ] || fail "Codex review: expected the review to fail"
+[ -s "$CODEX_AUTH_PERSIST_LOG" ] || fail "Codex review: credential persistence was not exercised"
+jq -e '.outcome == "agent-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "Codex review: credential persistence changed an early exit 137 into a timeout"
 
 # A report record whose message is unusable still earns the correction.
 export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_NATIVE_OUTCOME=report

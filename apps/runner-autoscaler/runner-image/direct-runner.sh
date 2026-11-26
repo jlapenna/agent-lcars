@@ -688,12 +688,17 @@ export RUNTIME_ENV="$RUNNER_TEMP/runtime-env"
 # activeDeadlineSeconds (queue_kubernetes.go) is the hard backstop: budget
 # plus up to 40 minutes of image pull, bootstrap, credential wait and
 # finalization. A provider default above the budget could never fire first.
-BRIEF_TIMEOUT_MINUTES="$(jq -r '.timeoutMinutes // empty' <<<"$brief")"
-if [[ "$BRIEF_TIMEOUT_MINUTES" =~ ^[1-9][0-9]*$ ]] && [ "$BRIEF_TIMEOUT_MINUTES" -le 80 ]; then
-  export BUDGET_MINUTES="$BRIEF_TIMEOUT_MINUTES"
-else
-  export BUDGET_MINUTES=80
+BUDGET_MINUTES=80
+if [ "$ANCHOR_TYPE" = github ] && [ "$MODE" = review ]; then
+  # Leave time for the runner to report agent-timeout and let Console
+  # hand the review to another provider while the Pod is still alive.
+  BUDGET_MINUTES=20
 fi
+BRIEF_TIMEOUT_MINUTES="$(jq -r '.timeoutMinutes // empty' <<<"$brief")"
+if [[ "$BRIEF_TIMEOUT_MINUTES" =~ ^[1-9][0-9]?$ ]] && [ "$BRIEF_TIMEOUT_MINUTES" -lt "$BUDGET_MINUTES" ]; then
+  BUDGET_MINUTES="$BRIEF_TIMEOUT_MINUTES"
+fi
+export BUDGET_MINUTES
 PROVIDER_TIMEOUT_SECONDS=$((BUDGET_MINUTES * 60))
 export AGENT="$AGENT_NAME"
 
@@ -1038,6 +1043,23 @@ if [ "$PIPELINE" = codex ]; then
 fi
 
 AGENT_EXIT=1
+PROVIDER_TIMEOUT_RECEIPT="$RUNNER_TEMP/provider-kill-at-deadline"
+
+run_timed_provider() {
+  local exit_status
+  : > "$PROVIDER_TIMEOUT_RECEIPT"
+  "$@"
+  exit_status=$?
+  # GNU timeout can return 137 after the TERM grace period. Sample the
+  # deadline on the producer side of the pipeline, before output draining
+  # or provider-specific cleanup can cross it.
+  if [ "$ANCHOR_TYPE" = github ] && [ "$MODE" = review ] &&
+    [ "$exit_status" -eq 137 ] && [ "$(monotonic_seconds)" -ge "$PROVIDER_DEADLINE" ]; then
+    printf '%s\n' 1 > "$PROVIDER_TIMEOUT_RECEIPT"
+  fi
+  return "$exit_status"
+}
+
 if [ "$PIPELINE" = "claude" ]; then
   CLAUDE_WORKER_SESSION="$RESUME_SESSION_ID"
   if [ "${#RESUME_FLAG[@]}" -eq 0 ]; then
@@ -1069,13 +1091,13 @@ if [ "$PIPELINE" = "claude" ]; then
     export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
   fi
   LAST_MESSAGE_FILE="$RUNNER_TEMP/last-message.txt"
-  CLAUDE_DEADLINE=$(($(monotonic_seconds) + CLAUDE_TIMEOUT_SECONDS))
+  PROVIDER_DEADLINE=$(($(monotonic_seconds) + CLAUDE_TIMEOUT_SECONDS))
   run_claude_round() {
     local prompt="$1" remaining
     shift
-    remaining=$((CLAUDE_DEADLINE - $(monotonic_seconds)))
+    remaining=$((PROVIDER_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
-    timeout --signal=TERM --kill-after=30s "${remaining}s" \
+    run_timed_provider timeout --signal=TERM --kill-after=30s "${remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" claude --dangerously-skip-permissions \
       --allowedTools "Bash,Edit,Write,MultiEdit,mcp__hindsight__*" \
       --disallowedTools "ScheduleWakeup,SendMessage,Monitor" \
@@ -1090,7 +1112,7 @@ if [ "$PIPELINE" = "claude" ]; then
   run_claude_round "$AGENT_PROMPT" "${RESUME_FLAG[@]}"
   AGENT_EXIT=$?
   set -e
-  if worker_completion_needed "$AGENT_EXIT" "$CLAUDE_DEADLINE" "$LAST_MESSAGE_FILE" && worker_authorize_correction; then
+  if worker_completion_needed "$AGENT_EXIT" "$PROVIDER_DEADLINE" "$LAST_MESSAGE_FILE" && worker_authorize_correction; then
     set +e
     run_claude_round "$WORKER_COMPLETION_PROMPT" --resume "$CLAUDE_WORKER_SESSION"
     AGENT_EXIT=$?
@@ -1237,14 +1259,14 @@ CURLCFG
   # $RUNNER_TEMP lives for the whole script, exactly where Claude's own
   # LAST_MESSAGE_FILE already lives.
   CODEX_LAST_MESSAGE_FILE="$RUNNER_TEMP/codex-last-message.txt"
-  CODEX_DEADLINE=$(($(monotonic_seconds) + CODEX_TIMEOUT_SECONDS))
+  PROVIDER_DEADLINE=$(($(monotonic_seconds) + CODEX_TIMEOUT_SECONDS))
   CODEX_THREAD_FILE="$CODEX_RUNTIME_DIR/thread-id"
   CODEX_ROUND_UTC_DATE=''
   run_codex_round() {
     local prompt="$1" remaining round_exit round_start_utc_date round_end_utc_date
     shift
     CODEX_ROUND_UTC_DATE=''
-    remaining=$((CODEX_DEADLINE - $(monotonic_seconds)))
+    remaining=$((PROVIDER_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
     # Codex formats usage-limit resets in chrono::Local without a zone label,
     # omitting the calendar date when the reset falls on the same local day.
@@ -1254,7 +1276,7 @@ CURLCFG
     round_start_utc_date="$(LC_ALL=C TZ=UTC date '+%b %-d, %Y')"
     tee -a "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
     CODEX_STDERR_TEE_PID=$!
-    TZ=UTC timeout --signal=TERM --kill-after=30s "${remaining}s" \
+    TZ=UTC run_timed_provider timeout --signal=TERM --kill-after=30s "${remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" codex exec "$@" "${CODEX_HOOK_ARGS[@]}" --json --dangerously-bypass-approvals-and-sandbox \
       --output-last-message "$CODEX_LAST_MESSAGE_FILE" \
       "$prompt" 2> "$CODEX_STDERR_PIPE" |
@@ -1292,7 +1314,7 @@ CURLCFG
     mapfile -t codex_threads < <(sort -u "$CODEX_THREAD_FILE")
     if [ "${#codex_threads[@]}" -eq 1 ]; then CODEX_CONTINUATION_SESSION="${codex_threads[0]}"; fi
   fi
-  if [ -n "$CODEX_CONTINUATION_SESSION" ] && [ ! -s "$CODEX_FAILURE_MESSAGES" ] && worker_completion_needed "$AGENT_EXIT" "$CODEX_DEADLINE" "$CODEX_LAST_MESSAGE_FILE" && worker_authorize_correction; then
+  if [ -n "$CODEX_CONTINUATION_SESSION" ] && [ ! -s "$CODEX_FAILURE_MESSAGES" ] && worker_completion_needed "$AGENT_EXIT" "$PROVIDER_DEADLINE" "$CODEX_LAST_MESSAGE_FILE" && worker_authorize_correction; then
     set +e
     run_codex_round "$WORKER_COMPLETION_PROMPT" resume "$CODEX_CONTINUATION_SESSION"
     AGENT_EXIT=$?
@@ -1418,15 +1440,15 @@ elif [ "$PIPELINE" = "agy" ]; then
   else
     : > "$AGY_BASELINE_SESSIONS"
   fi
-  AGY_DEADLINE=$(($(monotonic_seconds) + AGY_TIMEOUT_SECONDS))
+  PROVIDER_DEADLINE=$(($(monotonic_seconds) + AGY_TIMEOUT_SECONDS))
   run_agy_round() {
     local prompt="$1" remaining
     shift
-    remaining=$((AGY_DEADLINE - $(monotonic_seconds)))
+    remaining=$((PROVIDER_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
     # Provider stop records are read from this round's stderr only.
     AGY_ROUND_STDERR_OFFSET="$(stat -c %s "$PROVIDER_OUTPUT_FILE" 2>/dev/null || echo 0)"
-    timeout --signal=TERM --kill-after=30s "${remaining}s" \
+    run_timed_provider timeout --signal=TERM --kill-after=30s "${remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" "$AGY_BIN" --dangerously-skip-permissions \
       "$@" -p "$prompt" 2> >(tee -a "$PROVIDER_OUTPUT_FILE" >&2) | tee "$LAST_MESSAGE_FILE"
     return "${PIPESTATUS[0]}"
@@ -1462,10 +1484,10 @@ elif [ "$PIPELINE" = "agy" ]; then
   AGENT_EXIT=$?
   set -e
   AGY_CONTINUATION_SESSION=''
-  if worker_completion_needed "$AGENT_EXIT" "$AGY_DEADLINE" "$LAST_MESSAGE_FILE"; then
+  if worker_completion_needed "$AGENT_EXIT" "$PROVIDER_DEADLINE" "$LAST_MESSAGE_FILE"; then
     AGY_CONTINUATION_SESSION="$(agy_round_session)"
   fi
-  if [ -n "$AGY_CONTINUATION_SESSION" ] && worker_authorize_correction && [ $((AGY_DEADLINE - $(monotonic_seconds))) -gt 0 ]; then
+  if [ -n "$AGY_CONTINUATION_SESSION" ] && worker_authorize_correction && [ $((PROVIDER_DEADLINE - $(monotonic_seconds))) -gt 0 ]; then
     set +e
     run_agy_round "$WORKER_COMPLETION_PROMPT" --conversation "$AGY_CONTINUATION_SESSION"
     AGENT_EXIT=$?
@@ -1580,15 +1602,15 @@ In the procedure receipt, cite the packaged upstream revision $review_revision."
   # No `tee` here means the live log is just the log, and the exit code
   # comes directly from `$?` rather than `${PIPESTATUS[0]}`.
   OPENCODE_LAST_MESSAGE_FILE="$RUNNER_TEMP/opencode-last-message.txt"
-  OPENCODE_DEADLINE=$(($(monotonic_seconds) + OPENCODE_TIMEOUT_SECONDS))
+  PROVIDER_DEADLINE=$(($(monotonic_seconds) + OPENCODE_TIMEOUT_SECONDS))
   run_opencode_round() {
     round_prompt="$1"
     shift
-    round_remaining=$((OPENCODE_DEADLINE - $(monotonic_seconds)))
+    round_remaining=$((PROVIDER_DEADLINE - $(monotonic_seconds)))
     if [ "$round_remaining" -lt 1 ]; then
       return 124
     fi
-    env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN \
+    run_timed_provider env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN \
       timeout --signal=TERM --kill-after=30s "${round_remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
         "$@" \
@@ -1674,7 +1696,7 @@ In the procedure receipt, cite the packaged upstream revision $review_revision."
   fi
 
   OPENCODE_CONTINUATION_SESSION=''
-  if worker_completion_needed "$AGENT_EXIT" "$OPENCODE_DEADLINE" ${OPENCODE_REPORT_MESSAGE_FILE:+"$OPENCODE_REPORT_MESSAGE_FILE"}; then
+  if worker_completion_needed "$AGENT_EXIT" "$PROVIDER_DEADLINE" ${OPENCODE_REPORT_MESSAGE_FILE:+"$OPENCODE_REPORT_MESSAGE_FILE"}; then
     if [ -n "$OPENCODE_ROUND_SESSION_LOOKED_UP" ]; then
       OPENCODE_CONTINUATION_SESSION="$OPENCODE_ROUND_SESSION"
     else
@@ -1682,7 +1704,7 @@ In the procedure receipt, cite the packaged upstream revision $review_revision."
     fi
   fi
 
-  if [ -n "$OPENCODE_CONTINUATION_SESSION" ] && worker_authorize_correction && [ $((OPENCODE_DEADLINE - $(monotonic_seconds))) -gt 0 ]; then
+  if [ -n "$OPENCODE_CONTINUATION_SESSION" ] && worker_authorize_correction && [ $((PROVIDER_DEADLINE - $(monotonic_seconds))) -gt 0 ]; then
     set +e
     run_opencode_round "$WORKER_COMPLETION_PROMPT" --session "$OPENCODE_CONTINUATION_SESSION"
     AGENT_EXIT=$?
@@ -1697,6 +1719,15 @@ In the procedure receipt, cite the packaged upstream revision $review_revision."
     OPENCODE_RESOLVED_MODEL="$(tr -d '\r\n' < "$OPENCODE_RESOLVED_MODEL_FILE")"
     export OPENCODE_RESOLVED_MODEL
   fi
+fi
+
+OUTCOME=no-deliverable
+if [ "$AGENT_EXIT" -eq 124 ] || {
+  [ "$AGENT_EXIT" -eq 137 ] && [ -s "$PROVIDER_TIMEOUT_RECEIPT" ]
+}; then
+  OUTCOME=agent-timeout
+elif [ "$AGENT_EXIT" -ne 0 ]; then
+  OUTCOME=agent-failed
 fi
 
 kill "$HEARTBEAT_PID" 2>/dev/null || true
@@ -1717,12 +1748,6 @@ WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
 # now can the tmpfs-backed session/auth directory be erased.
 cleanup_codex_material
 
-OUTCOME=no-deliverable
-if [ "$AGENT_EXIT" -eq 124 ]; then
-  OUTCOME=agent-timeout
-elif [ "$AGENT_EXIT" -ne 0 ]; then
-  OUTCOME=agent-failed
-fi
 OUTCOME_REFERENCE=null
 VERIFY_OUTPUT="$RUNNER_TEMP/verify-outcome-output"
 VERIFY_ENV="$RUNNER_TEMP/verify-outcome-env"
