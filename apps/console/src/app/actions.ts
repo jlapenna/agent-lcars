@@ -314,14 +314,23 @@ export async function retryReplyToItem(
 export async function mergePr(
   repo: WatchedRepo,
   number: number,
+  head?: string,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const session = await requireAdmin();
   try {
-    await approveAndMergePr(resolveWatchedRepo(repo), number);
+    const note = await approveAndMergePr(
+      resolveWatchedRepo(repo),
+      number,
+      head,
+      await operatorFor(session),
+    );
     revalidateDashboard();
-    return { ok: true };
+    return { ok: true, ...(note === undefined ? {} : { note }) };
   } catch (error) {
-    return { ok: false, message: toUserErrorMessage(error) };
+    if (error instanceof ActionError && error.statusCode === 409) {
+      revalidateDashboard();
+    }
+    return toFailure(error);
   }
 }
 
@@ -342,14 +351,23 @@ export async function rebasePr(
 export async function approveAndRebase(
   repo: WatchedRepo,
   number: number,
+  head?: string,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const session = await requireAdmin();
   try {
-    await approveAndRebasePr(resolveWatchedRepo(repo), number);
+    const note = await approveAndRebasePr(
+      resolveWatchedRepo(repo),
+      number,
+      head,
+      await operatorFor(session),
+    );
     revalidateDashboard();
-    return { ok: true };
+    return { ok: true, ...(note === undefined ? {} : { note }) };
   } catch (error) {
-    return { ok: false, message: toUserErrorMessage(error) };
+    if (error instanceof ActionError && error.statusCode === 409) {
+      revalidateDashboard();
+    }
+    return toFailure(error);
   }
 }
 

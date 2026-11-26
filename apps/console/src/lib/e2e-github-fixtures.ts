@@ -458,6 +458,7 @@ export function populatedGithubAnchorProjections(): GithubAnchorProjection[] {
       ...(linkedIssueNumbers.length === 0 ? {} : { linkedIssueNumbers }),
       ...(item.isPr
         ? {
+            ...(item.pr ? { headSha: item.pr.headSha } : {}),
             draft: item.pr?.draft ?? false,
             mergeableState: item.pr?.mergeableState as NonNullable<
               GithubAnchorProjection['mergeableState']
@@ -601,6 +602,11 @@ export function githubAnchorGraphqlDetail(number: number) {
   return {
     ...detail,
     isDraft: item.pr.draft,
+    headRefOid: item.pr.headSha,
+    headRefName: `e2e-pr-${number}`,
+    headRepository: {
+      nameWithOwner: `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}`,
+    },
     mergeStateStatus: item.pr.mergeableState,
     reviewRequests: {
       nodes: item.pr.requestedReviewers.map((login) => ({
@@ -640,8 +646,12 @@ export function githubAnchorGraphqlDetail(number: number) {
 export function pullRequest(number: number) {
   const item = fixtureItem(number);
   if (!item?.pr) return undefined;
+  const merged = actionFixture().merged.includes(number);
   return {
     number,
+    merged,
+    state: merged ? 'closed' : 'open',
+    user: { login: item.author },
     node_id: `PR_e2e_${number}`,
     title: item.title,
     body: item.body,

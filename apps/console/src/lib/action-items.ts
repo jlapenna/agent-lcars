@@ -56,6 +56,7 @@ export interface ActionItem {
   parentNumber?: number;
   subIssues?: SubIssuesSummary;
   linkedIssueNumbers?: number[];
+  headSha?: string;
   draft?: boolean;
   mergeableState?: MergeableState;
   autoMergeEnabled?: boolean;
@@ -228,6 +229,9 @@ export function actionItemFromGithubAnchorProjection(
     ...(projection.linkedIssueNumbers === undefined
       ? {}
       : { linkedIssueNumbers: projection.linkedIssueNumbers }),
+    ...(projection.headSha === undefined
+      ? {}
+      : { headSha: projection.headSha }),
     ...(projection.draft === undefined ? {} : { draft: projection.draft }),
     ...(projection.autoMergeEnabled === undefined
       ? {}
