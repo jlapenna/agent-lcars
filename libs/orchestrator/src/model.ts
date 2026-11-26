@@ -619,8 +619,6 @@ export const runSchema = z.strictObject({
   delivery: deliveryBindingSchema.optional(),
   triagePublication: triagePublicationSchema.optional(),
   credentialOperation: credentialOperationSchema.optional(),
-  /** App selected by the review runner before starting the workload. */
-  reviewCheckoutApp: z.enum(['fleet', 'reviewer']).optional(),
   /** Successful restore receipt; authority remains the current queue hash. */
   credentialRestoredClaimFingerprint: credentialFingerprintSchema.optional(),
   /** A timely completion accepted while external IO is unresolved. Recovery

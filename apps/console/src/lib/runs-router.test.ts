@@ -17,6 +17,7 @@ import {
   reserveCredentialOperation,
   type Run,
   runRecoveryDeadline,
+  runSchema,
 } from '@agent-lcars/orchestrator';
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -3785,6 +3786,7 @@ describe('checkoutToken', () => {
           expiringTokenForRepositories: fleetMint,
         },
       };
+      const beforeCheckout = runSchema.parse(await store.readRun(runId));
       const r = await call(
         checkoutContext,
         'GET',
@@ -3816,6 +3818,12 @@ describe('checkoutToken', () => {
         runPath(runId, '/checkout-token'),
       );
       expect(renewed).toEqual(r);
+      const { events, ...stored } = runSchema.parse(await store.readRun(runId));
+      const { events: priorEvents, ...priorFields } = beforeCheckout;
+      // A strict reader from before the cutover accepts the same run fields
+      // and an additional event in the existing history.
+      expect(stored).toEqual(priorFields);
+      expect(events).toHaveLength(priorEvents.length + 1);
       expect(fleetMint.mock.calls.length > 0).toBe(!reviewerCheckoutV1);
       expect(
         reviewer.expiringTokenFor.mock.calls.length +

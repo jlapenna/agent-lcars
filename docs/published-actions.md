@@ -67,11 +67,20 @@ and CI plus pull-request write access. Automatic dependency approvals also use
 that App. Missing credentials for a negotiated reviewer checkout refuse the run.
 Legacy runners keep using the fleet App during rollout. Console records the App
 chosen at the first checkout before the review workload starts and uses that
-binding for later requests. The runner also rejects an actor change on renewal.
+binding for later requests. The binding uses an executor event note so an older
+Console can still read the run after a rollback. The runner rejects an actor
+change on renewal. If rollback restores fleet App credentials for an in-flight
+dedicated review, retry the review after restoring the compatible Console.
 After both components are deployed, `/review` requests a fresh review on the
 same head if a legacy self-review comment left a PR waiting for approval. A later
 dedicated approval supersedes an older self-review block on that head. GitHub
 change requests, unresolved threads, and dismissal vetoes still apply.
+On a maintainer-authored PR, a pre-cutover `agent-lcars[bot]` change request
+can keep GitHub at `CHANGES_REQUESTED` after a dedicated reviewer approves the
+current head. The stale-review sweep skips maintainer-authored PRs. A
+maintainer with review-dismissal permission should verify that the current
+head addresses the old findings, then dismiss the obsolete fleet App review
+on GitHub with that reason. Confirm GitHub counts the current-head approval.
 Implementation authors remain unchanged, including `agent-lcars[bot]`, and
 GitHub's ordinary approving review counts because author and reviewer differ.
 The existing fleet App webhook receives these reviews and wakes auto-merge.

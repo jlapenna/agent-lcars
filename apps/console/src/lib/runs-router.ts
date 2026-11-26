@@ -178,6 +178,20 @@ function claimantSubject(principal: WorkPrincipal): string {
   return principal.subject.toLowerCase();
 }
 
+const reviewCheckoutNotes = {
+  fleet: 'Review checkout bound to the fleet App',
+  reviewer: 'Review checkout bound to the dedicated reviewer App',
+} as const;
+
+function boundReviewCheckoutApp(run: Run) {
+  for (const event of run.events) {
+    if (event.by !== 'executor') continue;
+    if (event.note === reviewCheckoutNotes.fleet) return 'fleet';
+    if (event.note === reviewCheckoutNotes.reviewer) return 'reviewer';
+  }
+  return undefined;
+}
+
 /** Loads the run named by the path, verifies the bearer's hash against
  *  `run.queue.tokenHash` in constant time, that the run is still live
  *  (`isLive(run.state)`), and that its lease has not already expired --
@@ -1398,7 +1412,7 @@ export const runsRouter = os.router({
 
     // The runner negotiates once before launching the provider. Renewal uses
     // the stored App even when a request carries a different capability header.
-    let reviewCheckoutApp = run.reviewCheckoutApp;
+    let reviewCheckoutApp = boundReviewCheckoutApp(run);
     if (run.params?.['mode'] === 'review' && reviewCheckoutApp === undefined) {
       const selectedApp = context.reviewerCheckoutV1 ? 'reviewer' : 'fleet';
       const bound = await context.store.transactRun({
@@ -1410,22 +1424,35 @@ export const runsRouter = os.router({
               message: 'Run is no longer active',
             });
           }
+          // Older Console releases strictly parse runs. Record the
+          // binding in an executor event without adding a schema field.
+          const events = boundReviewCheckoutApp(authenticated)
+            ? authenticated.events
+            : [
+                ...authenticated.events,
+                {
+                  at: context.now().toISOString(),
+                  to: authenticated.state,
+                  by: 'executor' as const,
+                  note: reviewCheckoutNotes[selectedApp],
+                },
+              ];
           return {
             task: task.task,
-            run: {
-              ...authenticated,
-              reviewCheckoutApp: authenticated.reviewCheckoutApp ?? selectedApp,
-            },
+            run: { ...authenticated, events },
             outbox: [],
           };
         },
       });
-      if (isRefusal(bound) || bound.run?.reviewCheckoutApp === undefined) {
+      reviewCheckoutApp =
+        !isRefusal(bound) && bound.run
+          ? boundReviewCheckoutApp(bound.run)
+          : undefined;
+      if (reviewCheckoutApp === undefined) {
         throw new ORPCError('CONFLICT', {
           message: 'Review checkout App is unbound',
         });
       }
-      reviewCheckoutApp = bound.run.reviewCheckoutApp;
     }
     const review = reviewCheckoutApp === 'reviewer';
     const checkoutTokens = review
