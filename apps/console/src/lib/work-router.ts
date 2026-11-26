@@ -356,7 +356,10 @@ export const workRouter = os.router({
     const tasks = await context.runtime.store.listNativeTasks(
       input.limit,
       input.cursor,
-      input.state,
+      // Keep cursor boundaries independent of inaccessible task states.
+      context.principal.sourceRepository === undefined
+        ? input.state
+        : undefined,
     );
     const native = tasks.flatMap(({ task, derived }) =>
       isWorkAnchor(task.task) &&
@@ -386,7 +389,7 @@ export const workRouter = os.router({
             .at(-1)
         : undefined;
 
-    // The index can be unavailable during rollout. On the raw-page fallback,
+    // A raw page may include unprojected rows after a rollback. On that path,
     // stored state still avoids loading runs for known nonmatches. Derive
     // state from runs for legacy rows and recheck it for every returned view.
     // The session join only runs for items that pass all filters.

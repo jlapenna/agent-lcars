@@ -558,8 +558,9 @@ export interface OrchestratorStore {
   ): Promise<string>;
 
   /** List newest native tasks in work-ID order. A state filter uses the
-   * backfilled projection. A store without the index may return an unfiltered
-   * page, so callers still apply the state filter and page by the last row. */
+   * backfilled projection. When coverage is incomplete or the index is unavailable,
+   * the store may return an unfiltered page. Callers still apply the state
+   * filter and page by the last row. */
   listNativeTasks(
     limit?: number,
     before?: string,

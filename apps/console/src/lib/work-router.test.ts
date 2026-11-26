@@ -3491,9 +3491,12 @@ describe('shared repository authority', () => {
         (await call(ctx, method, `/items/${ID}${suffix}`, body)).status,
       ).toBe(403);
     }
-    const listed = await call(ctx, 'GET', '/items?limit=1');
-    expect(listed.json.items).toEqual([]);
-    expect(listed.json.nextCursor).toBe(ID);
+    for (const filter of ['', '&state=running', '&state=done']) {
+      const listed = await call(ctx, 'GET', `/items?limit=1${filter}`);
+      expect(listed.status).toBe(200);
+      expect(listed.json.items).toEqual([]);
+      expect(listed.json.nextCursor).toBe(ID);
+    }
     expect(await ctx.runtime.store.readTask({ workId: ID })).toEqual(before);
     ctx.principal = {
       ...githubActionsOperator,

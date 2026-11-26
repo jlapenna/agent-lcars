@@ -1260,22 +1260,33 @@ export class FirestoreStore implements OrchestratorStore {
     state?: TaskDerived['state'],
   ): Promise<VersionedTask[]> {
     // GitHub anchors have no workId and are excluded by this ordering.
-    // Descending work IDs are newest-first in creation order. The unfiltered
-    // page uses the automatic index. The state predicate uses a composite
-    // index and assumes the database's task-state backfill has completed.
     const native = this.#tasks.orderBy('task.task.workId', 'desc');
-    // `startAfter` on a single orderBy'd field takes the field's value
-    // directly (no document snapshot needed) and returns strictly older
-    // entries than it in this same order -- exactly "the page after the
-    // one that ended in `before`".
-    const readPage = async (query: Query): Promise<VersionedTask[]> => {
-      const page = before === undefined ? query : query.startAfter(before);
-      const snapshot = await page.limit(limit ?? 200).get();
-      return snapshot.docs.map((doc) => taskDocSchema.parse(doc.data()));
-    };
+    const page = (query: Query) =>
+      (before === undefined ? query : query.startAfter(before)).limit(
+        limit ?? 200,
+      );
     if (state !== undefined) {
       try {
-        return await readPage(native.where('derived.state', '==', state));
+        const snapshot = await this.#firestore.runTransaction(
+          async (tx) => {
+            // An older writer can replace a task document without its derived
+            // fields even after backfill. Counting the tasks with the ordered
+            // field checks coverage using only index entries. Use the same
+            // snapshot for both counts and the page so a concurrent replacement
+            // cannot invalidate the coverage decision.
+            const total = await tx.get(this.#tasks.count());
+            const projected = await tx.get(
+              this.#tasks.orderBy('derived.state').count(),
+            );
+            return tx.get(
+              total.data().count === projected.data().count
+                ? page(native.where('derived.state', '==', state))
+                : page(native),
+            );
+          },
+          { readOnly: true },
+        );
+        return snapshot.docs.map((doc) => taskDocSchema.parse(doc.data()));
       } catch (error) {
         // The source and the production composite index roll out separately.
         // Keep serving the raw page until Firestore can execute the query.
@@ -1288,7 +1299,8 @@ export class FirestoreStore implements OrchestratorStore {
           throw error;
       }
     }
-    return readPage(native);
+    const snapshot = await page(native).get();
+    return snapshot.docs.map((doc) => taskDocSchema.parse(doc.data()));
   }
 
   async listTasks(
