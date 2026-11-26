@@ -832,7 +832,11 @@ async function approvePullRequest(
     // A lost review response can still leave a real, attributable approval.
     if (phase === 'approve' && current) {
       const reviews = await octokit
-        .paginate(octokit.rest.pulls.listReviews, params)
+        .paginate(octokit.rest.pulls.listReviews, {
+          ...params,
+          // Pagination expands the route before the installation auth hook.
+          headers: { [REPO_HEADER]: repoKey(repo) },
+        })
         .catch(() => []);
       const latest = reviews.findLast(
         (review) =>

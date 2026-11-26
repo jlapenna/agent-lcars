@@ -1359,7 +1359,15 @@ describe('confirmed pull request approval', () => {
     (createGithubUserClient as Mock).mockReturnValue({
       rest: { pulls: { createReview } },
     });
-    return { createReview, merge, get, updateBranch, graphql, paginate };
+    return {
+      createReview,
+      merge,
+      get,
+      updateBranch,
+      graphql,
+      listReviews,
+      paginate,
+    };
   }
 
   const mergePr = () => approveAndMergePr(DEFAULT_REPO, 42, head, OPERATOR);
@@ -1564,7 +1572,7 @@ describe('confirmed pull request approval', () => {
   });
 
   it('recognizes only an attributable exact-head approval after a lost response', async () => {
-    const { createReview, paginate, merge } = mockOctokit();
+    const { createReview, listReviews, paginate, merge } = mockOctokit();
     createReview.mockRejectedValue(new Error('Socket lost'));
     paginate.mockResolvedValueOnce([
       { user: { login: OPERATOR.login }, state: 'APPROVED', commit_id: head },
@@ -1572,6 +1580,10 @@ describe('confirmed pull request approval', () => {
     ]);
 
     await expect(mergePr()).resolves.toMatch(/Approval recorded/);
+    expect(paginate).toHaveBeenCalledExactlyOnceWith(listReviews, {
+      ...pull,
+      headers: { [REPO_HEADER]: DEFAULT_REPO_KEY },
+    });
 
     paginate.mockResolvedValueOnce([
       {
