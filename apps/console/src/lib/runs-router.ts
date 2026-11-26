@@ -417,16 +417,26 @@ async function agentRunStatus(
   };
 }
 
-function supportsAgentDependencyWait(
+async function supportsAgentDependencyWait(
+  store: OrchestratorStore,
   run: Run,
   task: Task | undefined,
-): boolean {
+): Promise<boolean> {
+  if (
+    run.params?.mode !== 'implement' ||
+    run.params.jobOccurrence !== undefined ||
+    task === undefined ||
+    deliveryWaiting(task) ||
+    run.sourceRevision !== undefined ||
+    workPayloadSchema.safeParse(task.work).data?.spec.deliverable === 'report'
+  ) {
+    return false;
+  }
+  // PR reconciliation owns PR implementations. Only advertise or accept a
+  // GitHub wait when the stored anchor metadata establishes it is an issue.
   return (
-    run.params?.mode === 'implement' &&
-    task !== undefined &&
-    !deliveryWaiting(task) &&
-    run.sourceRevision === undefined &&
-    workPayloadSchema.safeParse(task.work).data?.spec.deliverable !== 'report'
+    isWorkAnchor(run.task) ||
+    (await store.readGithubAnchorProjection(run.task))?.kind === 'issue'
   );
 }
 
@@ -896,7 +906,7 @@ export const runsRouter = os.router({
       ...params,
       attemptId: formatAttemptId({ generation, intentId: run.runId }),
       generation,
-      ...(supportsAgentDependencyWait(run, task?.task)
+      ...((await supportsAgentDependencyWait(context.store, run, task?.task))
         ? { agentDependencyWait: true as const }
         : {}),
       intentId: run.runId,
@@ -1257,7 +1267,10 @@ export const runsRouter = os.router({
     let dependencyWorkId: string | undefined;
     if (input.outcome === 'wait-for-agent') {
       const workId = workIdSchema.safeParse(input.outcomeReference);
-      if (!workId.success || !supportsAgentDependencyWait(run, task))
+      if (
+        !workId.success ||
+        !(await supportsAgentDependencyWait(context.store, run, task))
+      )
         throw new ORPCError('CONFLICT', {
           message: 'Invalid implementation dependency wait',
         });

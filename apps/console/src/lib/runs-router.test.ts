@@ -1146,9 +1146,103 @@ describe('claim', () => {
 });
 
 describe('implementation dependency completion', () => {
+  async function admitChild(
+    orchestrator: Orchestrator,
+    workId: string,
+    principal: string,
+  ) {
+    await orchestrator.request({
+      taskId: { workId },
+      requestId: 'investigate',
+      pipeline: 'claw-investigator',
+      work: {
+        origin: { principal, channel: 'console' },
+        spec: {
+          pipeline: 'claw-investigator',
+          agent: 'octo/example/investigator',
+          priority: 'background',
+          title: 'Investigation',
+          description: 'Collect evidence',
+          sourceKey: 'investigate',
+        },
+      },
+    });
+  }
+
+  async function projectAnchor(store: OrchestratorStore, kind: 'issue' | 'pr') {
+    const anchor = { repo: 'jlapenna/agent-lcars', issue: 3635 };
+    const generation = await store.beginGithubAnchorProjectionRefresh(anchor);
+    await store.applyGithubAnchorProjectionRefresh({
+      anchor,
+      generation,
+      projection: {
+        anchor,
+        kind,
+        state: 'open',
+        title: 'Implementation',
+        body: '',
+        url: `https://github.com/${anchor.repo}/${kind === 'pr' ? 'pull' : 'issues'}/${anchor.issue}`,
+        labels: [],
+        assigneeLogins: [],
+        sourceUpdatedAt: NOW,
+        observedAt: NOW,
+      },
+    });
+  }
+
+  it.each(['repository job', 'pull request', 'unknown GitHub anchor'] as const)(
+    'does not advertise or accept a dependency wait for a %s',
+    async (kind) => {
+      const f = fixture();
+      const runId =
+        kind === 'repository job'
+          ? await seedQueuedRun(f.store, f.orchestrator, {
+              workId: wid('repository-job'),
+              now: NOW,
+              params: { mode: 'implement', jobOccurrence: 'occurrence-id' },
+            })
+          : await seedQueuedGithubRun(f.store, f.orchestrator, 3635);
+      if (kind === 'pull request') await projectAnchor(f.store, 'pr');
+
+      const claim = await call(
+        { ...context, ...f, principal: executorPrincipal(['claude']) },
+        'POST',
+        '/runs/claim',
+        { runner: 'runner-1' },
+      );
+      expect(claim.status).toBe(200);
+      const runContext = {
+        ...context,
+        ...f,
+        bearerToken: (claim.json as { token: string }).token,
+      };
+      const brief = await call(runContext, 'GET', runPath(runId, '/brief'));
+      expect(brief.status).toBe(200);
+      expect(brief.json).not.toHaveProperty('agentDependencyWait');
+
+      const workId = wid('owned-investigator');
+      await admitChild(f.orchestrator, workId, `run:${runId}`);
+      const result = await call(
+        runContext,
+        'POST',
+        runPath(runId, '/complete'),
+        {
+          outcome: 'wait-for-agent',
+          outcomeReference: workId,
+        },
+      );
+      expect(result.status).toBe(409);
+      expect((await f.store.readRun(runId))?.result).toBeUndefined();
+      expect(
+        (await call(runContext, 'GET', runPath(runId, '/brief'))).status,
+      ).toBe(200);
+    },
+  );
+
   it('accepts only an investigator admitted by this authenticated attempt', async () => {
     const f = fixture();
     const runId = await seedQueuedGithubRun(f.store, f.orchestrator, 3635);
+    await projectAnchor(f.store, 'issue');
     const claim = await call(
       { ...context, ...f, principal: executorPrincipal(['claude']) },
       'POST',
@@ -1163,28 +1257,10 @@ describe('implementation dependency completion', () => {
     };
     const brief = await call(runContext, 'GET', runPath(runId, '/brief'));
     expect(brief.json).toMatchObject({ agentDependencyWait: true });
-    const admitChild = async (workId: string, principal: string) => {
-      await f.orchestrator.request({
-        taskId: { workId },
-        requestId: 'investigate',
-        pipeline: 'claw-investigator',
-        work: {
-          origin: { principal, channel: 'console' },
-          spec: {
-            pipeline: 'claw-investigator',
-            agent: 'octo/example/investigator',
-            priority: 'background',
-            title: 'Investigation',
-            description: 'Collect evidence',
-            sourceKey: 'investigate',
-          },
-        },
-      });
-    };
     const owned = wid('owned-investigator');
     const foreign = wid('foreign-investigator');
-    await admitChild(owned, `run:${runId}`);
-    await admitChild(foreign, 'run:another-attempt');
+    await admitChild(f.orchestrator, owned, `run:${runId}`);
+    await admitChild(f.orchestrator, foreign, 'run:another-attempt');
     const complete = (workId: string) =>
       call(runContext, 'POST', runPath(runId, '/complete'), {
         outcome: 'wait-for-agent',

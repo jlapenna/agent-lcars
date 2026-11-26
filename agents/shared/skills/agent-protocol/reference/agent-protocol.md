@@ -283,7 +283,8 @@ implementation, use it for a still-pending investigator whose evidence you
 need to continue. Push finished work first, write the original admitted
 Work ID and exact attempt marker to the private receipt as the runner
 instructs, and end the turn. This is a durable wait deliverable available
-on issue and native Work implementations. The Console verifies that this
+on GitHub issue and native Work implementations outside repository job
+occurrences. The Console verifies that this
 run admitted the child, releases the worker, and resumes through normal
 admission with the child's terminal outcome as untrusted evidence. No
 GitHub comment or human action is needed for this receipt.
