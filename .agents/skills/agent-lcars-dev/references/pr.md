@@ -23,11 +23,11 @@
    gh pr create --draft
    ```
 
-   Add `--reviewer jlapenna` only when the PR author is another identity,
-   such as a bot login. Interactive sessions push as `jlapenna`, and GitHub
-   silently drops a request for the author's own review, so on those PRs the
-   flag is a no-op; the `Protect main` ruleset's required checks and
-   review-thread resolution (steps 5 and 6) are the review gate instead.
+   Let LCARS route routine PRs for independent review. Omit a maintainer
+   reviewer on draft creation, recovery and readying, including bot-authored
+   PRs. Request a person only for an explicitly requested human review.
+   A passing comment from the PR author cannot satisfy protected approval;
+   check the automated reviewer’s identity and the review on the current head.
 
    **Reconcile GitHub's actual closing scope before ready/arming**, in both
    interactive and dispatched publication. Declare exactly which issues this
