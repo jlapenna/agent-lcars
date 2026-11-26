@@ -665,13 +665,11 @@ resource "google_service_account_iam_member" "codex_agent_impersonation" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
 }
 
-# Read-only Work API identity for interactive maintainer sessions (#2502).
-# It holds no project role and no resource grant: its only use is minting a
-# Google ID token whose email the Console resolves to the `svc:work-reader`
-# Work grant, which carries the issue-owner query and read-only cost budget
-# assessment scopes, with nothing that reads Work items or mutates. codex_agent above carries
-# `work.operator`; letting interactive hosts impersonate that would hand every
-# session create/cancel/redispatch authority.
+# Work API identity for interactive maintainer sessions (#2502).
+# The historical work-reader name remains stable. It holds no project role;
+# Google ID tokens resolve to the Console's svc:work-reader grant, which
+# carries work.reader, costs.reader and work.operator for coding pipelines.
+# Work authority is declared in apps/console/apphosting.yaml, not by IAM.
 resource "google_service_account" "work_reader" {
   account_id   = "work-reader"
   display_name = "Agent LCARS read-only Work API caller"

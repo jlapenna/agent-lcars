@@ -404,7 +404,7 @@ executor is working an issue; a human assignee owns it regardless.
 - **FL-OWN-3 [Partial]** Every executor asks Console, and checks the issue's
   human assignees, before starting work on an anchor. Dispatched fleet runs are single-flight per task, so admission
   refuses a second run (FL-AD-1). Interactive and cloud sessions run
-  `lcars work owner` as the read-only `work-reader` identity and do not start
+  `lcars work owner` as the interactive `work-reader` identity and do not start
   when the verdict names someone else. The repository-scoped Firestore CLI
   session query (`sessions_source_repo_last_activity`, #2502 / #2575 / #2576)
   is shipped and returns `complete: true` in production. Partial: interactive
