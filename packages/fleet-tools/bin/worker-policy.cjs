@@ -666,7 +666,10 @@ function evaluate(input, context, dependencies = {}) {
       'deny',
       'Code Mode (execute) is disabled in dispatched workers; invoke explicit shell and file tools directly.',
     );
+  if (/^automation[_.]/.test(toolName))
+    return decision('deny', 'Automations are disabled in dispatched workers.');
   if (
+    toolName === 'opencode.session.move' ||
     toolName === 'opencode.session_move' ||
     toolName === 'opencode_session_move'
   )
