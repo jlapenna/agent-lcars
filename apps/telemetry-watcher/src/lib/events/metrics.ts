@@ -125,17 +125,17 @@ export class DeliveryMetrics {
     );
     gauge(
       'outline_in_flight',
-      'Held Outline jobs including queue, debounce, API and report waits; zero is idle.',
+      'Pike inbox jobs including queue, debounce, API and report waits; zero is idle.',
       this.outlineInFlight,
     );
     gauge(
       'outline_oldest_pending_timestamp_seconds',
-      'Oldest held Outline publication; zero when no job is held.',
+      'Oldest pending Outline publication; zero when the inbox is empty.',
       this.outlineOldestPending,
     );
     gauge(
       'outline_sources_failed',
-      'Outline source jobs awaiting a successful retry.',
+      'Outline source failures awaiting recovery or retry.',
       this.outlineSourcesFailed,
     );
     gauge(

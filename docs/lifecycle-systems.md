@@ -655,11 +655,13 @@ an existing baseline. External edits
 settle for eight seconds before reading Markdown; an unchanged hash suppresses
 comment highlights. Baselines distinguish observed/own text from an accepted
 admin edit, so reordered bursts coalesce while a delayed own event cannot hide
-an administrator's newer change. Failed reads or reports leave hashes unchanged and nack
-the job. The Console logs bounded authorization outcomes.
+an administrator's newer change. Failed reads or reports leave hashes unchanged
+and retry from the Pike inbox. The Console logs bounded authorization outcomes.
 
-An unobserved document queues a creator check and returns 503;
-it creates no subscription. Only a positive pike observation admits a document.
+Registration queues a creator check and returns 503 when it lacks a verified
+creator result. An inaccessible or deleted document supplies no creator
+evidence, so a later registration can retry the check. Known non-agent
+creators receive 403. Only a positive Pike observation admits a document.
 The CLI preserves the setup explanation and marks it retryable. Host and
 native Work subscriptions use the normal router, identity and resume rules.
 Notices contain generated identifiers and canonical links, never Markdown or
@@ -675,8 +677,11 @@ comment UUID (supported by [Outline's API](https://www.getoutline.com/developers
 a retry checks that ID before writing. Normal health probes never create
 comments. Fallback transport failures nack the original delivery instead of
 acknowledging lost work. Source/receipt metadata expires after fourteen days,
-beyond Pub/Sub's seven-day retention; creator observations retain only creator
-status and whether the document ever had a subscription, with no terminal map.
+beyond Pub/Sub's seven-day retention. Document records retain creator and
+fallback eligibility metadata. Explicit unsubscribe and successful
+`--until` completion suppress fallback for newer notices after the last
+subscription ends. Permanent Work refusal and a verified host's
+undeliverable receipt still permit fallback.
 Pike's observation endpoint can import `previouslySubscribed:true` from the
 actual legacy registry only after a positive creator read. This preserves
 ended-document fallback without assigning a stale terminal alias to a new
@@ -689,9 +694,11 @@ timestamp alone is idle, not failure. Source enqueue failures use the deployed
 `lcars-agent-events`/`enqueue`/`failed` alert contract. Complete the owning
 Homelab dashboard, loaded rules and Loki verification before activation.
 
-The native worker permits two complete Outline jobs at once, including API
-reads and report/fallback waits, while preserving per-document ordering. Queued
-jobs retain identifiers rather than document bodies. Held-job count and oldest
-held publication timestamp cover queueing, debounce, API, report and ack/nack
-waits; both return to zero when empty. Progress alerts must distinguish an old
-backlog that is completing jobs from one that is stalled.
+Pike durably admits identifier-only Outline jobs to its local inbox before
+acknowledging Pub/Sub. Debounce, API calls and retries run from the inbox with
+two workers and one active job per document. This releases the shared receive
+slots for terminal notices. The inbox replays pending jobs on restart and
+retains up to 4,096 jobs. If it cannot take a job, Pike leaves it in Pub/Sub for
+retry. Pending count and oldest publication time cover the local backlog.
+Progress alerts distinguish an old backlog that is completing jobs from one
+that is stalled.

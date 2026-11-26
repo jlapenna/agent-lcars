@@ -98,7 +98,7 @@ describe('Outline source and creator authority', () => {
     expect(
       (await call(f.ctx, 'POST', '/events/subscriptions', request)).status,
     ).toBe(201);
-    expect(await f.ctx.store.outlineFallbackEligible(documentId)).toBe(true);
+    expect(await f.ctx.store.listForKey(request.key)).toHaveLength(1);
   });
   it('rechecks an old ambiguous negative and allows registration after access returns', async () => {
     const f = outlineFixture();

@@ -4,28 +4,113 @@ import type { DeliveredStore } from './delivered-store';
 import type { DeliveryLog, InboundDelivery } from './delivery-agent';
 import { MAX_DELIVERY_BYTES } from './delivery-message';
 import type { DeliveryMetrics, DeliveryOutcome } from './metrics';
+import {
+  type openOutlineJobInbox,
+  type OutlineJobEntry,
+  outlineJobId,
+} from './outline-job-inbox';
 import type { OutlineSource } from './outline-source';
 
-/** Multiplex the existing host Pub/Sub pull; there is no new daemon or port. */
+const OUTLINE_SOURCE_CONCURRENCY = 2;
+const OUTLINE_RETRY_MS = 30_000;
+// Match the broker's retention for work that never succeeds.
+const OUTLINE_RETENTION_MS = 7 * 24 * 60 * 60_000;
+
+/** The Pub/Sub lease covers parse and durable admission only. The local
+ * queue owns the separate budget for debounce, API calls and reports. */
 export function outlineJobHandler(deps: {
   readonly host: string;
-  readonly source?: OutlineSource;
+  readonly outline?: {
+    readonly source: Pick<OutlineSource, 'handle'>;
+    readonly inbox: ReturnType<typeof openOutlineJobInbox>;
+  };
   readonly delivered: DeliveredStore;
   readonly metrics: DeliveryMetrics;
   readonly log: DeliveryLog;
   readonly now: () => number;
   readonly deliver: (message: InboundDelivery) => Promise<DeliveryOutcome>;
-}): (message: InboundDelivery) => Promise<DeliveryOutcome> {
-  const failed = new Set<string>();
+}) {
+  const { outline, metrics } = deps;
+  const retryAt = new Map<string, number>();
   const active = new Map<string, Promise<void>>();
-  const held = new Map<symbol, number>();
-  const refreshHeld = () => {
-    deps.metrics.outlineInFlight = held.size;
-    deps.metrics.outlineOldestPending = held.size
-      ? Math.floor(Math.min(...held.values()) / 1000)
+  let admissionFailed = false;
+  let stopped = false;
+
+  const refreshMetrics = () => {
+    let oldest = Infinity;
+    for (const entry of outline?.inbox.entries.values() ?? [])
+      oldest = Math.min(oldest, entry.publishedAt);
+    metrics.outlineInFlight = outline?.inbox.entries.size ?? 0;
+    metrics.outlineOldestPending = Number.isFinite(oldest)
+      ? Math.floor(oldest / 1000)
       : 0;
+    metrics.outlineSourcesFailed = retryAt.size + Number(admissionFailed);
   };
-  return async (message) => {
+
+  const pump = () => {
+    if (stopped || !outline) return;
+    const now = deps.now();
+    for (const [id, entry] of outline.inbox.entries) {
+      if (active.size >= OUTLINE_SOURCE_CONCURRENCY) break;
+      const documentId =
+        entry.job.type === 'outline-event'
+          ? entry.job.notice.documentId
+          : entry.job.documentId;
+      // Serialize active reads and writes per document. A failed job waiting
+      // for retry must not block later notices for the same document.
+      if (active.has(documentId) || (retryAt.get(id) ?? 0) > now) continue;
+      active.set(
+        documentId,
+        processEntry(outline, id, entry).finally(() => {
+          active.delete(documentId);
+          refreshMetrics();
+          pump();
+        }),
+      );
+    }
+    refreshMetrics();
+  };
+
+  const processEntry = async (
+    { inbox, source }: NonNullable<typeof outline>,
+    id: string,
+    entry: OutlineJobEntry,
+  ) => {
+    const { job, publishedAt } = entry;
+    const deduplicate = job.type !== 'outline-observe';
+    try {
+      if (deps.now() - publishedAt >= OUTLINE_RETENTION_MS) {
+        deps.log({
+          component: 'outline-source',
+          stage: job.type,
+          outcome: 'expired',
+        });
+      } else if (!deduplicate || !deps.delivered.has(id)) {
+        await source.handle(job);
+        if (deduplicate) deps.delivered.record(id, deps.now());
+        metrics.outlineJobs++;
+        metrics.outlineLastSuccess = Math.floor(deps.now() / 1000);
+        deps.log({
+          component: 'outline-source',
+          stage: job.type,
+          outcome: 'ok',
+        });
+      }
+      inbox.remove(id);
+      retryAt.delete(id);
+    } catch (error) {
+      retryAt.set(id, deps.now() + OUTLINE_RETRY_MS);
+      metrics.outlineErrors++;
+      deps.log({
+        component: 'outline-source',
+        stage: job.type,
+        outcome: 'failed',
+        error: error instanceof Error ? error.name : 'error',
+      });
+    }
+  };
+
+  async function handle(message: InboundDelivery): Promise<DeliveryOutcome> {
     if (message.attributes.source !== 'outline') return deps.deliver(message);
     let job;
     try {
@@ -47,59 +132,46 @@ export function outlineJobHandler(deps: {
       await message.ack();
       return 'invalid';
     }
-    const id =
-      job.type === 'outline-event'
-        ? job.notice.deliveryId
-        : job.type === 'outline-fallback'
-          ? job.id
-          : `observe:${job.documentId}`;
-    const deduplicate = job.type !== 'outline-observe';
-    if (deduplicate && deps.delivered.has(id)) {
+
+    const id = outlineJobId(job);
+    if (job.type !== 'outline-observe' && deps.delivered.has(id)) {
       await message.ack();
-      failed.delete(id);
-      deps.metrics.outlineSourcesFailed = failed.size;
       return 'duplicate';
     }
-    const holding = Symbol();
-    held.set(holding, message.publishTime.getTime());
-    refreshHeld();
     try {
-      if (!deps.source) throw new Error('Outline source is not configured');
-      // One actual handler per source id; concurrent Pub/Sub redelivery waits
-      // for it, rather than racing two idempotent fallback comment writes.
-      let processing = active.get(id);
-      if (!processing) {
-        processing = deps.source.handle(job);
-        active.set(id, processing);
-      }
-      try {
-        await processing;
-      } finally {
-        if (active.get(id) === processing) active.delete(id);
-      }
-      if (deduplicate) deps.delivered.record(id, deps.now());
-      failed.delete(id);
-      deps.metrics.outlineSourcesFailed = failed.size;
-      deps.metrics.outlineJobs++;
-      deps.metrics.outlineLastSuccess = Math.floor(deps.now() / 1000);
-      deps.log({ component: 'outline-source', stage: job.type, outcome: 'ok' });
-      await message.ack();
-      return 'delivered';
+      if (stopped || !outline) throw new Error('Outline inbox is unavailable');
+      outline.inbox.enqueue(id, {
+        job,
+        publishedAt: message.publishTime.getTime(),
+      });
+      admissionFailed = false;
     } catch (error) {
-      failed.add(id);
-      deps.metrics.outlineSourcesFailed = failed.size;
-      deps.metrics.outlineErrors++;
+      admissionFailed = true;
+      refreshMetrics();
+      metrics.outlineErrors++;
       deps.log({
         component: 'outline-source',
-        stage: job.type,
+        stage: 'intake',
         outcome: 'failed',
         error: error instanceof Error ? error.name : 'error',
       });
       await message.nack();
       return 'retried';
-    } finally {
-      held.delete(holding);
-      refreshHeld();
     }
+    // A lost ACK can cause redelivery. The pending entry or processed id
+    // already covers it, so leave the admitted work available for processing.
+    const acknowledged = message.ack();
+    pump();
+    await acknowledged;
+    return 'delivered';
+  }
+
+  return {
+    handle,
+    pump,
+    stop: async () => {
+      stopped = true;
+      await Promise.all(active.values());
+    },
   };
 }

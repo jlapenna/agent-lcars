@@ -120,38 +120,6 @@ describe('Outline trusted API source', () => {
       expect(f.api.createComment).not.toHaveBeenCalled();
     },
   );
-  it('bounds complete distinct-document jobs and drains queued work at shutdown', async () => {
-    const f = fixture();
-    const releases: (() => void)[] = [];
-    f.api.document.mockImplementation(async (id) => ({
-      id,
-      createdBy: { id: agent },
-      updatedBy: { id: agent },
-      updatedAt: '2026-11-26T00:59:00Z',
-      text: 'document held across report',
-    }));
-    f.observe.mockImplementation(
-      () => new Promise<void>((resolve) => releases.push(resolve)),
-    );
-    const jobs = Array.from({ length: 4 }, (_, n) =>
-      f.source.handle({
-        type: 'outline-observe',
-        documentId: `00000000-0000-4000-8000-${String(n + 10).padStart(12, '0')}`,
-      }),
-    );
-    let stopped = false;
-    const stopping = f.source.stop().then(() => {
-      stopped = true;
-    });
-    await vi.waitFor(() => expect(f.api.document).toHaveBeenCalledTimes(2));
-    expect(stopped).toBe(false);
-    releases.splice(0).forEach((release) => release());
-    await vi.waitFor(() => expect(f.api.document).toHaveBeenCalledTimes(4));
-    releases.splice(0).forEach((release) => release());
-    await Promise.all(jobs);
-    await stopping;
-    expect(stopped).toBe(true);
-  });
   it('coalesces reordered administrator updates after one authoritative latest-text report', async () => {
     const f = fixture();
     f.hashes.set(doc, baseline('old'));

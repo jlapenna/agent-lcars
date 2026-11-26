@@ -28,53 +28,15 @@ export interface OutlineSourceDependencies {
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 export const OUTLINE_EDIT_DEBOUNCE_MS = 8_000;
-/** Bound complete API/document/report jobs within the existing native unit. */
-export const OUTLINE_SOURCE_CONCURRENCY = 2;
 export const OUTLINE_FALLBACK_COMMENT =
   'The agent session subscribed to this document has ended or cannot receive its notice, so this update was not delivered to that session. Ask an agent to pick it up from here.';
 
-/** Serializes a document's baseline and changes, including own publications.
- * Only hashes and revision metadata survive the read. No document text is logged,
- * stored in LCARS, or used to construct a session notice. */
+/** Only hashes and revision metadata survive the read. No document text is
+ * logged, stored in LCARS, or used to construct a session notice. */
 export class OutlineSource {
-  private readonly queues = new Map<string, Promise<void>>();
-  private running = 0;
-  private readonly waiting: (() => void)[] = [];
-
   constructor(private readonly deps: OutlineSourceDependencies) {}
 
   async handle(job: OutlineSourceJob): Promise<void> {
-    const documentId =
-      job.type === 'outline-event' ? job.notice.documentId : job.documentId;
-    const previous = this.queues.get(documentId) ?? Promise.resolve();
-    const next = previous.then(
-      () => this.limited(job),
-      () => this.limited(job),
-    );
-    const settled = next.catch(() => undefined);
-    this.queues.set(documentId, settled);
-    try {
-      await next;
-    } finally {
-      if (this.queues.get(documentId) === settled)
-        this.queues.delete(documentId);
-    }
-  }
-
-  private async limited(job: OutlineSourceJob): Promise<void> {
-    if (this.running < OUTLINE_SOURCE_CONCURRENCY) this.running++;
-    else await new Promise<void>((resolve) => this.waiting.push(resolve));
-    try {
-      await this.handleOne(job);
-    } finally {
-      // Transfer the occupied slot directly; a new arrival cannot jump ahead.
-      const next = this.waiting.shift();
-      if (next) next();
-      else this.running--;
-    }
-  }
-
-  private async handleOne(job: OutlineSourceJob): Promise<void> {
     const { deps } = this;
     const me = await deps.api.me();
     if (me.id !== deps.agentUserId)
@@ -196,9 +158,5 @@ export class OutlineSource {
         updatedAt: document.updatedAt,
         origin: 'admin',
       });
-  }
-
-  async stop(): Promise<void> {
-    await Promise.all([...this.queues.values()]);
   }
 }

@@ -41,7 +41,7 @@ export interface AgentEventSubscriptionStore {
   listForKey(key: string): Promise<StoredAgentEventSubscription[]>;
   /** A source prefix, used to find subscribed PRs affected by a base push. */
   listForKeyPrefix(prefix: string): Promise<StoredAgentEventSubscription[]>;
-  /** Undefined for a document with no recorded subscription lifecycle. */
+  /** Undefined when only legacy history may be available. */
   outlineFallbackEligible(documentId: string): Promise<boolean | undefined>;
   /** Whether a document was removed. */
   delete(id: string): Promise<boolean>;
@@ -109,11 +109,12 @@ export class FirestoreAgentEventSubscriptionStore implements AgentEventSubscript
     try {
       const batch = this.firestore().batch();
       batch.create(ref, toDocument(subscription));
+      // A new registration supersedes fallback from a prior registration.
       const documentId = outlineDocumentId(subscription);
       if (documentId !== undefined)
         batch.set(
           this.outlineDocument(documentId),
-          { fallbackEligible: true },
+          { fallbackEligible: false },
           { merge: true },
         );
       await batch.commit();
@@ -243,7 +244,7 @@ export class MemoryAgentEventSubscriptionStore implements AgentEventSubscription
       structuredClone(toDocument(subscription)),
     );
     const documentId = outlineDocumentId(subscription);
-    if (documentId !== undefined) this.outlineFallback.set(documentId, true);
+    if (documentId !== undefined) this.outlineFallback.set(documentId, false);
     return { subscription, created: true };
   }
 

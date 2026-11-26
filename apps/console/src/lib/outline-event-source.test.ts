@@ -6,7 +6,6 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 
 import { MemoryAgentEventSubscriptionStore } from './agent-event-store';
-import type { WorkResumeOutcome } from './work-event-resume';
 import {
   acceptOutlineSourceReport,
   normalizedOutlineEvent,
@@ -19,6 +18,7 @@ import type {
   OutlineDocumentObservation,
   OutlineEventStore,
 } from './outline-event-store';
+import type { WorkResumeOutcome } from './work-event-resume';
 
 const id = '00000000-0000-4000-8000-000000000001';
 const doc = '00000000-0000-4000-8000-000000000002';

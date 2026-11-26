@@ -42,6 +42,7 @@ import {
 import { DeliveryMetrics } from './metrics';
 import { outlineSourceApi } from './outline-client';
 import { outlineJobHandler } from './outline-job-handler';
+import { openOutlineJobInbox } from './outline-job-inbox';
 import { OutlineSource } from './outline-source';
 import { fileOutlineTextHashes } from './outline-source-state';
 import {
@@ -521,7 +522,7 @@ export async function executeEventsAgentCommand(
       );
     const outlineKey = proc.env['LCARS_OUTLINE_API_KEY'];
     const outlineUserId = proc.env['LCARS_OUTLINE_AGENT_USER_ID'];
-    let outlineSource: OutlineSource | undefined;
+    let outline: Parameters<typeof outlineJobHandler>[0]['outline'];
     if (
       config.host === 'pike' &&
       outlineKey &&
@@ -529,8 +530,8 @@ export async function executeEventsAgentCommand(
       forwarder.reportOutline &&
       forwarder.observeOutline
     ) {
-      // Fail visibly on corrupt hashes or an incomplete source configuration;
-      // normal session deliveries can still progress through the same pull.
+      // A corrupt inbox or hash state disables Outline intake on this host.
+      // Ordinary terminal notices can still progress.
       try {
         const report = forwarder.reportOutline;
         const observe = forwarder.observeOutline;
@@ -569,9 +570,8 @@ export async function executeEventsAgentCommand(
             });
           },
         });
-        outlineSource = source;
+        outline = { source, inbox: openOutlineJobInbox(eventsState) };
         metrics.outlineConfigured = 1;
-        stopOutline = () => source.stop();
       } catch {
         metrics.outlineSourcesFailed = 1;
         log({
@@ -601,23 +601,30 @@ export async function executeEventsAgentCommand(
       now: Date.now,
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     });
+    const handler = outlineJobHandler({
+      host: config.host,
+      ...(outline ? { outline } : {}),
+      delivered: fileDeliveredStore(
+        eventsState,
+        Date.now,
+        'outline-processed.json',
+      ),
+      metrics,
+      log,
+      now: Date.now,
+      deliver: (message) => agent.handle(message),
+    });
+    if (outline) {
+      handler.pump();
+      const timer = setInterval(handler.pump, 1_000);
+      stopOutline = async () => {
+        clearInterval(timer);
+        await handler.stop();
+      };
+    }
     stop = startPulling(config, {
       openSubscriber: proc.openSubscriber ?? openPubSubSubscriber,
-      agent: {
-        handle: outlineJobHandler({
-          host: config.host,
-          ...(outlineSource ? { source: outlineSource } : {}),
-          delivered: fileDeliveredStore(
-            eventsState,
-            Date.now,
-            'outline-processed.json',
-          ),
-          metrics,
-          log,
-          now: Date.now,
-          deliver: (message) => agent.handle(message),
-        }),
-      },
+      agent: handler,
       metrics,
       log,
       now: Date.now,
