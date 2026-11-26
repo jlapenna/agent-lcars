@@ -12,6 +12,12 @@ import { parse as parseYaml } from 'yaml';
 
 const execFileAsync = promisify(execFile);
 const API_ROOT = 'https://firebaseapphosting.googleapis.com/v1';
+const RETRYABLE_BUILD_STATES = new Set([
+  'BUILDING',
+  'BUILT',
+  'DEPLOYING',
+  'READY',
+]);
 const TERMINAL_BUILD_STATES = new Set(['FAILED', 'SKIPPED', 'EXPIRED']);
 const TERMINAL_ROLLOUT_STATES = new Set([
   'FAILED',
@@ -29,10 +35,12 @@ const CLOUD_BUILDER_VARIABLES = new Set([
 ]);
 
 export class AppHostingApiError extends Error {
-  constructor(status, message) {
+  constructor(status, message, { buildFailed, invalidRolloutField }) {
     super(message);
     this.name = 'AppHostingApiError';
     this.status = status;
+    this.buildFailed = buildFailed;
+    this.invalidRolloutField = invalidRolloutField;
   }
 }
 
@@ -243,6 +251,37 @@ function resourceId(name) {
   return name?.split('/').at(-1);
 }
 
+function terminalBuildFailure(build, buildName) {
+  if (!TERMINAL_BUILD_STATES.has(build?.state)) {
+    return undefined;
+  }
+  const prefix = `App Hosting build ${resourceId(buildName)} entered terminal state ${build.state}`;
+  const errors = Array.isArray(build.errors) ? build.errors : [];
+  let reason;
+  const legacyError = { error: build.error, errorSource: build.errorSource };
+  for (const entry of [...errors, legacyError]) {
+    if (entry?.errorSource !== 'CLOUD_RUN') continue;
+    reason ??= 'Cloud Run could not prepare the revision';
+    const message = entry.error?.message;
+    if (typeof message !== 'string') continue;
+
+    // Classify provider text, but never echo it. It can contain configuration
+    // values, secret references or runtime identities.
+    if (!/\b(?:secrets?|secretmanager)\b/iu.test(message)) continue;
+    if (
+      /permission denied|access denied|not authorized|does not have (?:permission|access)|secretmanager\.versions\.access/iu.test(
+        message,
+      )
+    ) {
+      return `${prefix}: Cloud Run reported a runtime secret access failure. Check access for the runtime identity.`;
+    }
+    if (/\bnot found\b|\bdoes not exist\b|\bno versions?\b/iu.test(message)) {
+      return `${prefix}: Cloud Run could not resolve a runtime secret or version. Check that the version exists and the runtime identity can access it.`;
+    }
+  }
+  return reason ? `${prefix}: ${reason}` : prefix;
+}
+
 export function rolloutVerdict({
   build,
   rollout,
@@ -270,12 +309,8 @@ export function rolloutVerdict({
       `Build artifact is ${artifact ?? '<missing>'}, expected ${expectedArtifact}`,
     ];
   }
-  if (TERMINAL_BUILD_STATES.has(build.state)) {
-    return [
-      'fail',
-      `Build entered terminal state ${build.state}: ${JSON.stringify(build.errors ?? build.error)}`,
-    ];
-  }
+  const failure = terminalBuildFailure(build, expectedBuildName);
+  if (failure) return ['fail', failure];
   if (build.state !== 'READY') {
     return ['continue', `Build state is ${build.state ?? '<unknown>'}`];
   }
@@ -283,10 +318,7 @@ export function rolloutVerdict({
     return ['fail', 'Rollout points at a different build'];
   }
   if (TERMINAL_ROLLOUT_STATES.has(rollout.state)) {
-    return [
-      'fail',
-      `Rollout entered terminal state ${rollout.state}: ${JSON.stringify(rollout.error)}`,
-    ];
+    return ['fail', `Rollout entered terminal state ${rollout.state}`];
   }
   if (rollout.state !== 'SUCCEEDED') {
     return ['continue', `Rollout state is ${rollout.state ?? '<unknown>'}`];
@@ -333,9 +365,35 @@ async function apiRequest(method, resourcePath, body, query) {
   });
   const responseText = await response.text();
   if (!response.ok) {
+    let buildFailed = false;
+    let invalidRolloutField = false;
+    if (response.status === 400) {
+      try {
+        const { error } = JSON.parse(responseText) ?? {};
+        buildFailed =
+          typeof error?.message === 'string' &&
+          /\bBUILD_FAILED\b/u.test(error.message);
+        invalidRolloutField =
+          Array.isArray(error?.details) &&
+          error.details.some(
+            (detail) =>
+              detail?.['@type'] ===
+                'type.googleapis.com/google.rpc.BadRequest' &&
+              Array.isArray(detail.fieldViolations) &&
+              detail.fieldViolations.some(
+                (violation) =>
+                  typeof violation?.field === 'string' &&
+                  violation.field !== 'build',
+              ),
+          );
+      } catch {
+        // Non-JSON error bodies have no structured status.
+      }
+    }
     throw new AppHostingApiError(
       response.status,
-      `App Hosting API ${method} ${resourcePath} failed (${response.status}): ${responseText}`,
+      `App Hosting API ${method} ${resourcePath} failed (HTTP ${response.status})`,
+      { buildFailed, invalidRolloutField },
     );
   }
   return responseText ? JSON.parse(responseText) : {};
@@ -345,7 +403,7 @@ async function waitForOperation(operation, timeoutSeconds = 1800) {
   if (operation.done) {
     if (operation.error) {
       throw new Error(
-        `App Hosting operation failed: ${JSON.stringify(operation.error)}`,
+        `App Hosting operation failed (code ${Number(operation.error.code)})`,
       );
     }
     return operation.response ?? {};
@@ -360,7 +418,7 @@ async function waitForOperation(operation, timeoutSeconds = 1800) {
     if (current.done) {
       if (current.error) {
         throw new Error(
-          `App Hosting operation ${operation.name} failed: ${JSON.stringify(current.error)}`,
+          `App Hosting operation ${operation.name} failed (code ${Number(current.error.code)})`,
         );
       }
       return current.response ?? {};
@@ -522,7 +580,9 @@ async function main() {
     buildBody,
     { buildId, requestId: randomUUID() },
   );
-  await waitForOperation(buildOperation);
+  const registeredBuild = await waitForOperation(buildOperation);
+  const registrationFailure = terminalBuildFailure(registeredBuild, buildName);
+  if (registrationFailure) throw new Error(registrationFailure);
 
   const rolloutBody = {
     displayName: `prebuilt ${commitSha.slice(0, 12)}`,
@@ -538,9 +598,22 @@ async function main() {
       });
       break;
     } catch (error) {
+      if (!(error instanceof AppHostingApiError) || error.status !== 400) {
+        throw error;
+      }
+      // The create operation can finish before the build state settles.
+      const reportedFailure = error.buildFailed
+        ? `App Hosting reported BUILD_FAILED for build ${buildId}`
+        : undefined;
+      const build = await apiRequest('GET', buildName).catch((lookupError) => {
+        if (reportedFailure) throw new Error(reportedFailure);
+        throw lookupError;
+      });
+      const failure = terminalBuildFailure(build, buildName) ?? reportedFailure;
+      if (failure) throw new Error(failure);
       if (
-        !(error instanceof AppHostingApiError) ||
-        error.status !== 400 ||
+        error.invalidRolloutField ||
+        !RETRYABLE_BUILD_STATES.has(build?.state) ||
         attempt === 5
       ) {
         throw error;
