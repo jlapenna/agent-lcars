@@ -33,9 +33,32 @@ interface Workflow {
 // Allow the same scheduling headroom as the Nx test lane: the standalone
 // contract lane hit its default 5s limit on CI run 36205666264.
 describe('CI E2E operational gate', () => {
+  it('keeps the main delivery trigger independent of browser capacity', async () => {
+    const load = async (name: string) =>
+      parseYaml(await readFile(`.github/workflows/${name}.yml`, 'utf8'));
+    const [ci, browser, deploy] = await Promise.all([
+      load('ci'),
+      load('console-browser-ci'),
+      load('deploy-console'),
+    ]);
+    expect(deploy.on.workflow_run.workflows).toEqual([ci.name]);
+    expect(ci.jobs.verify.name).toBe('Verify');
+    expect(ci.jobs['e2e-browser']).toBeUndefined();
+    expect(ci.jobs['manual-browser'].if).toBe(
+      "github.event_name == 'workflow_dispatch'",
+    );
+    expect(browser.on.push.branches).toContain('main');
+    expect(browser.on.pull_request.types).toEqual(ci.on.pull_request.types);
+    expect(browser.jobs.e2e.name).toBe('E2E');
+    expect(browser.concurrency.group).not.toBe(ci.concurrency.group);
+    expect(ci.concurrency.group).toContain(
+      "format('{0}-{1}', github.event_name, github.ref)",
+    );
+  });
+
   it('selects browser coverage from the affected scope', async () => {
     const workflow = parseYaml(
-      await readFile('.github/workflows/ci.yml', 'utf8'),
+      await readFile('.github/workflows/console-browser-ci.yml', 'utf8'),
     ) as Workflow;
     const scopeStep = workflow.jobs?.['e2e-scope']?.steps?.find(
       (step) => step.id === 'e2e-scope',
@@ -202,7 +225,7 @@ describe('CI E2E operational gate', () => {
     'aggregates selection=%s run=%s browser=%s into pass=%s',
     async (selection, run, browser, pass) => {
       const workflow = parseYaml(
-        await readFile('.github/workflows/ci.yml', 'utf8'),
+        await readFile('.github/workflows/console-browser-ci.yml', 'utf8'),
       ) as Workflow;
       const aggregate = workflow.jobs?.e2e?.steps?.find(
         (step) => step.run,

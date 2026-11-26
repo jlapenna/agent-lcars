@@ -5,8 +5,7 @@
     "jlapenna/homelab",
     "jlapenna/nx-cache-server",
     "jlapenna/sync-padd",
-    "supersprinklesracing/sprinkles",
-    "supersprinklesracing/www"
+    "supersprinklesracing/sprinkles"
   ],
   "_fleetRepositoriesNote": "Must stay identical to local.github_repositories in infra/terraform/main.tf - the shared 'github' WIF pool's attribute_condition is generated from it, and tools/contract-tests/iam-contract-model.test.ts asserts the two agree without needing any credentials.",
   "githubApps": [
@@ -145,7 +144,7 @@
                 "attribute.repository": "assertion.repository",
                 "google.subject": "assertion.sub"
               },
-              "attributeCondition": "assertion.repository in ['jlapenna/agent-lcars', 'supersprinklesracing/sprinkles', 'jlapenna/homelab', 'supersprinklesracing/www', 'jlapenna/nx-cache-server', 'jlapenna/sync-padd']"
+              "attributeCondition": "assertion.repository in ['jlapenna/agent-lcars', 'supersprinklesracing/sprinkles', 'jlapenna/homelab', 'jlapenna/nx-cache-server', 'jlapenna/sync-padd']"
             }
           }
         },

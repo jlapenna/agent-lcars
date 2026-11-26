@@ -3,7 +3,7 @@ import type { TaskListCursor } from '@agent-lcars/orchestrator';
 import { workRepository } from '@agent-lcars/work';
 import { PIPELINES } from '@agent-lcars/work';
 import type { WorkSummary } from '@agent-lcars/work/derive';
-import { Anchor } from '@mantine/core';
+import { Anchor, Group } from '@mantine/core';
 import { redirect } from 'next/navigation';
 
 import { assertAdmin } from '@/lib/auth-guards';
@@ -44,11 +44,9 @@ import { type BoardCard, BridgeSections } from './action-items-board';
 import {
   FleetChip,
   isActiveCliSession,
-  RECENT_OUTCOMES_LIMIT,
   type RunItemRef,
 } from './agent-activity-panel';
 import {
-  AGENTS_WINDOWS,
   type AgentsViewFilters,
   cliSessionsArchiveHref,
   matchesAgentsRun,
@@ -82,7 +80,6 @@ import {
   ToolbarApply,
   ToolbarSearch,
   ToolbarSelect,
-  ToolbarWindow,
 } from './console-toolbar';
 import { ConsoleWorkspace } from './console-workspace';
 import { DataFreshness } from './data-freshness';
@@ -91,13 +88,11 @@ import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatRelativeTime } from './format';
 import { inboxCardAgent, inboxCardMetadata } from './inbox-card';
 import { LiveDashboard } from './live-dashboard';
-import { MergedLastDay } from './merged-last-day';
 import { NavSuspense } from './nav-suspense';
 import {
   ActiveDispatchesPanel,
   CliSessionsPanel,
   DecisionInboxPanel,
-  RecentCompletionsPanel,
   RunnerFleetPanel,
 } from './ops-panels';
 import { NavPageLoading, PageLoading } from './page-loading';
@@ -108,7 +103,6 @@ import { stoppedWorkHref } from './stopped-work-query';
 import { withConsolePageShell } from './with-console-page-shell';
 import { cancelItem, redispatchItem } from './work/actions';
 import { context as workContext } from './work/context';
-import { EventWorkActivity } from './work/event-work-activity';
 import { workListHref } from './work/work-list-query';
 
 function toCard(item: ActionItem): BoardCard {
@@ -130,7 +124,6 @@ function toCard(item: ActionItem): BoardCard {
  * `resolveBridgeDetail` - a "Stopped work" row's `?sel=` must resolve to the
  * *same* item the list renders, matching every other Bridge row kind.
  */
-/** Stopped tasks per Bridge page, and event tasks read for activity. */
 const STOPPED_WORK_PAGE = 50;
 const EVENT_WORK_READ = 50;
 
@@ -247,7 +240,6 @@ function agentsScopedHref(
   const query = new URLSearchParams();
   if (repo) query.set('repo', repo);
   if (view.agent) query.set('agent', view.agent);
-  if (view.window) query.set('window', view.window);
   if (view.q) query.set('q', view.q);
   return query.size ? `/agents?${query}` : '/agents';
 }
@@ -256,7 +248,6 @@ interface PageProps {
   searchParams: Promise<{
     repo?: string;
     agent?: string;
-    window?: string;
     q?: string;
     sel?: string;
     stoppedCursor?: string;
@@ -273,7 +264,7 @@ async function IndexBody({
 }: {
   repoFilter: WatchedRepo | undefined;
   repoFilterKey?: string;
-  /** The toolbar's agent, window and find, as on Agents. */
+  /** The toolbar's agent and find, as on Agents. */
   view: AgentsViewFilters;
   selectedKey?: string;
   stoppedCursor?: string;
@@ -343,11 +334,8 @@ async function IndexBody({
     ]),
   );
 
-  // run.id -> joined session doc, for every run this page renders (live and
-  // recent alike) - powers the In Flight budget gauges and the Recent
-  // Outcomes classification/diagnosis (see agent-activity-panel.tsx).
   const sessionsByRunId = indexSessionsByRunId(
-    [...activity.liveRuns, ...activity.recentRuns],
+    activity.liveRuns,
     runnerSessionsByRunId,
   );
 
@@ -374,28 +362,20 @@ async function IndexBody({
   // unfiltered data - a repo filter should narrow what's *displayed*, never
   // which items can see each other's runs/sessions. The repository selector
   // and scoped navigation share this same `?repo=` state.
-  // The toolbar's agent, window and find narrow the same rows after it, as
+  // The toolbar's agent and find narrow the same rows after it, as
   // on Agents; find also narrows the item lists by title and reference.
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
   const now = Date.now();
-  const filteredActivity = {
-    ...activity,
-    liveRuns: activity.liveRuns.filter(
-      (run) =>
-        matchesFilter(run.repo) &&
-        matchesAgentsRun(run, view, {
-          finished: false,
-          now,
-          shownTitle: itemsByRunId[run.id]?.title,
-        }),
-    ),
-    recentRuns: activity.recentRuns.filter(
-      (run) =>
-        matchesFilter(run.repo) &&
-        matchesAgentsRun(run, view, { finished: true, now }),
-    ),
-  };
+  const liveRuns = activity.liveRuns.filter(
+    (run) =>
+      matchesFilter(run.repo) &&
+      matchesAgentsRun(run, view, {
+        finished: false,
+        now,
+        shownTitle: itemsByRunId[run.id]?.title,
+      }),
+  );
   const filteredCliSessions = filterSessionsForRepo(
     cliSessions,
     repoFilter,
@@ -430,16 +410,10 @@ async function IndexBody({
       ),
   );
 
-  // The right pane of the two-panel view (desktop ≥1024px). Resolved from the
-  // `?sel=` key against the *same* records the left column actually renders -
-  // the same recent-run slice and the same live/idle session filter the
-  // operations panel uses - so a row that has scrolled out of the list (a
-  // run past the outcome cutoff, a session that ended) resolves to the empty
-  // state rather than lingering as detail with no row to select.
+  // Resolve the selection against the rows still visible on Bridge.
   const detail = resolveBridgeDetail({
     selectedKey,
-    liveRuns: filteredActivity.liveRuns,
-    recentRuns: filteredActivity.recentRuns.slice(0, RECENT_OUTCOMES_LIMIT),
+    liveRuns,
     cliSessions: activeCliSessions,
     waitingOnDeploy: deployCards,
     blocked: blockedCards,
@@ -488,6 +462,12 @@ async function IndexBody({
     window: view.window,
     q: view.q,
   });
+  const eventWorkHref = workListHref({
+    activity: 'events',
+    repo: repoFilterKey,
+    agent: view.agent,
+    q: view.q,
+  });
 
   return (
     <ConsoleWorkspace
@@ -522,18 +502,6 @@ async function IndexBody({
               })),
             ]}
           />
-          <ToolbarWindow
-            name="window"
-            label="Window"
-            value={view.window ?? ''}
-            options={[
-              ...AGENTS_WINDOWS.map((window) => ({
-                value: window,
-                label: window,
-              })),
-              { value: '', label: 'all' },
-            ]}
-          />
           <ToolbarSearch
             name="q"
             label="Find"
@@ -561,7 +529,7 @@ async function IndexBody({
         label="Destination summaries"
         readouts={bridgeDestinationReadouts({
           agentsHref: outcomesHref,
-          liveRunCount: filteredActivity.liveRuns.length,
+          liveRunCount: liveRuns.length,
           liveRunsAvailable: activity.queue !== undefined,
           activeCliSessionCount: activeCliSessions.length,
           cliSessionsAvailable: cliSessionWarnings.length === 0,
@@ -590,42 +558,49 @@ async function IndexBody({
         <div className="bridge-workspace__list bridge-cols">
           <div className="bridge-stack">
             <ActiveDispatchesPanel
-              liveRuns={filteredActivity.liveRuns}
+              liveRuns={liveRuns}
               updatedAt={activityFetchedAt}
               itemsByRunId={itemsByRunId}
               sessionsByRunId={sessionsByRunId}
               selectHrefFor={selectRun}
               footer={
-                <Anchor
-                  href={workHref}
-                  size="sm"
-                  className="operations-more-link"
-                >
-                  Browse Work →
-                </Anchor>
+                <Group gap="sm">
+                  <Anchor
+                    href={workHref}
+                    size="sm"
+                    className="operations-more-link"
+                  >
+                    Browse Work →
+                  </Anchor>
+                  <Anchor
+                    href="/work/schedules"
+                    size="sm"
+                    className="operations-more-link"
+                  >
+                    View schedules →
+                  </Anchor>
+                  <Anchor
+                    href={outcomesHref}
+                    size="sm"
+                    className="operations-more-link"
+                  >
+                    Run outcomes →
+                  </Anchor>
+                  <Anchor
+                    href={eventWorkHref}
+                    size="sm"
+                    className="operations-more-link"
+                  >
+                    Event-driven work →
+                  </Anchor>
+                </Group>
               }
             />
-            <RecentCompletionsPanel
-              runs={filteredActivity.recentRuns.slice(0, RECENT_OUTCOMES_LIMIT)}
-              merged={<MergedLastDay repo={repoFilterKey} />}
-              sessionsByRunId={sessionsByRunId}
-              selectHrefFor={selectRun}
-              footer={
-                <Anchor
-                  href={outcomesHref}
-                  size="sm"
-                  className="operations-more-link"
-                >
-                  View all outcomes →
-                </Anchor>
-              }
-            />
-            <EventWorkActivity
-              items={eventItems}
-              windowSize={eventWindow?.size}
-              windowed={eventWindow?.windowed}
-              error={eventWorkError}
-              repo={repoFilterKey}
+            <BridgeSections
+              waitingOnDeploy={deployCards}
+              blocked={blockedCards}
+              repoFilterKey={repoFilterKey}
+              stoppedCursor={stoppedCursor}
               view={view}
             />
             <ParkedWorkPanel
@@ -644,13 +619,6 @@ async function IndexBody({
               }
               cancel={cancelItem}
               redispatch={redispatchItem}
-              repoFilterKey={repoFilterKey}
-              stoppedCursor={stoppedCursor}
-              view={view}
-            />
-            <BridgeSections
-              waitingOnDeploy={deployCards}
-              blocked={blockedCards}
               repoFilterKey={repoFilterKey}
               stoppedCursor={stoppedCursor}
               view={view}
@@ -745,7 +713,7 @@ function IndexViewContent({
     <>
       <LiveDashboard />
       <NavSuspense
-        key={`${repoFilterKey ?? ''}:${view.agent ?? ''}:${view.window ?? ''}:${view.q ?? ''}:${stoppedCursor ?? ''}`}
+        key={`${repoFilterKey ?? ''}:${view.agent ?? ''}:${view.q ?? ''}:${stoppedCursor ?? ''}`}
         fallback={<PageLoading rows={6} header={false} />}
       >
         <IndexBody
@@ -814,7 +782,7 @@ async function IndexShell({ searchParams }: PageProps) {
   const repoFilter = parseRepoFilterParam(params.repo);
   const repoFilterKey = repoFilter ? repoKey(repoFilter) : undefined;
   const selectedKey = parseBridgeSelection(params.sel);
-  const view = parseAgentsViewFilters(params);
+  const view = parseAgentsViewFilters({ agent: params.agent, q: params.q });
 
   const subtitle =
     watchedRepos.length <= 1

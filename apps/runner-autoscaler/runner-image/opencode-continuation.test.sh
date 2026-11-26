@@ -289,13 +289,24 @@ with sqlite3.connect(f"file:{sys.argv[2]}?mode=ro", uri=True) as db:
             (row[0], json.loads(row[1]))
             for row in db.execute("select type, data from session_message")
         ]
-        reads = [
-            part["state"]
+        # The smoke can run on an older baked runner. OpenCode 2.4 stores
+        # assistant parts in separate rows, while older versions keep them inline.
+        tool_parts = [
+            part
             for msg_type, data in rows
             if msg_type == "assistant"
             for part in data.get("content", [])
             if part.get("type") == "tool"
-            and part.get("name") == "read"
+        ]
+        if "session_part" in tables:
+            tool_parts.extend(
+                json.loads(row[0])
+                for row in db.execute("select data from session_part where type = 'tool'")
+            )
+        reads = [
+            part["state"]
+            for part in tool_parts
+            if part.get("name") == "read"
             and part.get("state", {}).get("status") == "completed"
         ]
         synthetics = [

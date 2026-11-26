@@ -303,13 +303,13 @@ product requirements.
 
 ### 6.1 Bridge (`/`)
 
-**Purpose:** the landing page, showing in one glance the decisions waiting,
-the work that has stopped, and the work in flight.
+**Purpose:** the landing page for queued and running work, decisions waiting,
+deploy waits, and live fleet status.
 
 - **FE-BR-1 [Shipped]** The toolbar's primary action, "Review N decisions"
   (or "No decisions waiting"), links to `/inbox` with the Bridge's scope,
-  agent and find. It follows the agent, window and find controls that narrow
-  the Bridge's runs, sessions and items as they do on Agents.
+  agent and find. The Agent and Find controls narrow the Bridge's runs,
+  sessions and items.
 - **FE-BR-2 [Shipped]** `ParkedWorkPanel`, titled "Stopped work (N)", lists
   native and GitHub-anchored tasks whose latest run is parked or failed.
   Native rows offer **Cancel** and **Redispatch**. GitHub-anchored rows link
@@ -317,24 +317,13 @@ the work that has stopped, and the work in flight.
   The panel needs `work.operator` and reads 200 tasks per page, with "Older
   stopped work →" and "Reset stopped-work page" cursor navigation.
 - **FE-BR-3 [Shipped]** The Bridge Operations panels (`RunnerFleetPanel`,
-  `ActiveDispatchesPanel`, `RecentCompletionsPanel`, and `CliSessionsPanel` in
+  `ActiveDispatchesPanel` and `CliSessionsPanel` in
   `apps/console/src/app/ops-panels.tsx`) show:
   - In-flight runs, each with a 120-minute time gauge (yellow from 50%, red
     from 80%) and, for Claude runs, an "N of 200 turns" count. A cancelled
     run that used 95% or more of its budget is classified as `timeout`.
-  - Recent outcomes, headed by "N merged · 24h": pull requests merged in the
-    last day across the watched repositories (or the page's repository
-    scope), counted from GitHub itself (`app/merged-last-day.tsx`,
-    `lib/merged-pulls.ts`). The count streams in after the page; its cache
-    revalidates in the background every five minutes. When a request waits
-    for a fresh count, one 5-second deadline covers the whole count across
-    repositories, so a single stalled repository makes the figure
-    unavailable (never zero) even when others answered. With a usable cache
-    entry, the page can show the previous count while a stalled repository
-    delays background revalidation. The figure is also
-    unavailable when no repository could be read. `N+` means the count
-    finished but is a lower bound: some repository read failed, or a
-    repository's 100-PR page may have been truncated inside the window.
+  - Direct links from Active dispatches to Work, Schedules, Agents run
+    outcomes, and event-driven Work.
   - Active CLI sessions.
   - A fleet chip showing online/running GitHub Actions runners from
     fresh ARC lane records separately from direct-executor readiness
@@ -553,8 +542,10 @@ the work that has stopped, and the work in flight.
   suppressed when the anchor has a human assignee or a `status:needs-human`,
   `status:blocked`, `status:ledger`, or `bot:renovate` label.
 - **FE-AG-4 [Shipped]** **Recent Outcomes** links each outcome to its task,
-  session, and deliverable, under the same "N merged · 24h" head as the
-  Bridge (FE-BR-3). **Older outcomes →** pages back through the run history
+  session, and deliverable. The "N merged · 24h" heading counts pull requests
+  merged in the watched repositories or the selected repository scope. An
+  unavailable count is shown as such, and "N+" indicates a lower bound.
+  **Older outcomes →** pages back through the run history
   with an `?outcomes=` cursor (base64url `[updatedAt, runId]`,
   `agents/outcome-cursor.ts`); **← Newest outcomes** returns to the first
   page, and a malformed cursor reads as the newest page
@@ -742,10 +733,8 @@ GitHub issues, browse and dispatch tracker sources, and manage recurring work.
   shows admitted attempts, recorded source observations, failure summaries and
   triage publication status with a direct published-report link. These are
   semantic source revisions, not an exhaustive webhook-delivery log.
-  Bridge shows the latest ten matching event-driven items from its latest
-  200-task read, with honest empty/error states and a link to older activity in
-  Work; paging stopped work does not shift the recent-activity window. Existing
-  repository, agent, time and search scope applies.
+  Bridge links to event-driven Work with the current repository, agent and
+  search scope.
   A repository is required only when the operation needs one. Lightweight
   inference needs no coding checkout. Internal summary work is inspectable
   without adding human-decision cards or chat notifications for every result.

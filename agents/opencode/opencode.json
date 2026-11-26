@@ -1,4 +1,5 @@
 {
+  "automations": false,
   "$schema": "https://opencode.ai/config.json",
   "instructions": ["~/.config/opencode/instructions.md"],
   "plugin": [
@@ -19,7 +20,7 @@
     "subagent": "deny",
     "execute": "deny",
     "question": "deny",
-    "experimental_image_generate": "deny"
+    "generate_image": "deny"
   },
   "compaction": {
     "reserved": 30000,

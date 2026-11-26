@@ -949,13 +949,21 @@ describe('claim', () => {
       workId: wid('work-stale'),
       now: NOW,
     });
-    // Cancellation settles the run without touching `Run.queue` (Task 7's
-    // own report, deviation 2) -- so this run stays `queue.state: 'queued'`
-    // while `run.state` is no longer live. `isQueueAdmissionCandidate`
-    // filters it out of selection, so the stale record is never moved to
-    // `claimed`; the handler needs no retry to step past it.
     const canceled = await orchestrator.cancel(staleRunId);
     expect('refused' in canceled).toBe(false);
+    // Restore the legacy shape to test HTTP admission before the repair runs.
+    await store.transactRun({
+      runId: staleRunId,
+      decide: ({ task, run }) => {
+        if (task === undefined || run === undefined)
+          throw new Error('missing canceled fixture');
+        return {
+          task: task.task,
+          run: { ...run, queue: { state: 'queued' } },
+          outbox: [],
+        };
+      },
+    });
     const liveRunId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-live'),
       now: NOW,

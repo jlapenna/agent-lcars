@@ -1,4 +1,5 @@
 {
+  "automations": false,
   "default_agent": "lcars-review-coordinator",
   "experimental": { "subagent_depth": 1 },
   "agents": {
