@@ -345,6 +345,7 @@ describe('bridgeDestinationReadouts', () => {
 
   const makeStoppedSummary = (overrides: {
     id: string;
+    anchor?: WorkSummary['anchor'];
     updatedAt: string;
     repo?: string;
     pipeline?: WorkSummary['spec']['pipeline'];
@@ -354,7 +355,7 @@ describe('bridgeDestinationReadouts', () => {
     runPipelines?: WorkSummary['spec']['pipeline'][];
   }): WorkSummary => ({
     id: overrides.id,
-    anchor: { workId: overrides.id },
+    anchor: overrides.anchor ?? { workId: overrides.id },
     state: overrides.state ?? 'parked',
     spec: {
       title: overrides.title ?? `Stopped ${overrides.id}`,
@@ -512,5 +513,157 @@ describe('bridgeDestinationReadouts', () => {
         }),
       })[3]?.value,
     ).toBe('50+');
+  });
+
+  it('counts only native Work items in the Work card while retaining GitHub-anchored items for the panel', async () => {
+    const now = Date.parse('2026-11-26T18:00:00.000Z');
+    const githubParked = makeStoppedSummary({
+      id: 'jlapenna/agent-lcars#3662',
+      anchor: { repo: 'jlapenna/agent-lcars', issue: 3662 },
+      updatedAt: '2026-11-26T17:55:00.000Z',
+    });
+    const nativeParked = makeStoppedSummary({
+      id: '01NATIVE000000000000000001',
+      updatedAt: '2026-11-26T17:50:00.000Z',
+    });
+
+    // With one open parked GitHub issue and zero native matches, the Work card
+    // reports 0 (matching `/work`), not 1.
+    const githubOnly = bridgeDestinationReadouts({
+      ...healthyDestinations,
+      work: bridgeWorkSummary({
+        authorized: true,
+        stoppedItems: [githubParked],
+        hasMoreStopped: false,
+        eventCount: 0,
+        eventWindowed: false,
+        view: {},
+        now,
+      }),
+    });
+    expect(githubOnly[3]?.value).toBe(0);
+
+    // Page 1: panel keeps both anchors, Work summary keeps only native items.
+    const readPage = vi.fn(async () => ({
+      items: [githubParked, nativeParked],
+      nextCursor: undefined,
+    }));
+    const excludeClosed = vi.fn(async (items: WorkSummary[]) => items);
+    const page1 = await loadBridgeStoppedPages({
+      repo: 'jlapenna/agent-lcars',
+      readPage,
+      excludeClosed,
+    });
+    expect(page1.items.map((item) => item.id)).toEqual([
+      githubParked.id,
+      nativeParked.id,
+    ]);
+    expect(page1.summaryStoppedItems.map((item) => item.id)).toEqual([
+      nativeParked.id,
+    ]);
+    expect(
+      bridgeDestinationReadouts({
+        ...healthyDestinations,
+        work: bridgeWorkSummary({
+          authorized: true,
+          stoppedItems: page1.summaryStoppedItems,
+          hasMoreStopped: page1.summaryHasMoreStopped,
+          eventCount: 0,
+          eventWindowed: false,
+          view: {},
+          now,
+        }),
+      })[3]?.value,
+    ).toBe(1);
+  });
+
+  it('keeps the selected cursor page healthy when the uncursored Work summary read fails and skips page-one GitHub lookups', async () => {
+    const page1Cursor = {
+      taskKey: 'work:01PAGE10000000000000000049',
+      updatedAt: '2026-11-26T17:50:00.000Z',
+    };
+    const page2Cursor = {
+      taskKey: 'work:01PAGE20000000000000000099',
+      updatedAt: '2026-11-26T17:40:00.000Z',
+    };
+    const page1Github = makeStoppedSummary({
+      id: 'jlapenna/agent-lcars#9001',
+      anchor: { repo: 'jlapenna/agent-lcars', issue: 9001 },
+      updatedAt: '2026-11-26T17:55:00.000Z',
+    });
+    const page1Native = makeStoppedSummary({
+      id: '01PAGE1NATIVE0000000000001',
+      updatedAt: '2026-11-26T17:52:00.000Z',
+    });
+    const page2Item = makeStoppedSummary({
+      id: '01PAGE20000000000000000051',
+      updatedAt: '2026-11-26T17:40:00.000Z',
+    });
+
+    // Case 1: uncursored summary query fails while the selected cursor page
+    // succeeds with items and a nextCursor — panel data stays intact and only
+    // the Work card receives `summaryError`.
+    const summaryFailure = new Error('Firestore deadline exceeded');
+    const onSummaryError = vi.fn();
+    const failedSummary = await loadBridgeStoppedPages({
+      cursor: page1Cursor,
+      repo: 'jlapenna/agent-lcars',
+      readPage: vi.fn(async (cursor?: typeof page1Cursor) => {
+        if (!cursor) throw summaryFailure;
+        return { items: [page2Item], nextCursor: page2Cursor };
+      }),
+      excludeClosed: vi.fn(async (items: WorkSummary[]) => items),
+      onSummaryError,
+    });
+    expect(onSummaryError).toHaveBeenCalledWith(summaryFailure);
+    expect(failedSummary.items).toEqual([page2Item]);
+    expect(failedSummary.hasMoreTasks).toBe(true);
+    expect(failedSummary.nextCursor).toEqual(page2Cursor);
+    expect(failedSummary.summaryStoppedItems).toEqual([]);
+    expect(failedSummary.summaryHasMoreStopped).toBe(false);
+    expect(failedSummary.summaryError).toBe('Work summary unavailable');
+    expect(
+      bridgeDestinationReadouts({
+        ...healthyDestinations,
+        work: bridgeWorkSummary({
+          authorized: true,
+          error: failedSummary.summaryError,
+          stoppedItems: failedSummary.summaryStoppedItems,
+          hasMoreStopped: failedSummary.summaryHasMoreStopped,
+          eventCount: 2,
+          eventWindowed: false,
+          view: {},
+        }),
+      })[3],
+    ).toMatchObject({
+      value: '—',
+      detail: 'Work summary unavailable',
+    });
+
+    // Case 2: on a cursor page, page-one GitHub anchors never pass through
+    // `excludeClosed` (so a projection failure for a page-one GitHub issue
+    // cannot break the cursor page or the native Work summary).
+    const excludeClosed = vi.fn(async (items: WorkSummary[]) => {
+      if (items.some((item) => item.id === page1Github.id)) {
+        throw new Error('GitHub projection read failed');
+      }
+      return items;
+    });
+    const healthyCursor = await loadBridgeStoppedPages({
+      cursor: page1Cursor,
+      repo: 'jlapenna/agent-lcars',
+      readPage: vi.fn(async (cursor?: typeof page1Cursor) =>
+        cursor
+          ? { items: [page2Item], nextCursor: page2Cursor }
+          : { items: [page1Github, page1Native], nextCursor: page1Cursor },
+      ),
+      excludeClosed,
+    });
+    expect(excludeClosed).toHaveBeenCalledTimes(1);
+    expect(healthyCursor.items).toEqual([page2Item]);
+    expect(healthyCursor.nextCursor).toEqual(page2Cursor);
+    expect(healthyCursor.summaryError).toBeUndefined();
+    expect(healthyCursor.summaryStoppedItems).toEqual([page1Native]);
+    expect(healthyCursor.summaryHasMoreStopped).toBe(true);
   });
 });

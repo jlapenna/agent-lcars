@@ -142,10 +142,11 @@ async function getParkedWork(
 ): Promise<{
   authorized: boolean;
   items: WorkSummary[];
-  /** Uncursored first page of stopped work for the Work destination card,
-   *  kept independent of the Stopped work panel's cursor pagination. */
+  /** Uncursored first page of stopped native work for the Work destination
+   *  card, kept independent of the Stopped work panel's cursor pagination. */
   summaryStoppedItems: WorkSummary[];
   summaryHasMoreStopped: boolean;
+  summaryError?: string;
   eventItems: WorkSummary[];
   /** Event tasks read to find `eventItems`, and whether older ones exist. */
   eventWindow?: { size: number; windowed: boolean };
@@ -181,6 +182,12 @@ async function getParkedWork(
           }),
         excludeClosed: (candidates) =>
           excludeClosedGithubAnchors(work.runtime.store, candidates),
+        onSummaryError: (error) => {
+          logger.error(
+            'agent-lcars: bridge work summary readout unavailable:',
+            error,
+          );
+        },
       }),
       listWorkSummaries(work.runtime.store, {
         limit: EVENT_WORK_READ,
@@ -201,6 +208,7 @@ async function getParkedWork(
       items: stopped.items,
       summaryStoppedItems: stopped.summaryStoppedItems,
       summaryHasMoreStopped: stopped.summaryHasMoreStopped,
+      summaryError: stopped.summaryError,
       eventItems,
       eventWindow: {
         size: recent.items.length,
@@ -282,6 +290,7 @@ async function IndexBody({
       items: parkedWorkItems,
       summaryStoppedItems,
       summaryHasMoreStopped,
+      summaryError: workSummaryError,
       eventItems,
       eventWindow,
       hasMoreTasks: hasMoreParkedTasks,
@@ -559,7 +568,7 @@ async function IndexBody({
           workHref,
           work: bridgeWorkSummary({
             authorized: workAuthorized,
-            error: stoppedError,
+            error: stoppedError ?? workSummaryError,
             stoppedItems: summaryStoppedItems,
             hasMoreStopped: summaryHasMoreStopped,
             eventCount: eventItems.length,
