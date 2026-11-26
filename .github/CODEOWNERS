@@ -1,1 +1,3 @@
-* @jlapenna
+# Routine implementation and dependency PRs use independent fleet review.
+# Ask the maintainer when the ownership rules themselves change.
+/.github/CODEOWNERS @jlapenna
