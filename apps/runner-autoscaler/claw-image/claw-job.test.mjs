@@ -2089,6 +2089,27 @@ test('an isolated OpenClaw turn settles memory pressure and kernel OOM separatel
   }
 });
 
+test('an OpenClaw setup failure samples the kernel OOM counter before replying', async (t) => {
+  // Hold the periodic sample so only the setup failure path can see the kill.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const made = await fixture();
+  const memory = await memoryFixture(made.root);
+  made.deps.harnesses = {
+    openclaw: async () => {
+      await memory.setKills(4);
+      throw new ClawFailure('OpenClaw Gateway exited null before it was ready');
+    },
+  };
+  const host = await socketHost(made, undefined, memory.path);
+  const result = await main(host.env, host.deps);
+  assert.deepEqual(result, {
+    outcome: 'runner-failed',
+    message:
+      'Claw setup failed: OpenClaw harness cgroup recorded a kernel OOM kill (memory.events oom_kill increased).',
+  });
+  assert.deepEqual(completion(made.calls), result);
+});
+
 test('an isolated OpenClaw host fails setup before starting OpenClaw without readable cgroup counters', async () => {
   const made = await fixture();
   const host = await socketHost(made, undefined, async () => made.root);

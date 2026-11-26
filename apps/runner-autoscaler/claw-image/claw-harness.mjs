@@ -387,6 +387,7 @@ export function serveHarness(
       try {
         write({ claw: 'ready', ...(await launch(frame.harness)) });
       } catch (cause) {
+        await checkMemory?.();
         const error = memory.signal.reason ?? cause;
         if (!(error instanceof ClawFailure) && !gone.signal.aborted)
           console.error(error);
