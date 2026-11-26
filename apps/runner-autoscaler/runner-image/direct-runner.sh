@@ -981,6 +981,23 @@ if [ "$PIPELINE" = codex ]; then
 fi
 
 AGENT_EXIT=1
+PROVIDER_TIMEOUT_RECEIPT="$RUNNER_TEMP/provider-kill-at-deadline"
+
+run_timed_provider() {
+  local exit_status
+  : > "$PROVIDER_TIMEOUT_RECEIPT"
+  "$@"
+  exit_status=$?
+  # GNU timeout can return 137 after the TERM grace period. Sample the
+  # deadline on the producer side of the pipeline, before output draining
+  # or provider-specific cleanup can cross it.
+  if [ "$ANCHOR_TYPE" = github ] && [ "$MODE" = review ] &&
+    [ "$exit_status" -eq 137 ] && [ "$(monotonic_seconds)" -ge "$PROVIDER_DEADLINE" ]; then
+    printf '%s\n' 1 > "$PROVIDER_TIMEOUT_RECEIPT"
+  fi
+  return "$exit_status"
+}
+
 if [ "$PIPELINE" = "claude" ]; then
   CLAUDE_WORKER_SESSION="$RESUME_SESSION_ID"
   if [ "${#RESUME_FLAG[@]}" -eq 0 ]; then
@@ -1018,7 +1035,7 @@ if [ "$PIPELINE" = "claude" ]; then
     shift
     remaining=$((PROVIDER_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
-    timeout --signal=TERM --kill-after=30s "${remaining}s" \
+    run_timed_provider timeout --signal=TERM --kill-after=30s "${remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" claude --dangerously-skip-permissions \
       --allowedTools "Bash,Edit,Write,MultiEdit,mcp__hindsight__*" \
       --disallowedTools "ScheduleWakeup,SendMessage,Monitor" \
@@ -1197,7 +1214,7 @@ CURLCFG
     round_start_utc_date="$(LC_ALL=C TZ=UTC date '+%b %-d, %Y')"
     tee -a "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
     CODEX_STDERR_TEE_PID=$!
-    TZ=UTC timeout --signal=TERM --kill-after=30s "${remaining}s" \
+    TZ=UTC run_timed_provider timeout --signal=TERM --kill-after=30s "${remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" codex exec "$@" "${CODEX_HOOK_ARGS[@]}" --json --dangerously-bypass-approvals-and-sandbox \
       --output-last-message "$CODEX_LAST_MESSAGE_FILE" \
       "$prompt" 2> "$CODEX_STDERR_PIPE" |
@@ -1369,7 +1386,7 @@ elif [ "$PIPELINE" = "agy" ]; then
     [ "$remaining" -gt 0 ] || return 124
     # Provider stop records are read from this round's stderr only.
     AGY_ROUND_STDERR_OFFSET="$(stat -c %s "$PROVIDER_OUTPUT_FILE" 2>/dev/null || echo 0)"
-    timeout --signal=TERM --kill-after=30s "${remaining}s" \
+    run_timed_provider timeout --signal=TERM --kill-after=30s "${remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" "$AGY_BIN" --dangerously-skip-permissions \
       "$@" -p "$prompt" 2> >(tee -a "$PROVIDER_OUTPUT_FILE" >&2) | tee "$LAST_MESSAGE_FILE"
     return "${PIPESTATUS[0]}"
@@ -1531,7 +1548,7 @@ In the procedure receipt, cite the packaged upstream revision $review_revision."
     if [ "$round_remaining" -lt 1 ]; then
       return 124
     fi
-    env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN \
+    run_timed_provider env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN \
       timeout --signal=TERM --kill-after=30s "${round_remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
         "$@" \
@@ -1643,11 +1660,8 @@ In the procedure receipt, cite the packaged upstream revision $review_revision."
 fi
 
 OUTCOME=no-deliverable
-# GNU timeout returns 137 when the grace period ends with SIGKILL.
-# Check the deadline before finalization so an early SIGKILL stays a failure.
 if [ "$AGENT_EXIT" -eq 124 ] || {
-  [ "$ANCHOR_TYPE" = github ] && [ "$MODE" = review ] &&
-    [ "$AGENT_EXIT" -eq 137 ] && [ "$(monotonic_seconds)" -ge "$PROVIDER_DEADLINE" ]
+  [ "$AGENT_EXIT" -eq 137 ] && [ -s "$PROVIDER_TIMEOUT_RECEIPT" ]
 }; then
   OUTCOME=agent-timeout
 elif [ "$AGENT_EXIT" -ne 0 ]; then

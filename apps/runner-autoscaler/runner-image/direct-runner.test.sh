@@ -315,6 +315,10 @@ JSON
   */codex-auth)
     if printf '%s\n' "$config_body" | grep -qF 'request = "PUT"'; then
       [ -n "$data_binary_file" ] && cat "$data_binary_file" >> "$CODEX_AUTH_PERSIST_LOG"
+      if [ -n "${FAKE_CODEX_PERSIST_ELAPSED:-}" ]; then
+        read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
+        printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_CODEX_PERSIST_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
+      fi
       echo '{"status":"updated"}'
     else
       attempt=1
@@ -2934,6 +2938,15 @@ for elapsed in 1200 1; do
   jq -e --arg expected "$expected_outcome" '.outcome == $expected' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
     fail "review budget: elapsed $elapsed did not report $expected_outcome"
 done
+
+# Credential persistence can cross the deadline after an early SIGKILL.
+FAKE_ANCHOR=github FAKE_GITHUB_PR=1 FAKE_MODE=review FAKE_CLOCK=1 \
+  FAKE_GH_NO_MATCH=1 FAKE_WORKER_ELAPSED=1 FAKE_WORKER_EXIT=137 \
+  FAKE_CODEX_PERSIST_ELAPSED=1200 run_scenario codex-review-early-kill codex
+[ "$rc" -ne 0 ] || fail "Codex review: expected the review to fail"
+[ -s "$CODEX_AUTH_PERSIST_LOG" ] || fail "Codex review: credential persistence was not exercised"
+jq -e '.outcome == "agent-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "Codex review: credential persistence changed an early exit 137 into a timeout"
 
 # A report record whose message is unusable still earns the correction.
 export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_NATIVE_OUTCOME=report
