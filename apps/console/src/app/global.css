@@ -439,12 +439,13 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 /* A client navigation that outlasts 120 ms: the clicked pill flashes between
    full and resting signal until the destination commits. The pending marker
-   itself has no box; it only lets the pill select on its presence. */
+   itself has no box; it lets the initiating link select on its presence. */
 .lcars-nav-pending {
   display: none;
 }
 
-.lcars-nav-pill:has(> .lcars-nav-pending) {
+.lcars-nav-pill:has(> .lcars-nav-pending),
+a.lcars-readout:has(> .lcars-nav-pending) > .lcars-readout__label {
   animation: lcars-nav-pending 720ms steps(1, end) 120ms infinite;
 }
 
@@ -464,7 +465,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lcars-nav-pill:has(> .lcars-nav-pending) {
+  .lcars-nav-pill:has(> .lcars-nav-pending),
+  a.lcars-readout:has(> .lcars-nav-pending) > .lcars-readout__label {
     animation: none;
     color: var(--lcars-ink-on-accent);
     background: var(--lcars-accent);
@@ -897,6 +899,25 @@ body:has(.console-header:not([data-streaming-fallback]))
   border-left: 0;
 }
 
+a.lcars-readout {
+  color: var(--lcars-accent-ink);
+  text-decoration: none;
+}
+
+a.lcars-readout .lcars-readout__label {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+a.lcars-readout:is(:hover, :focus-visible) .lcars-readout__label {
+  text-decoration-thickness: 2px;
+}
+
+a.lcars-readout:active .lcars-readout__label {
+  color: var(--lcars-ink);
+}
+
 .lcars-readout__value {
   overflow: hidden;
   margin: 10px 0 2px;
@@ -918,6 +939,11 @@ body:has(.console-header:not([data-streaming-fallback]))
   font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+a.lcars-readout .lcars-readout__detail {
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 /* The mockup's readout sparkline is taller than the telemetry strip's. */
@@ -4353,6 +4379,13 @@ td.costs-repo-spend__num {
   white-space: nowrap;
 }
 
+.ops-dispatch-item :is(.ops-item-title, .bridge-row-select) {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
 .ops-subtle-link {
   margin-right: 8px;
   color: var(--lcars-ink-dim);
@@ -4985,8 +5018,8 @@ td.costs-repo-spend__num {
    are the only scrollers. A workspace sized as `100vh - <guess at chrome>`
    instead overflows by whatever the header, readouts, toolbar and warnings
    really take, which adds a third, document-level scroller around the two
-   panes. Phones keep the document as their single scroll surface. */
-@media (min-width: 48em) {
+   panes. Short viewports need room to scroll past the header and filters. */
+@media (min-width: 48em) and (min-height: 36em) {
   .console-page-shell:has(.inbox-frame) {
     height: 100vh;
     height: 100dvh;
@@ -5017,6 +5050,23 @@ td.costs-repo-spend__num {
     height: auto;
     min-height: 0;
     flex: 1 1 auto;
+  }
+}
+
+/* Keep the wide list/detail arrangement on landscape phones, but let both
+   panes grow with their contents so a swipe anywhere scrolls the page. */
+@media (min-width: 48em) and (height < 36em) {
+  .queue-workspace {
+    height: auto;
+    min-height: 0;
+    grid-template-rows: auto;
+    overflow: visible;
+  }
+
+  .queue-workspace__rows,
+  .queue-workspace__detail {
+    overflow: visible;
+    overscroll-behavior-y: auto;
   }
 }
 

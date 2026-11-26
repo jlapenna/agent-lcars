@@ -6,7 +6,11 @@ import {
   type TrackerIssue,
   WORK_PARAM_TEXT_MAX_BYTES,
 } from '@agent-lcars/dispatch-contracts';
-import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
+import {
+  MemoryStore,
+  Orchestrator,
+  readRunIssue,
+} from '@agent-lcars/orchestrator';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type LinearConfig, linearConfig } from './linear-config';
@@ -164,9 +168,9 @@ describe('Linear admission boundary', () => {
       },
     });
     expect(task?.task.issue).toEqual(f.source.current);
-    expect((await f.store.listRuns(task!.task.task))[0]?.issue).toEqual(
-      f.source.current,
-    );
+    const [run] = await f.store.listRuns(task!.task.task);
+    if (!run) throw new Error('Expected an admitted run');
+    expect(await readRunIssue(f.store, run)).toEqual(f.source.current);
     expect(f.runtime.drain).not.toHaveBeenCalled();
   });
   it.each([false, true])(
@@ -263,7 +267,7 @@ describe('Linear admission boundary', () => {
     );
     const runs = await f.store.listRuns(id);
     expect(runs).toHaveLength(1);
-    expect(runs[0]?.issue?.title).toBe('Fix search');
+    expect(runs[0]?.issueSnapshot?.title).toBe('Fix search');
   });
   it('admits only one run across concurrent signed event retries', async () => {
     const f = fixture();

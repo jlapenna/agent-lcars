@@ -244,7 +244,7 @@ describe('Linear event-driven triage', () => {
     const id = await f.store.readSourceWorkId(triageSourceKey(anchor));
     const run = (await f.store.listRuns({ workId: id! }))[0]!;
     expect(run.pipeline).toBe('codex');
-    expect(run.issue?.reference).toEqual(anchor.source);
+    expect(run.issueSnapshot?.reference).toEqual(anchor.source);
     expect(run.sourceRevision?.input).toMatchObject({
       source: anchor.source,
       repo: 'owner/repo',

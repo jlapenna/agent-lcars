@@ -7,6 +7,7 @@ import {
 import { z } from 'zod';
 
 import type { Decision, Refusal } from './decide';
+import type { IssueSnapshotReader } from './issue-snapshot';
 import type {
   LifecycleMetricRead,
   LifecycleMetricRecords,
@@ -261,7 +262,7 @@ export interface RunRef {
   updatedAt: string;
 }
 
-export interface OrchestratorStore {
+export interface OrchestratorStore extends IssueSnapshotReader {
   readTrackerIssue(
     reference: IssueReference,
   ): Promise<TrackerIssueProjection | undefined>;

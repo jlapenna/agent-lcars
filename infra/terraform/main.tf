@@ -515,6 +515,7 @@ resource "google_secret_manager_secret" "runtime" {
     "AGENT_LCARS_PUSH_VAPID",
     "AGENT_LCARS_LINEAR_API_KEY",
     "AGENT_LCARS_LINEAR_WEBHOOK_SECRET",
+    "AGENT_LCARS_OUTLINE_WEBHOOK_SECRET",
   ])
   secret_id = each.value
   replication {
@@ -683,13 +684,11 @@ resource "google_service_account_iam_member" "codex_agent_impersonation" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
 }
 
-# Read-only Work API identity for interactive maintainer sessions (#2502).
-# It holds no project role and no resource grant: its only use is minting a
-# Google ID token whose email the Console resolves to the `svc:work-reader`
-# Work grant, which carries the issue-owner query and read-only cost budget
-# assessment scopes, with nothing that reads Work items or mutates. codex_agent above carries
-# `work.operator`; letting interactive hosts impersonate that would hand every
-# session create/cancel/redispatch authority.
+# Work API identity for interactive maintainer sessions (#2502).
+# The historical work-reader name remains stable. It holds no project role;
+# Google ID tokens resolve to the Console's svc:work-reader grant, which
+# carries work.reader, costs.reader and work.operator for coding pipelines.
+# Work authority is declared in apps/console/apphosting.yaml, not by IAM.
 resource "google_service_account" "work_reader" {
   account_id   = "work-reader"
   display_name = "Agent LCARS read-only Work API caller"
@@ -890,4 +889,19 @@ resource "google_billing_budget" "monthly" {
     content { threshold_percent = threshold_rules.value }
   }
   depends_on = [google_project_service.services]
+}
+
+# Outline's signed receiver has no Outline API credential. Only this
+# signing-secret container is cloud-owned; the host keeps its existing API key.
+resource "google_secret_manager_secret_iam_member" "outline_viewer" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime["AGENT_LCARS_OUTLINE_WEBHOOK_SECRET"].secret_id
+  role      = "roles/secretmanager.viewer"
+  member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+resource "google_secret_manager_secret_iam_member" "outline_version_manager" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime["AGENT_LCARS_OUTLINE_WEBHOOK_SECRET"].secret_id
+  role      = "roles/secretmanager.secretVersionManager"
+  member    = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-firebaseapphosting.iam.gserviceaccount.com"
 }

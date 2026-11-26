@@ -144,7 +144,11 @@ lcars investigate --request-id backup-timer-1 \
   `agent-not-found`: the investigator is not offered to runs;
   `deadline-exceeded` and `investigation-unavailable`: no answer). A settled
   round that produced no report also exits non-zero but still prints its
-  status. Do not loop.
+  status. If a wait failed after admission, stdout gives the admitted
+  `{workId}`. Record that exact dependency in the handoff. A local timeout
+  says nothing about the child's outcome. Reuse the original request key and
+  input within the same run if another read is needed; do not start a
+  duplicate round.
 - If the investigator cannot answer, park (§4) or proceed as before, and quote
   the failure code or `could_not_answer` reason so the human knows what is
   missing. Never treat a failed or partial investigation as an observed fact.

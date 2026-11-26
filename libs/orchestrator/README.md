@@ -26,7 +26,7 @@ the request that creates it and never read by the orchestrator, plus an
 orchestrator-owned `closedAt` set by `closeTask` — a closed task refuses
 further requests (`task-closed`).
 
-## The three collections
+## Lifecycle storage
 
 - **`Task`** — the mutex itself. `activeRunId` is set iff a run is live;
   `runCount` mints the next run's ID; `consecutiveLost` drives the
@@ -43,6 +43,32 @@ further requests (`task-closed`).
   release, while an expired lease makes a crashed attempt retryable. See
   `apps/console/src/lib/orchestrator-dispatch.ts` for the real drain (QueueExecutor
   queue admission + issue comments and channel webhooks).
+
+## Run issue snapshots
+
+A run stores display fields and the SHA-256 reference to its admitted tracker
+issue. Admission creates the snapshot in the same transaction as the run.
+Automatic retries reuse that reference. The task keeps its current tracker
+metadata. Dispatch briefs and individual Work details read the admitted body
+from the snapshot.
+
+### Backfill legacy runs
+
+After all writers and readers are running the snapshot-aware version, run
+the migration with Application Default Credentials for the target project.
+The first command scans without writing. The second backfills embedded issues
+and removes their embedded field in the same transaction.
+
+```bash
+pnpm exec tsx tools/migrate-run-issue-snapshots.mts --project <project-id> --database dispatch-controller
+pnpm exec tsx tools/migrate-run-issue-snapshots.mts --project <project-id> --database dispatch-controller --apply
+```
+
+The tool prints JSON progress after every page. On interruption, repeat the
+command or use `--start-after '<nextCursor>'` with the last successfully
+printed cursor. A scan from the beginning with zero candidates verifies that
+backfill is complete. Keep snapshot-aware readers and writers in use once
+referenced runs exist. Remove legacy reads in a follow-up after verification.
 
 ## The decision layer
 

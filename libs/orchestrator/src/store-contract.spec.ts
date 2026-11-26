@@ -1,9 +1,11 @@
+import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import { Firestore } from '@google-cloud/firestore';
 import { describe, expect, it } from 'vitest';
 
 import { decidedRun, isRefusal } from './decide';
 import { FirestoreScheduleStore } from './firestore-schedule-store';
 import { FirestoreStore } from './firestore-store';
+import { readRunIssue } from './issue-snapshot';
 import { MemoryScheduleStore } from './memory-schedule-store';
 import { MemoryStore } from './memory-store';
 import {
@@ -101,6 +103,84 @@ if (
 
 describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
   let prefixCounter = 0;
+
+  it('backfills embedded run issues with resumable pages and leaves an existing snapshot intact', async () => {
+    const now = '2026-08-15T12:00:00.000Z';
+    const options = {
+      projectId: 'demo-orchestrator',
+      databaseId: '(default)',
+      collectionPrefix: `orchestrator-test-issues-${crypto.randomUUID()}-`,
+      emulatorHost: emulatorHost ?? 'localhost:8080',
+      readPageSize: 1,
+    };
+    const firestore = new Firestore({
+      projectId: options.projectId,
+      databaseId: options.databaseId,
+      host: options.emulatorHost,
+      ssl: false,
+    });
+    try {
+      const store = new FirestoreStore(options);
+      const orchestrator = new Orchestrator(store, { now: () => now });
+      const taskId = { repo: 'octo/example', issue: 7 };
+      const issue = {
+        reference: { tracker: 'github', ...taskId },
+        title: 'Before migration',
+        identifier: 'octo/example#7',
+        url: 'https://github.com/octo/example/issues/7',
+        description: 'Immutable body',
+        state: 'open',
+        updatedAt: now,
+        labels: [],
+        assignees: [],
+      } satisfies TrackerIssue;
+      const admitted = await orchestrator.request({
+        taskId,
+        requestId: 'current',
+        pipeline: 'codex',
+        work: { spec: { title: 'Migration fixture' } },
+        issue,
+      });
+      if (isRefusal(admitted)) throw new Error(admitted.reason);
+      const run = decidedRun(admitted);
+      const stored = firestore.collection(`${options.collectionPrefix}runs`);
+      const { issueSnapshot, ...fields } = run;
+      const legacyId = `${taskId.repo}#${taskId.issue}/r2`;
+      await stored
+        .doc(encodeURIComponent(legacyId))
+        .set({ ...fields, runId: legacyId, issue });
+      const snapshots = firestore.collection(
+        `${options.collectionPrefix}issue-snapshots`,
+      );
+      const snapshot = snapshots.doc(issueSnapshot!.id);
+      const original = await snapshot.get();
+
+      const dryRun = await store.migrateRunIssueSnapshots({ apply: false });
+      expect(dryRun).toMatchObject({ scanned: 1, candidates: 0, migrated: 0 });
+      expect(dryRun.nextCursor).toBe(encodeURIComponent(run.runId));
+      const legacyPage = { cursor: dryRun.nextCursor };
+      expect(
+        await store.migrateRunIssueSnapshots({ ...legacyPage, apply: false }),
+      ).toMatchObject({ scanned: 1, candidates: 1, migrated: 0 });
+      expect((await store.readRun(legacyId))?.issue).toEqual(issue);
+
+      expect(
+        await store.migrateRunIssueSnapshots({ ...legacyPage, apply: true }),
+      ).toMatchObject({ scanned: 1, candidates: 1, migrated: 1 });
+      const migrated = (await store.readRun(legacyId))!;
+      expect(migrated).not.toHaveProperty('issue');
+      expect(migrated.issueSnapshot).toEqual(issueSnapshot);
+      expect(await readRunIssue(store, migrated)).toEqual(issue);
+      expect(
+        await store.migrateRunIssueSnapshots({ ...legacyPage, apply: true }),
+      ).toMatchObject({ scanned: 1, candidates: 0, migrated: 0 });
+      expect((await snapshots.get()).size).toBe(1);
+      expect((await snapshot.get()).updateTime).toEqual(original.updateTime);
+      expect((await store.readTask(taskId))?.task.issue).toEqual(issue);
+    } finally {
+      await firestore.terminate();
+    }
+  });
 
   it('falls back to raw native pages after an older writer replaces a task projection', async () => {
     const collectionPrefix = `native-state-rollback-${crypto.randomUUID()}-`;

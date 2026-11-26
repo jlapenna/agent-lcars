@@ -139,7 +139,7 @@ run "renders_exact_repository_authorization" {
   # its tokens, and nothing here may widen that to another principal.
   assert {
     condition     = google_service_account.work_reader.account_id == "work-reader" && google_service_account_iam_member.work_reader_token_creator.service_account_id == google_service_account.work_reader.name && google_service_account_iam_member.work_reader_token_creator.role == "roles/iam.serviceAccountTokenCreator" && google_service_account_iam_member.work_reader_token_creator.member == "user:jlapenna@gmail.com"
-    error_message = "Only the maintainer's Google account may impersonate the read-only work-reader identity."
+    error_message = "Only the maintainer's Google account may impersonate the interactive work-reader identity."
   }
 
   # #1350: one shared, READ-ONLY Claude subscription token. The absence of a

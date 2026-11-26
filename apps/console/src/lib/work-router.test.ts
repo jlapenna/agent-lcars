@@ -1,3 +1,4 @@
+import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import {
   decidedRun,
   isRefusal,
@@ -37,6 +38,18 @@ const spec = {
   pipeline: 'claude',
   target: { repo: 'jlapenna/agent-lcars' },
 };
+const admittedIssue = {
+  reference: { tracker: 'github', repo: spec.target.repo, issue: 2502 },
+  identifier: `${spec.target.repo}#2502`,
+  url: `https://github.com/${spec.target.repo}/issues/2502`,
+  title: 'Admitted issue',
+  description: 'Original issue body',
+  state: 'open',
+  updatedAt: '2026-08-26T10:00:00.000Z',
+  labels: [{ id: 'ready', name: 'ready' }],
+  assignees: [{ id: '42', name: 'jlapenna' }],
+} satisfies TrackerIssue;
+
 const operator = {
   principal: 'user:jlapenna',
   subject: 'github:jlapenna',
@@ -1540,6 +1553,35 @@ describe('items routes', () => {
     expect((await call(ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(409);
   });
 
+  it('returns the full admitted run issue from cancel and detail, with display fields on the list', async () => {
+    const ctx = context();
+    const outcome = await ctx.runtime.orchestrator.request({
+      taskId: { workId: ID },
+      requestId: 'snapshot',
+      pipeline: spec.pipeline,
+      issue: admittedIssue,
+      work: { origin: { principal: operator.principal, channel: 'api' }, spec },
+    });
+    if (isRefusal(outcome)) throw new Error('unexpected refusal in fixture');
+    const detail = await call(ctx, 'GET', `/items/${ID}`);
+    expect(detail.status).toBe(200);
+    expect(detail.json.runs[0].issue).toEqual(admittedIssue);
+
+    const list = await call(ctx, 'GET', '/items');
+    expect(list.status).toBe(200);
+    expect(list.json.items[0].runs[0].issue).toEqual({
+      reference: admittedIssue.reference,
+      identifier: admittedIssue.identifier,
+      url: admittedIssue.url,
+      title: admittedIssue.title,
+      state: admittedIssue.state,
+    });
+
+    const canceled = await call(ctx, 'POST', `/items/${ID}/cancel`);
+    expect(canceled.status).toBe(200);
+    expect(canceled.json.runs[0].issue).toEqual(admittedIssue);
+  });
+
   it.each([
     operator,
     githubActionsOperator,
@@ -2963,11 +3005,12 @@ describe('GET /anchors/github/owner', () => {
     };
   }
 
-  async function admit(ctx: WorkContext) {
+  async function admit(ctx: WorkContext, issue?: TrackerIssue) {
     const outcome = await ctx.runtime.orchestrator.request({
       taskId: anchor,
       requestId: 'first',
       pipeline: 'claude',
+      ...(issue === undefined ? {} : { issue }),
       work: {
         origin: { principal: 'github:jlapenna', channel: 'github' },
         spec: { ...spec, target: { repo: REPO } },
@@ -2976,6 +3019,31 @@ describe('GET /anchors/github/owner', () => {
     if (isRefusal(outcome)) throw new Error('unexpected refusal in fixture');
     return decidedRun(outcome).runId;
   }
+
+  it.each(['referenced', 'legacy'] as const)(
+    'returns the full %s run issue to a read-only caller',
+    async (storage) => {
+      const ctx = context({ principal: readerOnly });
+      const runId = await admit(ctx, admittedIssue);
+      if (storage === 'legacy') {
+        const task = (await ctx.runtime.store.readTask(anchor))!;
+        const { issueSnapshot: _reference, ...run } =
+          (await ctx.runtime.store.readRun(runId))!;
+        await ctx.runtime.store.apply({
+          expectedRevision: task.revision,
+          decision: {
+            task: task.task,
+            run: { ...run, issue: admittedIssue },
+            outbox: [],
+          },
+        });
+      }
+
+      const owner = await call(ctx, 'GET', path);
+      expect(owner.status).toBe(200);
+      expect(owner.json.task.run.issue).toEqual(admittedIssue);
+    },
+  );
 
   it('requires work.operator; reaper, executor, cron and anonymous are refused', async () => {
     for (const principal of [undefined, executorOnly, cronTick, reaperOnly]) {
@@ -3505,6 +3573,66 @@ describe('shared repository authority', () => {
     expect((await call(ctx, 'GET', `/items/${ID}`)).status).toBe(200);
   });
 });
+
+const codingPipelines = ['claude', 'codex', 'opencode', 'agy'] as const;
+it.each([
+  ['pending', 'goose', codingPipelines],
+  ['parked', 'goose', codingPipelines],
+  ['pending', 'claude', codingPipelines],
+  ['parked', 'claude', codingPipelines],
+  ['pending', 'claude', ['goose']],
+  ['parked', 'claude', ['goose']],
+] as const)(
+  'requires Jobs and execution grants to cancel a %s repository job on %s with %j',
+  async (state, pipeline, pipelines) => {
+    const ctx = context({
+      principal: {
+        ...operator,
+        principal: 'svc:work-reader',
+        subject: 'work-reader@agent-lcars.iam.gserviceaccount.com',
+        via: 'google',
+        pipelines,
+      },
+    });
+    await ctx.runtime.orchestrator.request({
+      taskId: { workId: ID },
+      requestId: 'recipe-1',
+      pipeline,
+      params: { jobOccurrence: 'a'.repeat(64) },
+      work: {
+        origin: { principal: githubActionsOperator.principal, channel: 'api' },
+        spec: {
+          ...spec,
+          pipeline,
+          priority: 'background',
+          ...(pipeline === 'goose' ? { jobOccurrence: 'a'.repeat(64) } : {}),
+        },
+      },
+    });
+    const runId = `work:${ID}/r1`;
+    if (state === 'parked') {
+      await ctx.runtime.orchestrator.report(runId, {
+        ok: true,
+        summary: 'park',
+      });
+    }
+
+    const item = await ctx.runtime.store.readTask({ workId: ID });
+    const run = await ctx.runtime.store.readRun(runId);
+    expect((await call(ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(403);
+    expect(await ctx.runtime.store.readTask({ workId: ID })).toEqual(item);
+    expect(await ctx.runtime.store.readRun(runId)).toEqual(run);
+
+    ctx.principal = {
+      ...githubActionsOperator,
+      pipelines: pipeline === 'goose' ? ['goose'] : ['goose', pipeline],
+    };
+    expect(await call(ctx, 'POST', `/items/${ID}/cancel`)).toMatchObject({
+      status: 200,
+      json: { state: 'canceled' },
+    });
+  },
+);
 
 it('lets a repository-bound caller read its Goose occurrence through the shared item API', async () => {
   const ctx = context({
