@@ -334,9 +334,97 @@ describe('automatic pull-request review & conflict remediation', () => {
     vi.unstubAllEnvs();
   });
 
-  it('completes the full review -> auto-remediation (with quota fallback) -> re-review lifecycle without human intervention', async () => {
+  it('recovers review after PR remediation without a source delivery', async () => {
+    const { review } = await exerciseReviewLifecycle({
+      deliveryOwned: false,
+      fence: 'none',
+    });
+    expect(review).toMatchObject({
+      runId: `${REPO}#3751/r4`,
+      params: { mode: 'review' },
+      requestId: `pr-rereview:3751:${HEAD_2.slice(0, 16)}`,
+    });
+  });
+
+  it.each([
+    { via: 'settlement', recoverFromSweep: false },
+    { via: 'maintenance', recoverFromSweep: true },
+  ])(
+    'recovers one review via $via while the source issue owns delivery',
+    async ({ recoverFromSweep }) => {
+      const {
+        f,
+        anchor,
+        source,
+        delivery,
+        busySync,
+        reviewBeforeSweep,
+        review,
+        sync,
+      } = await exerciseReviewLifecycle({
+        deliveryOwned: true,
+        fence: 'none',
+        recoverFromSweep,
+      });
+      const reviewRunId = `${REPO}#3751/r4`;
+      expect(busySync).toMatchObject({
+        status: 200,
+        body: { refused: 'task-busy' },
+      });
+      expect(reviewBeforeSweep?.runId).toBe(
+        recoverFromSweep ? undefined : reviewRunId,
+      );
+      expect(review).toMatchObject({
+        runId: reviewRunId,
+        pipeline: 'codex',
+        params: { mode: 'review' },
+        requestId: `pr-rereview:3751:${HEAD_2.slice(0, 16)}`,
+      });
+      expect(f.fetchImpl).toHaveBeenCalledWith(
+        expect.stringContaining('/pulls/3751'),
+        expect.anything(),
+      );
+      expect((await f.store.readTask(anchor))?.task.delivery).toBeUndefined();
+
+      // Even after the review releases the lock, a delayed push for the
+      // same head must reuse its request before the GitHub verdict is visible.
+      await f.orchestrator.report(reviewRunId, { ok: true, summary: 'review' });
+      expect(await sync()).toMatchObject({
+        status: 200,
+        body: { duplicate: true, runId: reviewRunId },
+      });
+      expect(await f.store.listRuns(anchor)).toHaveLength(4);
+      expect((await f.store.readTask(source))?.task.delivery).toEqual(delivery);
+    },
+  );
+
+  it.each(['current-head veto', 'dismissed review', 'human hold'] as const)(
+    'preserves a delivery-owned %s across settlement and a delayed push',
+    async (fence) => {
+      const { f, anchor, source, delivery, review, sync } =
+        await exerciseReviewLifecycle({ deliveryOwned: true, fence });
+      expect(review).toBeUndefined();
+      expect(await sync()).toMatchObject({
+        status: 200,
+        body: { ignored: expect.any(String) },
+      });
+      expect(await f.store.listRuns(anchor)).toHaveLength(3);
+      expect((await f.store.readTask(source))?.task.delivery).toEqual(delivery);
+    },
+  );
+
+  async function exerciseReviewLifecycle({
+    deliveryOwned,
+    fence,
+    recoverFromSweep = false,
+  }: {
+    deliveryOwned: boolean;
+    fence: 'none' | 'current-head veto' | 'dismissed review' | 'human hold';
+    recoverFromSweep?: boolean;
+  }) {
     const f = createFixture();
     const anchor: TaskId = { repo: REPO, issue: 3751 };
+    const source = { repo: REPO, issue: 3539 };
 
     // 1. PR opens ready for review -> cross-model review (Codex) is admitted.
     const opened = await handleWebhookDelivery(f.routeDeps, {
@@ -503,15 +591,44 @@ describe('automatic pull-request review & conflict remediation', () => {
       claimedBySubject: 'executor@example.com',
       tokenHash: hashRunToken(r3Token),
     });
+    const sourceRunId = `${REPO}#${source.issue}/r1`;
+    const sourceMarker = `<!-- attempt-claim:g1:${sourceRunId} -->`;
+    const delivery = {
+      runId: sourceRunId,
+      repo: REPO,
+      number: 3751,
+      baseRef: 'main',
+      head: HEAD_2,
+      state: 'waiting' as const,
+      observedAt: f.now(),
+    };
     f.setPr(REPO, 3751, {
       headRefOid: HEAD_2,
-      mergeStateStatus: 'CLEAN',
+      mergeStateStatus: 'BLOCKED',
+      reviewDecision: 'CHANGES_REQUESTED',
+      ...(deliveryOwned
+        ? {
+            checks: [
+              { name: 'Optional', status: 'COMPLETED', conclusion: 'FAILURE' },
+            ],
+          }
+        : {}),
+      ...(deliveryOwned
+        ? {
+            body: sourceMarker,
+            closingIssues: [{ number: source.issue, repo: source.repo }],
+          }
+        : {}),
+      labels: fence === 'human hold' ? ['status:needs-human'] : [],
       reviews: [
         {
           databaseId: 901,
-          state: 'CHANGES_REQUESTED',
+          state:
+            fence === 'dismissed review' ? 'DISMISSED' : 'CHANGES_REQUESTED',
           author: { login: 'agent-lcars[bot]' },
-          commit: { oid: HEAD_1 },
+          commit: {
+            oid: fence === 'none' || fence === 'human hold' ? HEAD_1 : HEAD_2,
+          },
         },
       ],
       reviewThreads: [
@@ -519,6 +636,109 @@ describe('automatic pull-request review & conflict remediation', () => {
         { id: 'PRRT_2', isResolved: true },
       ],
     });
+
+    if (deliveryOwned) {
+      const authored = await f.orchestrator.request({
+        taskId: source,
+        requestId: 'author-delivery',
+        pipeline: 'claude',
+        params: { mode: 'implement' },
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: {
+            title: 'Author the delivery',
+            description: 'Implement the source issue',
+            pipeline: 'claude',
+            target: { repo: REPO },
+          },
+        },
+      });
+      if ('refused' in authored) throw new Error('Source admission refused');
+      const snapshotFetch = vi.mocked(f.fetchImpl).getMockImplementation();
+      if (snapshotFetch === undefined)
+        throw new Error('Missing GitHub fixture');
+      vi.mocked(f.fetchImpl).mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith('/pulls/3751')) {
+          return Response.json({
+            number: 3751,
+            body: sourceMarker,
+            state: 'open',
+            draft: false,
+            head: { sha: HEAD_2 },
+            base: { ref: 'main' },
+            user: { login: 'jlapenna' },
+            merged: false,
+            merge_commit_sha: null,
+            auto_merge: { merge_method: 'squash' },
+          });
+        }
+        if (url.includes('/rules/branches/main?')) {
+          return Response.json([
+            { type: 'pull_request' },
+            {
+              type: 'required_status_checks',
+              parameters: { required_status_checks: [{ context: 'Verify' }] },
+            },
+          ]);
+        }
+        if (url.endsWith('/collaborators/jlapenna/permission')) {
+          return Response.json({
+            permission: 'read',
+            role_name: 'read',
+            user: { login: 'jlapenna' },
+          });
+        }
+        if (url.includes('/check-runs?')) {
+          return Response.json({
+            total_count: 1,
+            check_runs: [
+              {
+                id: 1,
+                name: 'Optional',
+                head_sha: HEAD_2,
+                status: 'completed',
+                conclusion: 'failure',
+              },
+            ],
+          });
+        }
+        return snapshotFetch(input, init);
+      });
+      const reported = await f.orchestrator.report(
+        sourceRunId,
+        { ok: true, summary: 'pull-request' },
+        undefined,
+        undefined,
+        delivery,
+      );
+      if ('refused' in reported)
+        throw new Error('Source delivery handoff refused');
+      f.advanceMinutes(1); // The source monitor becomes due.
+    }
+
+    const sync = () =>
+      handleWebhookDelivery(f.routeDeps, {
+        event: 'pull_request',
+        deliveryId: 'sync-3751-head-2',
+        payload: {
+          action: 'synchronize',
+          repository: { full_name: REPO },
+          pull_request: {
+            number: 3751,
+            state: 'open',
+            draft: false,
+            title: 'feat: remove vendored skill',
+            body: sourceMarker,
+            user: { login: 'jlapenna', type: 'User' },
+            head: { ref: 'claude/remove-vendored-skill', sha: HEAD_2 },
+            labels: [],
+          },
+          sender: { login: 'agent-lcars[bot]' },
+        },
+      });
+    const busySync =
+      deliveryOwned && fence === 'none' ? await sync() : undefined;
 
     const completeRemediation = await createRunsHandler().handle(
       new Request(
@@ -539,19 +759,57 @@ describe('automatic pull-request review & conflict remediation', () => {
       ),
       {
         prefix: '/api/work/v1',
-        context: { ...runsContext, bearerToken: r3Token },
+        context: {
+          ...runsContext,
+          ...(recoverFromSweep
+            ? { reconcilePullRequestRemediation: undefined }
+            : {}),
+          bearerToken: r3Token,
+        },
       },
     );
     expect(completeRemediation.response?.status).toBe(200);
 
-    // 5. Even though `synchronize` during /r3 would have hit `task-busy`, completing /r3 immediately queued re-review (/r4) on HEAD_2!
-    const r4 = await f.store.readActiveRun(anchor);
-    expect(r4).toMatchObject({
-      runId: `${REPO}#3751/r4`,
-      params: { mode: 'review' },
-      requestId: `pr-rereview:3751:${HEAD_2.slice(0, 16)}`,
-    });
-  });
+    const reviewBeforeSweep = await f.store.readActiveRun(anchor);
+    if (recoverFromSweep) {
+      const generation =
+        await f.store.beginGithubAnchorProjectionRefresh(anchor);
+      await f.store.applyGithubAnchorProjectionRefresh({
+        anchor,
+        generation,
+        projection: {
+          anchor,
+          kind: 'pr',
+          state: 'open',
+          title: 'PR waiting for independent review',
+          body: sourceMarker,
+          url: `https://github.com/${REPO}/pull/3751`,
+          author: 'jlapenna',
+          labels: [],
+          assigneeLogins: [],
+          sourceUpdatedAt: T0,
+          observedAt: T0,
+          reviewRequirement: 'required',
+        },
+      });
+      const deadline = Date.now() + 60_000;
+      await Promise.all([
+        reconcileOpenPullRequestRemediations(f.remediationDeps, deadline),
+        reconcileOpenPullRequestRemediations(f.remediationDeps, deadline),
+      ]);
+    }
+
+    return {
+      f,
+      anchor,
+      source,
+      delivery,
+      busySync,
+      reviewBeforeSweep,
+      review: await f.store.readActiveRun(anchor),
+      sync,
+    };
+  }
 
   it('remediates merge conflicts across open base-branch PRs when another PR merges', async () => {
     const f = createFixture();

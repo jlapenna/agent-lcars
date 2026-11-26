@@ -29,6 +29,7 @@ import {
   detectPullRequestAuthorPipeline,
   isUnattendedDependencyBotPullRequest,
   parseAttemptClaimRunId,
+  pullRequestHeadReviewRequestId,
   selectCrossModelReviewer,
   UNIFIED_REVIEW_COMMAND,
   UNIFIED_REVIEW_LABEL,
@@ -49,6 +50,7 @@ export interface IngestReviewContext {
   requestedPipeline?: Pipeline;
   authorPipeline?: Pipeline;
   claimRunId?: string;
+  synchronizeHead?: string;
   actor: string;
   title: string;
   body?: string | null;
@@ -57,8 +59,7 @@ export interface IngestReviewContext {
 export interface IngestDecision {
   kind: 'request';
   taskId: TaskId;
-  /** The `x-github-delivery` GUID; doubles as the orchestrator's
-   *  idempotency key for this request. */
+  /** Idempotency key for this request, normally the `x-github-delivery` GUID. */
   requestId: string;
   /** Optional opaque durable binding for a first delivery that must converge
    * with another admission path. The store, not this pure interpreter,
@@ -277,6 +278,7 @@ function buildReviewRequestDecision(input: {
   labels: readonly { name: string }[];
   userLogin?: string;
   headRef?: string;
+  synchronizeHead?: string;
   requestedPipeline?: Pipeline;
   labelRouting?: GithubLabelRouting;
 }): IngestResult {
@@ -313,7 +315,9 @@ function buildReviewRequestDecision(input: {
   return buildRequestDecision(
     input.repo,
     input.issue,
-    input.deliveryId,
+    input.synchronizeHead === undefined
+      ? input.deliveryId
+      : pullRequestHeadReviewRequestId(input.issue, input.synchronizeHead),
     selection.pipeline,
     { mode: 'review', ...crossRepoParams(input.labels) },
     work,
@@ -326,6 +330,9 @@ function buildReviewRequestDecision(input: {
         : { requestedPipeline: input.requestedPipeline }),
       ...(authorPipeline === undefined ? {} : { authorPipeline }),
       ...(claimRunId === undefined ? {} : { claimRunId }),
+      ...(input.synchronizeHead === undefined
+        ? {}
+        : { synchronizeHead: input.synchronizeHead }),
       actor: input.actor,
       title: input.title,
       body: input.body,
@@ -433,10 +440,16 @@ function interpretPullRequestEvent(
     ) {
       return ignore('excluded-review-author');
     }
+    const head = pullRequest.head?.sha;
     return buildReviewRequestDecision({
       repo: repository.full_name,
       issue: pullRequest.number,
       deliveryId,
+      ...(action === 'synchronize' &&
+      head !== undefined &&
+      /^[a-f0-9]{40}$/u.test(head)
+        ? { synchronizeHead: head }
+        : {}),
       title: pullRequest.title,
       body: pullRequest.body,
       actor: sender.login,
