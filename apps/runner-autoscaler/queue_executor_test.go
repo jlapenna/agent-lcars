@@ -497,6 +497,29 @@ func TestPollOnceClaimRequestBodyShape(t *testing.T) {
 	}
 }
 
+func TestReviewOnlyReservationNegotiatesAndValidatesClaim(t *testing.T) {
+	for _, mode := range []string{"review", "implement"} {
+		t.Run(mode, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["reviewOnly"] != true {
+					t.Errorf("expected reviewOnly request, got %v, err=%v", body, err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"runId": "test/r1", "token": "fake", "pipeline": "codex", "placementAware": true, "mode": mode})
+			}))
+			defer server.Close()
+			launched := false
+			cfg := queueExecutorConfig{consoleURL: server.URL, runnerName: "runner-a", idToken: func() (string, error) { return "fake", nil }, reserve: func() (*directRunnerReservation, error) {
+				return &directRunnerReservation{reviewOnly: true, release: func() {}, launch: func(directRunnerLaunch) error { launched = true; return nil }}, nil
+			}}
+			err := pollOnce(cfg)
+			if launched != (mode == "review") || (err == nil) != launched {
+				t.Fatalf("mode=%s launched=%v err=%v", mode, launched, err)
+			}
+		})
+	}
+}
+
 // TestPollOnceClaimResponseTooLargeIsError proves pollOnce bounds how much
 // of a claim response it will decode (claimResponseBodyLimit): a response
 // whose JSON object cannot close within that bound must error out rather

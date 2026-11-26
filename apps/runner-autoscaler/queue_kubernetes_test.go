@@ -610,6 +610,7 @@ func TestReviewReservationBehindUnschedulablePod(t *testing.T) {
 			ctx := t.Context()
 			node := queueReadyNode()
 			q, client := kubeQueueFixture(node)
+			q.config.MaxConcurrent = 4
 			q.config.Requests = map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"}
 			q.config.ReviewResources = map[string]string{"cpu": "1", "memory": "3Gi", "ephemeral-storage": "8Gi"}
 			job, err := q.job(directRunnerLaunch{runID: "work:pending/r1", pipeline: "codex"})
@@ -635,6 +636,37 @@ func TestReviewReservationBehindUnschedulablePod(t *testing.T) {
 			if err != nil || (res != nil) != tc.wantReview || (res != nil && !res.reviewOnly) {
 				t.Fatalf("reservation=%v err=%v, want review-only=%v", res, err, tc.wantReview)
 			}
+			if res == nil {
+				return
+			}
+			res.release()
+			backfill, err := q.job(directRunnerLaunch{runID: "work:review/r1", pipeline: "codex", mode: "review", backfillFor: string(job.UID)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			backfill.Spec.Suspend = new(false)
+			backfill.UID = "review-uid"
+			if err = client.Tracker().Create(batch.SchemeGroupVersion.WithResource("jobs"), backfill, q.config.Namespace); err != nil {
+				t.Fatal(err)
+			}
+			placed := pod.DeepCopy()
+			placed.Name = "placed-review"
+			placed.OwnerReferences = []meta.OwnerReference{*meta.NewControllerRef(backfill, batch.SchemeGroupVersion.WithKind("Job"))}
+			placed.Spec = backfill.Spec.Template.Spec
+			placed.Spec.NodeName = node.Name
+			placed.Status = core.PodStatus{Phase: core.PodRunning}
+			if _, err = client.CoreV1().Pods(q.config.Namespace).Create(ctx, placed, meta.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			// Even as other tenants release room, only one review can occupy
+			// capacity alongside this same waiting Job.
+			if err = client.CoreV1().Pods("other").Delete(ctx, other.Name, meta.DeleteOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if another, err := q.reserve(ctx); err != nil || another != nil {
+				t.Fatalf("second concurrent backfill: reservation=%v err=%v", another, err)
+			}
+
 		})
 	}
 }

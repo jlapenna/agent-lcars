@@ -21,9 +21,10 @@ import (
 // callback once a claim succeeds -- what a direct-mode worker needs, nothing
 // more. It is never logged whole (runToken is a live credential).
 type directRunnerLaunch struct {
-	runID    string
-	runToken string
-	pipeline string
+	backfillFor string
+	runID       string
+	runToken    string
+	pipeline    string
 	// mode is the claimed run's Work mode ("review", "implement", ...), used
 	// only to pick the Job's resource shape.
 	mode string

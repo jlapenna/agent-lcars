@@ -31,6 +31,7 @@ import (
 )
 
 const queueJobLabel = "agent-lcars.queue-job"
+const queueBackfillAnnotation = "agent-lcars.review-backfill-for"
 const queueRunAnnotation = "agent-lcars.run-id"
 const queueClaimAnnotation = "agent-lcars.claim-fingerprint"
 
@@ -611,16 +612,22 @@ func resourcesFit(available, requests core.ResourceList) bool {
 	return true
 }
 
+type placementAdmission struct {
+	blocked bool
+	waiting core.ResourceList
+	jobUID  types.UID
+}
+
 // Inspect the original waiting Pod before allowing a smaller review to use
 // capacity it cannot occupy. A missing Pod or uncertain inventory blocks claims.
-func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (bool, core.ResourceList, error) {
+func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (placementAdmission, error) {
 	jobs, err := q.client.BatchV1().Jobs(q.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: queueJobLabel + "=true"})
 	if err != nil {
-		return false, nil, err
+		return placementAdmission{}, err
 	}
 	pods, err := q.client.CoreV1().Pods(q.config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {
-		return false, nil, err
+		return placementAdmission{}, err
 	}
 	// Foreground retirement must drain owned Pods before another claim can
 	// enter. Also fail closed if a removed Job still has an orphaned Pod.
@@ -628,7 +635,7 @@ func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (bool, core.Reso
 	for _, job := range jobs.Items {
 		known[string(job.UID)] = true
 		if job.DeletionTimestamp != nil {
-			return true, nil, nil
+			return placementAdmission{blocked: true}, nil
 		}
 	}
 	for _, pod := range pods.Items {
@@ -642,37 +649,43 @@ func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (bool, core.Reso
 		}
 		for _, owner := range pod.OwnerReferences {
 			if owner.Kind == "Job" && owner.Controller != nil && *owner.Controller && strings.HasPrefix(owner.Name, "lcars-work-") && !known[string(owner.UID)] {
-				return true, nil, nil
+				return placementAdmission{blocked: true}, nil
 			}
 		}
 	}
-	var waiting core.ResourceList
+	var admission placementAdmission
+	liveBackfills := map[string]bool{}
 	for _, job := range jobs.Items {
 		if queueJobTerminal(job) {
 			continue
 		}
+		if original := job.Annotations[queueBackfillAnnotation]; original != "" {
+			liveBackfills[original] = true
+		}
 		runID := job.Annotations[queueRunAnnotation]
 		if job.UID == "" || runID == "" || job.Name != queueJobName(runID) {
-			return false, nil, fmt.Errorf("queue Job identity conflict during placement admission")
+			return placementAdmission{}, fmt.Errorf("queue Job identity conflict during placement admission")
 		}
 		placement := placementForJob(job, pods.Items, nil, time.Now())
 		if placement.Reason == "scheduled" {
 			continue
 		}
-		if waiting != nil || placement.Reason != "unschedulable" || len(q.config.ReviewResources) == 0 || q.config.RuntimesOnly || len(q.config.Runtimes) != 0 {
-			return true, nil, nil
+		if admission.waiting != nil || placement.Reason != "unschedulable" || len(q.config.ReviewResources) == 0 || q.config.RuntimesOnly || len(q.config.Runtimes) != 0 {
+			return placementAdmission{blocked: true}, nil
 		}
 		for _, pod := range pods.Items {
 			if meta.IsControlledBy(&pod, &job) && pod.DeletionTimestamp == nil && pod.Status.Phase == core.PodPending && pod.Spec.NodeName == "" {
-				waiting = podresource.PodRequests(&pod, podresource.PodResourcesOptions{})
+				admission.jobUID = job.UID
+				admission.waiting = podresource.PodRequests(&pod, podresource.PodResourcesOptions{})
 				break
 			}
 		}
-		if len(waiting) == 0 {
-			return true, nil, nil
+		if len(admission.waiting) == 0 {
+			return placementAdmission{blocked: true}, nil
 		}
 	}
-	return waiting != nil, waiting, nil
+	admission.blocked = liveBackfills[string(admission.jobUID)]
+	return admission, nil
 }
 
 func (q *kubernetesQueue) reserve(ctx context.Context) (*directRunnerReservation, error) {
@@ -688,11 +701,11 @@ func (q *kubernetesQueue) reserve(ctx context.Context) (*directRunnerReservation
 	if q.held > 0 {
 		return nil, nil
 	}
-	pending, waiting, err := q.pendingPlacement(ctx)
+	admission, err := q.pendingPlacement(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if pending && waiting == nil {
+	if admission.blocked {
 		return nil, nil
 	}
 	// Compete with ARC through the native scheduler instead of racing its
@@ -702,10 +715,11 @@ func (q *kubernetesQueue) reserve(ctx context.Context) (*directRunnerReservation
 	// The claimed pipeline is unknown until after the claim, so the shape is
 	// the largest of every served shape (queueKubernetesConfig.admissionShape).
 	shape := q.config.admissionShape()
-	if pending {
+	reviewOnly := admission.waiting != nil
+	if reviewOnly {
 		shape = queueResources(q.config.ReviewResources)
 	}
-	fits, err := q.nodesFit(ctx, pending, shape, waiting)
+	fits, err := q.nodesFit(ctx, reviewOnly, shape, admission.waiting)
 	if err != nil {
 		return nil, err
 	}
@@ -714,7 +728,14 @@ func (q *kubernetesQueue) reserve(ctx context.Context) (*directRunnerReservation
 	}
 	q.held++
 	var once sync.Once
-	return &directRunnerReservation{reviewOnly: pending, release: func() { once.Do(func() { q.mu.Lock(); q.held--; q.mu.Unlock() }) }, launch: func(l directRunnerLaunch) error { return q.launch(ctx, l) }}, nil
+	return &directRunnerReservation{
+		reviewOnly: reviewOnly,
+		release:    func() { once.Do(func() { q.mu.Lock(); q.held--; q.mu.Unlock() }) },
+		launch: func(l directRunnerLaunch) error {
+			l.backfillFor = string(admission.jobUID)
+			return q.launch(ctx, l)
+		},
+	}, nil
 }
 func queueJobName(runID string) string {
 	return fmt.Sprintf("lcars-work-%x", sha256.Sum256([]byte(runID)))[:51]
@@ -752,6 +773,9 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	one := int32(1)
 	deadline := shape.deadline
 	annotations := map[string]string{queueRunAnnotation: l.runID}
+	if l.backfillFor != "" {
+		annotations[queueBackfillAnnotation] = l.backfillFor
+	}
 	if l.runToken != "" {
 		annotations[queueClaimAnnotation] = queueClaimFingerprint(l.runToken)
 	}

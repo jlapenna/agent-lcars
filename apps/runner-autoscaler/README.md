@@ -288,7 +288,7 @@ node is Ready, uncordoned and tolerated and that its total allocatable
 CPU/memory/storage/pod budget fits the Job shape. Ordinary claims compete with ARC through the native scheduler.
 If exactly one Job has an unschedulable Pod, a direct executor with configured
 review resources can claim a review when a single eligible node has room after
-assigned requests and no eligible node currently fits the waiting Pod. Missing
+assigned requests and no eligible node currently fits the waiting Pod. Only one such review can run alongside the same unplaced Job at a time. Missing
 Pods, uncertain inventory or two unplaced Jobs block further claims. The
 existing concurrency and provider limits apply to both paths. API uncertainty
 or no eligible node leaves work queued. Kubernetes makes the final placement

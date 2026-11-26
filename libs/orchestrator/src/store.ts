@@ -116,6 +116,10 @@ export interface RunTransactionState {
   readonly queueEligibility?: QueueEligibilitySnapshot;
 }
 
+export function fitsReviewSlot(pipeline: string, mode: unknown): boolean {
+  return pipeline !== 'goose' && mode === 'review';
+}
+
 /** Selects the provider using least live occupancy, then its oldest FIFO age.
  * Priority influences only the chosen provider's durable 4:2:1 class turn.
  * Callers must pass only server-authorized pipelines. */
@@ -146,10 +150,7 @@ export function selectFairQueuedRun(
   const heads = new Map<string, Run>();
   const candidates = new Map<string, Run[]>();
   for (const run of queuedRuns) {
-    if (
-      reviewOnly &&
-      (run.params?.['mode'] !== 'review' || run.pipeline === 'goose')
-    )
+    if (reviewOnly && !fitsReviewSlot(run.pipeline, run.params?.['mode']))
       continue;
     if (!isQueueAdmissionCandidate(run, now) || !granted.has(run.pipeline))
       continue;
