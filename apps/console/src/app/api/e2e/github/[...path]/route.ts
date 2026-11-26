@@ -3,6 +3,7 @@ import { logger } from '@agent-lcars/logging';
 import { isE2eTesting } from '@agent-lcars/util-server';
 import { NextRequest, NextResponse } from 'next/server';
 
+import { E2E_FIXTURE_GITHUB_USER_TOKEN } from '../../../../../auth';
 import {
   agentFleetLogin,
   controlPlaneRepository,
@@ -183,21 +184,24 @@ export async function POST(
       });
     }
   }
-  if (
-    path[0] === 'repos' &&
-    path[3] === 'pulls' &&
-    path[5] === 'reviews' &&
-    pullRequest(Number(path[4]))
-  ) {
-    return bodyForJournal?.event === 'APPROVE'
-      ? NextResponse.json(
-          { id: Number(path[4]), state: 'APPROVED' },
-          { status: 201 },
-        )
-      : NextResponse.json(
-          { message: 'Expected APPROVE review' },
-          { status: 422 },
-        );
+  if (path[0] === 'repos' && path[3] === 'pulls' && path[5] === 'reviews') {
+    const pr = pullRequest(Number(path[4]));
+    const token = req.headers.get('authorization')?.split(' ')[1];
+    if (
+      pr &&
+      bodyForJournal?.event === 'APPROVE' &&
+      bodyForJournal.commit_id === pr.head.sha &&
+      token === E2E_FIXTURE_GITHUB_USER_TOKEN
+    ) {
+      return NextResponse.json(
+        { id: pr.number, state: 'APPROVED' },
+        { status: 201 },
+      );
+    }
+    return NextResponse.json(
+      { message: 'Expected an exact-head operator approval' },
+      { status: 422 },
+    );
   }
   if (
     path[0] === 'repos' &&
@@ -218,12 +222,14 @@ export async function POST(
     bodyForJournal?.query?.includes('mutation EnableAutoMerge')
   ) {
     const variables = bodyForJournal.variables ?? bodyForJournal;
+    const pr = pullRequest(
+      Number(String(variables.pullRequestId).replace('PR_e2e_', '')),
+    );
     const valid =
-      variables.mergeMethod === 'SQUASH' &&
-      /^PR_e2e_\d+$/.test(variables.pullRequestId ?? '') &&
-      pullRequest(
-        Number(String(variables.pullRequestId).replace('PR_e2e_', '')),
-      ) !== undefined;
+      pr &&
+      variables.pullRequestId === pr.node_id &&
+      variables.head === pr.head.sha &&
+      bodyForJournal.query.includes('mergeMethod: SQUASH');
     return valid
       ? NextResponse.json({
           data: { enablePullRequestAutoMerge: { clientMutationId: null } },
@@ -419,12 +425,16 @@ export async function PUT(
       { status: 404 },
     );
   }
-  if (
-    path[0] === 'repos' &&
-    path[3] === 'pulls' &&
-    pullRequest(Number(path[4]))
-  ) {
-    if (path[5] === 'merge' && bodyForJournal?.merge_method === 'squash') {
+  const pr =
+    path[0] === 'repos' && path[3] === 'pulls'
+      ? pullRequest(Number(path[4]))
+      : undefined;
+  if (pr) {
+    if (
+      path[5] === 'merge' &&
+      bodyForJournal?.merge_method === 'squash' &&
+      bodyForJournal.sha === pr.head.sha
+    ) {
       mergeFixturePr(Number(path[4]));
       return NextResponse.json({
         merged: true,
@@ -432,7 +442,11 @@ export async function PUT(
         message: 'Pull Request successfully merged',
       });
     }
-    if (path[5] === 'update-branch') {
+    if (
+      path[5] === 'update-branch' &&
+      (bodyForJournal === null ||
+        bodyForJournal.expected_head_sha === pr.head.sha)
+    ) {
       updateFixturePrBranch(Number(path[4]));
       return NextResponse.json(
         { message: 'Updating pull request branch', url: '' },

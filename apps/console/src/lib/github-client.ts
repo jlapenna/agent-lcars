@@ -146,7 +146,7 @@ let client: Octokit | undefined;
 /** A request-scoped client for mutations that GitHub must attribute to the
  * signed-in console operator. It is deliberately not cached: the token is a
  * per-session user credential, unlike the singleton App installation client
- * below. Quick Task creation, tracking issues and console replies use it.
+ * below. Quick Tasks, tracking issues, replies and explicit Inbox reviews use it.
  * The E2E suite's fixture base URL applies here exactly as it does to the
  * App client below; it is never set in production. */
 export function createGithubUserClient(accessToken: string): Octokit {
@@ -168,10 +168,8 @@ export function getGithubClient(): Octokit {
     // instead points every request at its own fixture route
     // (apps/console/src/app/api/e2e/github) so PR-join assertions don't
     // depend on the real GitHub API or a real App-token mint. Never set in
-    // prod (absent from apphosting.yaml). The fixture route does not
-    // inspect the Authorization header's value at all, so a static
-    // placeholder auth is exactly as good as a minted one here and avoids
-    // e2e needing real (or even syntactically valid) App credentials.
+    // prod (absent from apphosting.yaml). The fixture accepts a static
+    // installation placeholder, distinct from its operator token placeholder.
     const e2eBaseUrl = optional('AGENT_CONSOLE_GITHUB_API_BASE_URL');
     client = new ThrottledOctokit({
       ...(e2eBaseUrl

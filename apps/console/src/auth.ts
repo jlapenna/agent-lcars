@@ -215,9 +215,8 @@ async function withRenewedGithubToken(token: JWT): Promise<JWT> {
 const nextAuth = NextAuth({
   providers: [
     GitHub({
-      // Quick Tasks and console replies use the operator's token so GitHub records
-      // the signed-in human as the author. `repo` is required because the
-      // watched repository set includes private repositories.
+      // Operator-authored issues, replies and reviews use the signed-in
+      // operator's token. The watched repository set includes private repos.
       authorization: { params: { scope: 'repo read:user user:email' } },
     }),
   ],
@@ -286,9 +285,8 @@ async function testSession(): Promise<Session | null | undefined> {
   const user = (await headers()).get('x-e2e-auth-user');
   if (!user) return undefined;
   if (user === 'unauthed') return null;
-  // Operator-attributed writes (console replies) require a user token. The
-  // hermetic suite routes every GitHub call to its fixture API, which never
-  // inspects credentials, so a placeholder stands in for the OAuth token.
+  // The fixture API accepts this placeholder in place of a real OAuth token
+  // and can distinguish operator-attributed writes from installation writes.
   return withServerGithubAccessToken(
     await getMockSession(user),
     E2E_FIXTURE_GITHUB_USER_TOKEN,

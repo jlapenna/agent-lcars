@@ -458,14 +458,15 @@ export function ActionItemCard({
   const handleMerge = () => {
     setError(undefined);
     startTransition(async () => {
-      const result = await mergePr(item.repo, item.number);
+      const result = await mergePr(item.repo, item.number, item.headSha);
       if (!result.ok) {
+        if (result.reauth) beginOperatorReauth();
         setError(result.message);
         return;
       }
       notifications.show({
-        message: `#${item.number} merged`,
-        color: 'green',
+        message: result.note ?? `#${item.number} merged`,
+        color: result.note ? 'yellow' : 'green',
       });
     });
   };
@@ -475,8 +476,8 @@ export function ActionItemCard({
       title: `Merge #${item.number}?`,
       children: (
         <Text size="sm">
-          This approves and squash-merges &ldquo;{item.title}&rdquo; into main.
-          This can&rsquo;t be undone from here.
+          This submits an approval as your GitHub user and squash-merges &ldquo;
+          {item.title}&rdquo;. This can&rsquo;t be undone from here.
         </Text>
       ),
       labels: { confirm: 'Approve & Merge', cancel: 'Cancel' },
@@ -494,14 +495,21 @@ export function ActionItemCard({
   const handleRebase = () => {
     setError(undefined);
     startTransition(async () => {
-      const result = await approveAndRebase(item.repo, item.number);
+      const result = await approveAndRebase(
+        item.repo,
+        item.number,
+        item.headSha,
+      );
       if (!result.ok) {
+        if (result.reauth) beginOperatorReauth();
         setError(result.message);
         return;
       }
       notifications.show({
-        message: `#${item.number} approved, branch updated, auto-merge enabled`,
-        color: 'green',
+        message:
+          result.note ??
+          'Approval recorded, squash auto-merge enabled, and branch update requested.',
+        color: result.note ? 'yellow' : 'green',
       });
     });
   };
@@ -512,9 +520,9 @@ export function ActionItemCard({
       title: `Rebase #${item.number}?`,
       children: (
         <Text size="sm">
-          This approves &ldquo;{item.title}&rdquo;, updates its branch from
-          main, and turns on auto-merge so it squash-merges on its own once
-          checks pass.
+          This submits an approval as your GitHub user, enables squash
+          auto-merge, and requests a branch update for &ldquo;{item.title}
+          &rdquo;.
         </Text>
       ),
       labels: { confirm: 'Approve & Rebase', cancel: 'Cancel' },
