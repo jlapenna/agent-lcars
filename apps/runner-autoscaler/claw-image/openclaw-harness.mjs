@@ -307,7 +307,11 @@ export function run(command, args, { env, cwd, timeoutMs, signal } = {}) {
     });
     let stdout = '';
     let timedOut = false;
-    const stop = () => stopGroup(child, GATEWAY_STOP_MS);
+    const stop = () =>
+      stopGroup(
+        child,
+        signal?.reason instanceof ClawFailure ? 0 : GATEWAY_STOP_MS,
+      );
     const timer =
       timeoutMs > 0
         ? setTimeout(() => {
@@ -908,7 +912,10 @@ export function startGateway(openclaw, { env, cwd, port, signal }) {
     // SIGTERM, then SIGKILL for the whole group once the grace is over or
     // the Gateway itself has gone: whatever it left behind goes with it.
     const stop = async () => {
-      stopGroup(child, GATEWAY_STOP_MS);
+      stopGroup(
+        child,
+        signal?.reason instanceof ClawFailure ? 0 : GATEWAY_STOP_MS,
+      );
       await Promise.race([
         closed,
         new Promise((done) => setTimeout(done, GATEWAY_STOP_MS).unref()),
@@ -1142,6 +1149,12 @@ export async function openclawHarness({
     port,
     signal,
   });
+  let stopping;
+  const stopGateway = () => (stopping ??= gateway.stop());
+  // A memory trip must stop the Gateway even if ACP is still unwinding.
+  // Normal launcher disconnects also cancel the owned Gateway.
+  if (signal?.aborted) await stopGateway();
+  else signal?.addEventListener('abort', stopGateway, { once: true });
   return {
     command: openclaw,
     args: [
@@ -1177,7 +1190,8 @@ export async function openclawHarness({
             });
         }
       } finally {
-        await gateway.stop();
+        signal?.removeEventListener('abort', stopGateway);
+        await stopGateway();
       }
       // The Gateway's record of the final reply goes to the launcher, which
       // holds what was streamed and places the answer in it (answerText).
