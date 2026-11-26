@@ -6,6 +6,7 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
@@ -52,8 +53,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 vi.mock('./action-item-card', () => ({
-  ActionItemCard: ({ item }: { item: ActionItem }) => (
-    <div data-testid="selected-detail">Detail #{item.number}</div>
+  ActionItemCard: ({
+    item,
+    trajectory,
+  }: {
+    item: ActionItem;
+    trajectory?: ReactNode;
+  }) => (
+    <div data-testid="selected-detail">
+      Detail #{item.number}
+      {trajectory}
+    </div>
   ),
 }));
 vi.mock('./item-overflow-menu', () => ({
@@ -126,6 +136,37 @@ function renderWorkspace(
     </MantineProvider>,
   );
 }
+
+it('reloads recent messages when the same session parks on a new run', async () => {
+  vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(
+      Response.json({ messages: [{ role: 'assistant', text: 'First park' }] }),
+    )
+    .mockResolvedValueOnce(
+      Response.json({ messages: [{ role: 'assistant', text: 'Second park' }] }),
+    );
+  const cardForRun = (decisionRunId: string) => ({
+    ...makeCard({ decisionRunId }),
+    trajectorySessionId: 'resumed-session',
+  });
+  const first = cardForRun('first-run');
+  const view = renderWorkspace([first], 'agent/lcars#249', first);
+  expect(await screen.findByText('First park')).toBeInTheDocument();
+
+  const second = cardForRun('second-run');
+  view.rerender(
+    <MantineProvider>
+      <QueueWorkspace
+        cards={[second]}
+        selectedCard={second}
+        selectedItemKey="agent/lcars#249"
+        watchedRepos={[{ owner: 'agent', name: 'lcars' }]}
+      />
+    </MantineProvider>,
+  );
+  expect(await screen.findByText('Second park')).toBeInTheDocument();
+  expect(screen.queryByText('First park')).toBeNull();
+});
 
 describe('queueSelectionHref', () => {
   it('adds an encoded item while preserving the repo filter', () => {

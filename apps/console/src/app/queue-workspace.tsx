@@ -35,6 +35,7 @@ import {
   inboxCardKey,
   inboxCardMetadata,
   inboxCardSignature,
+  inboxDecisionRunId,
   REPORT_DISMISS_MINUTES,
 } from './inbox-card';
 import { InboxMobileCommandDeck } from './inbox-mobile-command-deck';
@@ -355,7 +356,10 @@ export function QueueWorkspace({
     : currentCard;
   const trajectory = selectedCard?.trajectorySessionId && (
     <DecisionTrajectory
-      key={selectedCard.trajectorySessionId}
+      key={JSON.stringify([
+        inboxDecisionRunId(selectedCard),
+        selectedCard.trajectorySessionId,
+      ])}
       sessionId={selectedCard.trajectorySessionId}
     />
   );
