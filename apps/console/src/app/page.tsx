@@ -61,7 +61,11 @@ import { BridgeDetail } from './bridge-detail';
 import {
   bridgeDestinationReadouts,
   bridgeWorkSummary,
+  EVENT_WORK_PANEL_ERROR,
+  loadBridgeEventWork,
   loadBridgeStoppedPages,
+  STOPPED_WORK_PANEL_ERROR,
+  WORK_SUMMARY_UNAVAILABLE_ERROR,
 } from './bridge-readouts';
 import { resolveBridgeDetail } from './bridge-rows';
 import {
@@ -100,17 +104,12 @@ import { NavPageLoading, PageLoading } from './page-loading';
 import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
 import { onlineRunnerCount } from './runner-rows';
-import { parseStoppedWorkCursor, stoppedWorkHref } from './stopped-work-query';
+import { stoppedWorkHref } from './stopped-work-query';
 import { withConsolePageShell } from './with-console-page-shell';
 import { cancelItem, redispatchItem } from './work/actions';
 import { context as workContext } from './work/context';
-import { isEventWork } from './work/event-work';
 import { EventWorkActivity } from './work/event-work-activity';
-import {
-  matchesWorkView,
-  parseWorkViewFilters,
-  workListHref,
-} from './work/work-list-query';
+import { workListHref } from './work/work-list-query';
 
 function toCard(item: ActionItem): BoardCard {
   return {
@@ -150,73 +149,14 @@ async function getParkedWork(
   eventItems: WorkSummary[];
   /** Event tasks read to find `eventItems`, and whether older ones exist. */
   eventWindow?: { size: number; windowed: boolean };
+  eventError?: string;
   hasMoreTasks: boolean;
   nextCursor?: TaskListCursor;
   error?: string;
 }> {
+  let work: Awaited<ReturnType<typeof workContext>>;
   try {
-    const work = await workContext();
-    if (!work.principal?.scopes.has('work.operator')) {
-      return {
-        authorized: false,
-        items: [],
-        summaryStoppedItems: [],
-        summaryHasMoreStopped: false,
-        eventItems: [],
-        hasMoreTasks: false,
-      };
-    }
-    const cursor = parseStoppedWorkCursor(rawCursor);
-    // Each read takes only tasks carrying the stored sort key (#3566): the
-    // newest stopped tasks and the newest event tasks, instead of the newest
-    // 200 tasks of every state filtered here.
-    const [stopped, recent] = await Promise.all([
-      loadBridgeStoppedPages({
-        cursor,
-        repo,
-        readPage: (pageCursor) =>
-          listWorkSummaries(work.runtime.store, {
-            limit: STOPPED_WORK_PAGE,
-            cursor: pageCursor,
-            sortKey: 'stoppedAt',
-          }),
-        excludeClosed: (candidates) =>
-          excludeClosedGithubAnchors(work.runtime.store, candidates),
-        onSummaryError: (error) => {
-          logger.error(
-            'agent-lcars: bridge work summary readout unavailable:',
-            error,
-          );
-        },
-      }),
-      listWorkSummaries(work.runtime.store, {
-        limit: EVENT_WORK_READ,
-        sortKey: 'eventAt',
-      }),
-    ]);
-    const eventItems = recent.items
-      .filter(
-        (item) =>
-          'workId' in item.anchor &&
-          isEventWork(item) &&
-          (!repo || workRepository(item.spec) === repo) &&
-          matchesWorkView(item, parseWorkViewFilters(view), Date.now()),
-      )
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    return {
-      authorized: true,
-      items: stopped.items,
-      summaryStoppedItems: stopped.summaryStoppedItems,
-      summaryHasMoreStopped: stopped.summaryHasMoreStopped,
-      summaryError: stopped.summaryError,
-      eventItems,
-      eventWindow: {
-        size: recent.items.length,
-        windowed: recent.nextCursor !== undefined,
-      },
-      hasMoreTasks: stopped.hasMoreTasks,
-      nextCursor: stopped.nextCursor,
-    };
+    work = await workContext();
   } catch (error) {
     // The Bridge must never fall to error.tsx because this panel's fetch
     // failed. Keep the rest of the Bridge available and disclose the failed
@@ -227,12 +167,76 @@ async function getParkedWork(
       items: [],
       summaryStoppedItems: [],
       summaryHasMoreStopped: false,
+      summaryError: WORK_SUMMARY_UNAVAILABLE_ERROR,
       eventItems: [],
+      eventError: EVENT_WORK_PANEL_ERROR,
       hasMoreTasks: false,
-      error:
-        'Could not load stopped work. Retry or reset the stopped-work page.',
+      error: STOPPED_WORK_PANEL_ERROR,
     };
   }
+  if (!work.principal?.scopes.has('work.operator')) {
+    return {
+      authorized: false,
+      items: [],
+      summaryStoppedItems: [],
+      summaryHasMoreStopped: false,
+      eventItems: [],
+      hasMoreTasks: false,
+    };
+  }
+  // Each read takes only tasks carrying the stored sort key (#3566): the
+  // newest stopped tasks and the newest event tasks, instead of the newest
+  // 200 tasks of every state filtered here. Panel cursor parsing / GitHub
+  // projection enrichment, the Work card's uncursored native summary, and
+  // event-driven activity each keep their own failure boundary.
+  const [stopped, events] = await Promise.all([
+    loadBridgeStoppedPages({
+      rawCursor,
+      repo,
+      readPage: (pageCursor) =>
+        listWorkSummaries(work.runtime.store, {
+          limit: STOPPED_WORK_PAGE,
+          cursor: pageCursor,
+          sortKey: 'stoppedAt',
+        }),
+      excludeClosed: (candidates) =>
+        excludeClosedGithubAnchors(work.runtime.store, candidates),
+      onPanelError: (error) => {
+        logger.error('agent-lcars: parked work panel unavailable:', error);
+      },
+      onSummaryError: (error) => {
+        logger.error(
+          'agent-lcars: bridge work summary readout unavailable:',
+          error,
+        );
+      },
+    }),
+    loadBridgeEventWork({
+      repo,
+      view,
+      readEvents: () =>
+        listWorkSummaries(work.runtime.store, {
+          limit: EVENT_WORK_READ,
+          sortKey: 'eventAt',
+        }),
+      onEventError: (error) => {
+        logger.error('agent-lcars: event work activity unavailable:', error);
+      },
+    }),
+  ]);
+  return {
+    authorized: true,
+    items: stopped.items,
+    summaryStoppedItems: stopped.summaryStoppedItems,
+    summaryHasMoreStopped: stopped.summaryHasMoreStopped,
+    summaryError: stopped.summaryError,
+    eventItems: events.eventItems,
+    eventWindow: events.eventWindow,
+    eventError: events.eventError,
+    hasMoreTasks: stopped.hasMoreTasks,
+    nextCursor: stopped.nextCursor,
+    error: stopped.panelError,
+  };
 }
 
 /** Agents in the Bridge's repository scope and view. */
@@ -293,6 +297,7 @@ async function IndexBody({
       summaryError: workSummaryError,
       eventItems,
       eventWindow,
+      eventError: eventWorkError,
       hasMoreTasks: hasMoreParkedTasks,
       nextCursor: stoppedNextCursor,
       error: stoppedError,
@@ -568,7 +573,7 @@ async function IndexBody({
           workHref,
           work: bridgeWorkSummary({
             authorized: workAuthorized,
-            error: stoppedError ?? workSummaryError,
+            error: workSummaryError ?? eventWorkError,
             stoppedItems: summaryStoppedItems,
             hasMoreStopped: summaryHasMoreStopped,
             eventCount: eventItems.length,
@@ -619,7 +624,7 @@ async function IndexBody({
               items={eventItems}
               windowSize={eventWindow?.size}
               windowed={eventWindow?.windowed}
-              error={stoppedError}
+              error={eventWorkError}
               repo={repoFilterKey}
               view={view}
             />

@@ -12,6 +12,8 @@ import { repoKey } from '../lib/watched-repo';
 import type { AgentsViewFilters } from './agents/agents-view-filters';
 import type { ConsoleReadout } from './console-readouts';
 import { formatCost, formatDuration } from './format';
+import { parseStoppedWorkCursor } from './stopped-work-query';
+import { isEventWork } from './work/event-work';
 import { matchesWorkView, parseWorkViewFilters } from './work/work-list-query';
 
 export interface BridgeReadoutInput {
@@ -303,32 +305,43 @@ export interface BridgeWorkSummaryInput {
   now?: number;
 }
 
+export const STOPPED_WORK_PANEL_ERROR =
+  'Could not load stopped work. Retry or reset the stopped-work page.';
+export const EVENT_WORK_PANEL_ERROR = 'Could not load event-driven work.';
+export const WORK_SUMMARY_UNAVAILABLE_ERROR = 'Work summary unavailable';
+
+export interface StoppedWorkPage {
+  items: WorkSummary[];
+  nextCursor?: TaskListCursor;
+}
+
 /**
- * Loads the Bridge's Stopped work panel page and, when that panel is paged
- * past page 1 (`cursor`), reads the uncursored first stopped page in parallel
- * so the Work destination card stays independent of panel pagination instead
- * of collapsing to a bare page-local count on the final cursor page.
+ * Loads the Bridge's Stopped work panel page and the Work destination card's
+ * uncursored native stopped summary with isolated failure boundaries:
  *
- * The panel keeps all anchors (dropping closed GitHub issues via
- * `excludeClosed`), while the Work destination summary keeps native Work
- * anchors only (`'workId' in item.anchor`) to match `/work`. On cursor-paged
- * requests, the uncursored summary read runs in its own failure path so a
- * summary-only failure marks only the Work card unavailable without discarding
- * the selected panel page or event activity.
+ * - On page 1 (no `rawCursor`), a single uncursored `readPage(undefined)` feeds
+ *   both the panel and the Work card; GitHub projection enrichment
+ *   (`excludeClosed`) runs only for the panel so a GitHub projection failure
+ *   cannot discard the native Work summary.
+ * - When `rawCursor` is present, cursor parsing (`parseStoppedWorkCursor`), the
+ *   selected cursor page read, and its `excludeClosed` enrichment all live
+ *   inside the panel's own failure path, while the uncursored native summary
+ *   runs in parallel in its own failure path — so an invalid cursor or panel
+ *   failure cannot degrade the Work card, and a summary-only failure cannot
+ *   degrade the panel.
  */
 export async function loadBridgeStoppedPages(input: {
-  cursor?: TaskListCursor;
+  rawCursor?: string;
   repo?: string;
-  readPage: (cursor?: TaskListCursor) => Promise<{
-    items: WorkSummary[];
-    nextCursor?: TaskListCursor;
-  }>;
+  readPage: (cursor?: TaskListCursor) => Promise<StoppedWorkPage>;
   excludeClosed: (items: WorkSummary[]) => Promise<WorkSummary[]>;
+  onPanelError?: (error: unknown) => void;
   onSummaryError?: (error: unknown) => void;
 }): Promise<{
   items: WorkSummary[];
   hasMoreTasks: boolean;
   nextCursor?: TaskListCursor;
+  panelError?: string;
   summaryStoppedItems: WorkSummary[];
   summaryHasMoreStopped: boolean;
   summaryError?: string;
@@ -342,67 +355,118 @@ export async function loadBridgeStoppedPages(input: {
   const nativeOnly = (items: WorkSummary[]) =>
     items.filter((item) => 'workId' in item.anchor);
 
-  if (!input.cursor) {
-    const page = await input.readPage(undefined);
-    const items = await input.excludeClosed(filterForRepo(page.items));
-    return {
-      items,
-      hasMoreTasks: page.nextCursor !== undefined,
-      nextCursor: page.nextCursor,
-      summaryStoppedItems: nativeOnly(items),
-      summaryHasMoreStopped: page.nextCursor !== undefined,
-    };
-  }
+  type PageResult =
+    { ok: true; page: StoppedWorkPage } | { ok: false; error: unknown };
 
-  const loadSelectedPage = async () => {
-    const page = await input.readPage(input.cursor);
-    const items = await input.excludeClosed(filterForRepo(page.items));
-    return {
-      items,
-      hasMoreTasks: page.nextCursor !== undefined,
-      nextCursor: page.nextCursor,
-    };
-  };
+  const firstPage: Promise<PageResult> = Promise.resolve()
+    .then(() => input.readPage(undefined))
+    .then(
+      (page): PageResult => ({ ok: true, page }),
+      (error): PageResult => ({ ok: false, error }),
+    );
 
-  const loadSummaryPage = async (): Promise<
-    | {
-        ok: true;
-        stoppedItems: WorkSummary[];
-        hasMoreStopped: boolean;
-      }
-    | {
-        ok: false;
-        error: string;
-      }
-  > => {
+  const loadPanel = async (): Promise<{
+    items: WorkSummary[];
+    hasMoreTasks: boolean;
+    nextCursor?: TaskListCursor;
+    panelError?: string;
+  }> => {
     try {
-      const summaryPage = await input.readPage(undefined);
-      // Native items never use GitHub issue projections, so the Work card
-      // summary skips `excludeClosed` and never shares its failure path.
+      let page: StoppedWorkPage;
+      if (!input.rawCursor) {
+        const result = await firstPage;
+        if (!result.ok) throw result.error;
+        page = result.page;
+      } else {
+        const cursor = parseStoppedWorkCursor(input.rawCursor);
+        page = await input.readPage(cursor);
+      }
+      const items = await input.excludeClosed(filterForRepo(page.items));
       return {
-        ok: true,
-        stoppedItems: nativeOnly(filterForRepo(summaryPage.items)),
-        hasMoreStopped: summaryPage.nextCursor !== undefined,
+        items,
+        hasMoreTasks: page.nextCursor !== undefined,
+        nextCursor: page.nextCursor,
       };
     } catch (error) {
-      input.onSummaryError?.(error);
+      input.onPanelError?.(error);
       return {
-        ok: false,
-        error: 'Work summary unavailable',
+        items: [],
+        hasMoreTasks: false,
+        panelError: STOPPED_WORK_PANEL_ERROR,
       };
     }
   };
 
-  const [selected, summary] = await Promise.all([
-    loadSelectedPage(),
-    loadSummaryPage(),
-  ]);
-  return {
-    ...selected,
-    summaryStoppedItems: summary.ok ? summary.stoppedItems : [],
-    summaryHasMoreStopped: summary.ok ? summary.hasMoreStopped : false,
-    ...(summary.ok ? {} : { summaryError: summary.error }),
+  const loadSummary = async (): Promise<{
+    summaryStoppedItems: WorkSummary[];
+    summaryHasMoreStopped: boolean;
+    summaryError?: string;
+  }> => {
+    const result = await firstPage;
+    if (!result.ok) {
+      input.onSummaryError?.(result.error);
+      return {
+        summaryStoppedItems: [],
+        summaryHasMoreStopped: false,
+        summaryError: WORK_SUMMARY_UNAVAILABLE_ERROR,
+      };
+    }
+    return {
+      summaryStoppedItems: nativeOnly(filterForRepo(result.page.items)),
+      summaryHasMoreStopped: result.page.nextCursor !== undefined,
+    };
   };
+
+  const [panel, summary] = await Promise.all([loadPanel(), loadSummary()]);
+  return {
+    ...panel,
+    ...summary,
+  };
+}
+
+/**
+ * Loads the Bridge's native event-driven work read in its own failure boundary
+ * so Stopped work panel failures (cursor parsing or GitHub projections) cannot
+ * discard event activity or the Work destination card's event count.
+ */
+export async function loadBridgeEventWork(input: {
+  repo?: string;
+  view?: AgentsViewFilters;
+  now?: number;
+  readEvents: () => Promise<StoppedWorkPage>;
+  onEventError?: (error: unknown) => void;
+}): Promise<{
+  eventItems: WorkSummary[];
+  eventWindow?: { size: number; windowed: boolean };
+  eventError?: string;
+}> {
+  try {
+    const recent = await input.readEvents();
+    const workView = parseWorkViewFilters(input.view ?? {});
+    const now = input.now ?? Date.now();
+    const eventItems = recent.items
+      .filter(
+        (item) =>
+          'workId' in item.anchor &&
+          isEventWork(item) &&
+          (!input.repo || workRepository(item.spec) === input.repo) &&
+          matchesWorkView(item, workView, now),
+      )
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return {
+      eventItems,
+      eventWindow: {
+        size: recent.items.length,
+        windowed: recent.nextCursor !== undefined,
+      },
+    };
+  } catch (error) {
+    input.onEventError?.(error);
+    return {
+      eventItems: [],
+      eventError: EVENT_WORK_PANEL_ERROR,
+    };
+  }
 }
 
 /**
