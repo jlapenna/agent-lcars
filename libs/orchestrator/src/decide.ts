@@ -1437,6 +1437,13 @@ export function updateTaskWork(input: {
   return { task: { ...task, work, updatedAt: now }, outbox: [] };
 }
 
+/** A queued run has no worker or credentials to retire after settlement. */
+export function retireUnclaimedQueue(run: Run): Run {
+  return run.queue?.state === 'queued'
+    ? { ...run, queue: { ...run.queue, state: 'retired' } }
+    : run;
+}
+
 export function agentDependencyEntryId(runId: string): string {
   return `wait-for-agent/${runId}`;
 }
@@ -1448,7 +1455,7 @@ export function agentDependencyEntryId(runId: string): string {
 function settle(releasedTask: Task, settledRun: Run, now: string): Decision {
   return {
     task: releasedTask,
-    run: settledRun,
+    run: retireUnclaimedQueue(settledRun),
     outbox: [
       settledRun.state === 'finished' && settledRun.result?.dependencyWorkId
         ? {

@@ -317,7 +317,7 @@ describe('handleWebhookDelivery', () => {
     });
     expect(await store.readRun(runId)).toMatchObject({
       state: 'canceled',
-      queue: { state: 'queued' },
+      queue: { state: 'retired' },
       events: expect.arrayContaining([
         expect.objectContaining({
           to: 'canceled',
@@ -473,7 +473,7 @@ describe('handleWebhookDelivery', () => {
     });
     expect(await store.readRun(runId)).toMatchObject({
       state: 'canceled',
-      queue: { state: 'queued' },
+      queue: { state: 'retired' },
     });
   });
 
