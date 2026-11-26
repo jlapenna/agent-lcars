@@ -26,6 +26,7 @@ import { ORPCError } from '@orpc/server';
 
 import type { CliSessionsResult } from './cli-sessions';
 import { withHandoffActions } from './handoff-summary-work';
+import { withItemRunIssues } from './item-run-issues';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import type { AgentProfile } from './repository-agent-runs';
 import type { AgentStore } from './repository-agent-store';
@@ -137,11 +138,12 @@ export async function viewWithEvidence(
   task: Task,
 ): Promise<ItemView> {
   const { item, runs } = await viewOf(context, workId, task);
+  const store = context.runtime.store;
   return {
     ...item,
     runs: await withRunEvidence(
-      context.runtime.store,
-      item.runs,
+      store,
+      await withItemRunIssues(store, item.runs, runs),
       runs,
       (error) =>
         logger.error(

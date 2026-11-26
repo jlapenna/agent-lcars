@@ -2,6 +2,7 @@ import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it } from 'vitest';
 
 import { decidedRun, isRefusal } from './decide';
+import { readRunIssue } from './issue-snapshot';
 import { MemoryStore } from './memory-store';
 import { Orchestrator } from './orchestrator';
 const issue: TrackerIssue = {
@@ -64,7 +65,8 @@ describe('issue source snapshot semantics', () => {
     const result = await f.orchestrator.sweepExpired();
     expect(result.retried).toHaveLength(1);
     const next = await f.store.readRun(result.retried[0]!.newRunId);
-    expect(next?.issue).toEqual(issue);
+    expect(next?.issueSnapshot).toEqual(f.run.issueSnapshot);
+    expect(await readRunIssue(f.store, next!)).toEqual(issue);
     expect((await f.store.readTask(f.taskId))?.task.issue?.description).toBe(
       'New request',
     );
@@ -83,7 +85,7 @@ describe('issue source snapshot semantics', () => {
     if (isRefusal(result)) throw new Error(result.reason);
     expect(result.additionalRuns?.[0]).toMatchObject({
       pipeline: 'codex',
-      issue,
+      issueSnapshot: f.run.issueSnapshot,
     });
     expect((await f.store.readTask(f.taskId))?.task.issue?.title).toBe(
       'Later edit',
@@ -96,7 +98,10 @@ describe('issue source snapshot semantics', () => {
     f.setNow('2026-11-04T13:00:00.000Z');
     const result = await f.orchestrator.sweepExpired();
     expect(
-      (await f.store.readRun(result.retried[0]!.newRunId))?.issue,
+      await readRunIssue(
+        f.store,
+        (await f.store.readRun(result.retried[0]!.newRunId))!,
+      ),
     ).toBeUndefined();
   });
   it('copies a fresh current snapshot for an explicit new turn and rejects identity changes', async () => {
@@ -116,8 +121,10 @@ describe('issue source snapshot semantics', () => {
       params: { mode: 'reply' },
     });
     if (isRefusal(next)) throw new Error(next.reason);
-    expect(decidedRun(next).issue).toEqual(edited);
-    expect((await f.store.readRun(f.run.runId))?.issue).toEqual(issue);
+    expect(await readRunIssue(f.store, decidedRun(next))).toEqual(edited);
+    expect(
+      await readRunIssue(f.store, (await f.store.readRun(f.run.runId))!),
+    ).toEqual(issue);
     await expect(
       f.orchestrator.refreshIssue(f.taskId, {
         ...edited,

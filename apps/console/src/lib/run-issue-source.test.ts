@@ -16,6 +16,7 @@ const label = '33333333-3333-4333-8333-333333333333';
 const issueId = '44444444-4444-4444-8444-444444444444';
 const commentId = '55555555-5555-4555-8555-555555555555';
 const now = '2026-11-04T10:00:00.000Z';
+const workerSubject = 'executor@example.iam.gserviceaccount.com';
 const admitted: TrackerIssue = {
   reference: { tracker: 'linear', organizationId: org, issueId },
   identifier: 'ENG-42',
@@ -96,6 +97,7 @@ async function fixture() {
   await store.claimQueuedRun({
     pipelines: ['claude'],
     claimedBy: 'worker',
+    claimedBySubject: workerSubject,
     tokenHash: hashRunToken(token),
     now,
   });
@@ -162,16 +164,18 @@ async function fixture() {
     tokens: { tokenFor: async () => 'unused-github-token' },
     now: () => new Date(now),
   } as unknown as RunsContext;
-  const read = async (bearerToken = token) => {
+  const readRun = async (id: string, path: string, bearerToken: string) => {
     const { response } = await createRunsHandler().handle(
       new Request(
-        `https://lcars.test/api/work/v1/runs/${encodeURIComponent(run.runId)}/issue-source?cursor=earlier-page`,
+        `https://lcars.test/api/work/v1/runs/${encodeURIComponent(id)}/${path}`,
       ),
       { prefix: '/api/work/v1', context: { ...context, bearerToken } },
     );
     return { status: response?.status, body: await response?.json() };
   };
-  return { store, orchestrator, run, token, source, operations, read };
+  const read = (bearerToken = token) =>
+    readRun(run.runId, 'issue-source?cursor=earlier-page', bearerToken);
+  return { store, orchestrator, run, token, source, operations, read, readRun };
 }
 describe('run-scoped issue source HTTP boundary', () => {
   it('returns current source and paginated comments alongside the immutable admitted snapshot', async () => {
@@ -190,6 +194,46 @@ describe('run-scoped issue source HTTP boundary', () => {
     });
     expect(JSON.stringify(result.body)).not.toContain('server-only-api-key');
     expect(JSON.stringify(result.body)).not.toContain(f.token);
+  });
+  it('builds the original and automatic retry briefs from the admitted issue after a tracker edit', async () => {
+    const f = await fixture();
+    await f.orchestrator.refreshIssue(f.run.task, {
+      ...admitted,
+      description: 'Updated since admission',
+      updatedAt: '2026-11-04T10:00:01.000Z',
+    });
+    const brief = {
+      status: 200,
+      body: {
+        issue: admitted,
+        anchor: {
+          body: `Linear issue: ${admitted.url}\n\n${admitted.description}`,
+        },
+      },
+    };
+    expect(await f.readRun(f.run.runId, 'brief', f.token)).toMatchObject(brief);
+
+    const exit = await f.orchestrator.executorExited(f.run.runId, {
+      subject: workerSubject,
+      runner: 'worker',
+      claimFingerprint: hashRunToken(f.token),
+    });
+    if (isRefusal(exit)) throw new Error(exit.reason);
+    const retry = exit.additionalRuns?.[0];
+    if (!retry) throw new Error('Expected an automatic retry');
+    const retryToken = 'retry-claim-token';
+    await f.orchestrator.confirmDispatch(retry.runId);
+    await f.store.enqueueRun({ runId: retry.runId, now });
+    await f.store.claimQueuedRun({
+      pipelines: ['claude'],
+      claimedBy: 'worker',
+      claimedBySubject: workerSubject,
+      tokenHash: hashRunToken(retryToken),
+      now,
+    });
+    expect(await f.readRun(retry.runId, 'brief', retryToken)).toMatchObject(
+      brief,
+    );
   });
   it('refuses a foreign token before any source lookup', async () => {
     const f = await fixture();

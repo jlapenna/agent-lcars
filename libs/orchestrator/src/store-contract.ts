@@ -1,8 +1,11 @@
+import assert from 'node:assert/strict';
+
 import {
   RUN_MESSAGE_MAX_BYTES,
   RUN_MESSAGE_PREVIEW_MAX,
   runEvidenceSchema,
   runMessageBytes,
+  type TrackerIssue,
 } from '@agent-lcars/dispatch-contracts';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -22,11 +25,13 @@ import {
   requestRun,
   runStartDeadlineAt,
 } from './decide';
+import { readRunIssue, readRunIssues } from './issue-snapshot';
 import { taskDerivedFrom } from './item-state';
 import { lifecycleMetricSnapshot } from './lifecycle-metrics';
 import {
   type LeasedOutboxEntry,
   type QueuePriority,
+  runSchema,
   type TaskId,
   taskKey,
   WORK_PAYLOAD_MAX_BYTES,
@@ -44,7 +49,7 @@ import {
   StoreConflict,
 } from './store';
 
-const TASK: TaskId = { repo: 'octo/example', issue: 7 };
+const TASK = { repo: 'octo/example', issue: 7 } satisfies TaskId;
 const T0 = '2026-08-15T12:00:00.000Z';
 const TASK_WORK = { spec: { title: 'contract work' } };
 
@@ -122,6 +127,125 @@ export function runOrchestratorStoreContract(
     }
   });
   describe(`OrchestratorStore contract: ${name}`, () => {
+    it('writes an immutable issue snapshot at admission and reuses it across retries', async () => {
+      const store = await makeStore();
+      const clock = new TestClock(T0);
+      const orchestrator = new Orchestrator(store, clock);
+      const issue = {
+        reference: { tracker: 'github', ...TASK },
+        identifier: 'octo/example#7',
+        title: 'Original issue',
+        description: 'Original admitted body',
+        url: 'https://github.com/octo/example/issues/7',
+        state: 'open',
+        updatedAt: T0,
+        labels: [{ id: 'label-1', name: 'bug' }],
+        assignees: [],
+      } satisfies TrackerIssue;
+      const input = { taskId: TASK, pipeline: 'claude', work: TASK_WORK };
+      const admission = await orchestrator.request({
+        ...input,
+        requestId: 'initial',
+        issue,
+      });
+      if (isRefusal(admission)) throw new Error(admission.reason);
+      const first = await store.readRun(decidedRun(admission).runId);
+      assert(first?.issueSnapshot);
+      expect(first).not.toHaveProperty('issue');
+      expect(first.issueSnapshot).toEqual({
+        id: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        reference: issue.reference,
+        identifier: issue.identifier,
+        title: issue.title,
+        url: issue.url,
+        state: issue.state,
+      });
+      const id = first.issueSnapshot.id;
+      expect(await store.readIssueSnapshot(id)).toEqual(issue);
+      const missing = id === 'a'.repeat(64) ? 'b'.repeat(64) : 'a'.repeat(64);
+      expect(await store.readIssueSnapshot(missing)).toBeUndefined();
+      expect(await store.readIssueSnapshots([id, missing, id])).toEqual(
+        new Map([[id, issue]]),
+      );
+
+      // A property-order change does not change the snapshot ID.
+      const reordered = {
+        ...issue,
+        reference: {
+          issue: TASK.issue,
+          repo: TASK.repo,
+          tracker: 'github' as const,
+        },
+        labels: [{ name: 'bug', id: 'label-1' }],
+      };
+      const other = await orchestrator.request({
+        ...input,
+        taskId: { repo: TASK.repo, issue: 8 },
+        requestId: 'same-content',
+        issue: reordered,
+      });
+      if (isRefusal(other)) throw new Error(other.reason);
+      expect(decidedRun(other).issueSnapshot?.id).toBe(id);
+
+      await orchestrator.confirmDispatch(first.runId);
+      clock.advanceMinutes(1);
+      const edited = {
+        ...issue,
+        description: 'Edited body',
+        updatedAt: clock.now(),
+      };
+      await orchestrator.refreshIssue(TASK, edited);
+      const running = await store.readRun(first.runId);
+      assert(running);
+      expect(await readRunIssue(store, running)).toEqual(issue);
+
+      clock.advanceMinutes(180);
+      const { retried } = await orchestrator.sweepExpired();
+      const [retryInfo] = retried;
+      assert(retryInfo);
+      const retry = await store.readRun(retryInfo.newRunId);
+      assert(retry);
+      expect(retry.issueSnapshot?.id).toBe(id);
+      expect(retry).not.toHaveProperty('issue');
+      expect(await readRunIssues(store, [first, retry])).toEqual(
+        new Map([
+          [first.runId, issue],
+          [retry.runId, issue],
+        ]),
+      );
+
+      await orchestrator.report(retry.runId, { ok: true, summary: 'done' });
+      const next = await orchestrator.request({
+        ...input,
+        requestId: 'new-turn',
+      });
+      if (isRefusal(next)) throw new Error(next.reason);
+      expect(decidedRun(next).issueSnapshot?.id).not.toBe(id);
+      expect(await readRunIssue(store, decidedRun(next))).toEqual(edited);
+      expect((await store.readTask(TASK))?.task.issue).toEqual(edited);
+    });
+
+    it('strictly parses legacy embedded issue snapshots and reads them without a reference', async () => {
+      const store = await makeStore();
+      const { run } = await started(new Orchestrator(store, new TestClock(T0)));
+      const issue = {
+        reference: { tracker: 'github', ...TASK },
+        identifier: 'octo/example#7',
+        url: 'https://github.com/octo/example/issues/7',
+        title: 'Legacy',
+        description: 'Embedded body',
+        state: 'open',
+        updatedAt: T0,
+        labels: [],
+        assignees: [],
+      } satisfies TrackerIssue;
+      const legacy = runSchema.parse({ ...run, issue });
+      expect(await readRunIssue(store, legacy)).toEqual(issue);
+      expect(await readRunIssues(store, [legacy])).toEqual(
+        new Map([[legacy.runId, issue]]),
+      );
+    });
+
     it('binds a source to one time-ordered Work identity under concurrent admission', async () => {
       const store = await makeStore();
       expect(

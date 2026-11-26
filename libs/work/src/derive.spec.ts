@@ -347,6 +347,38 @@ it('projects known queue clocks without claim credentials or invented historical
   }
 });
 
+it('projects the same bounded issue fields for referenced and legacy runs', () => {
+  const issue = {
+    reference: { tracker: 'github' as const, repo: 'octo/example', issue: 7 },
+    identifier: 'octo/example#7',
+    url: 'https://github.com/octo/example/issues/7',
+    title: 'Original title',
+    state: 'open' as const,
+  };
+  const current = run(2, 'running', {
+    issueSnapshot: { id: 'a'.repeat(64), ...issue },
+  });
+  const legacy = run(1, 'finished', {
+    issue: {
+      ...issue,
+      description: 'Legacy body',
+      updatedAt: T,
+      labels: [],
+      assignees: [],
+    },
+  });
+  for (const makeView of [toItemView, toWorkSummary]) {
+    const view = makeView({
+      task: task(),
+      workId: WORK_ID,
+      runs: [legacy, current],
+    });
+    expect(
+      view.runs.map((projected) => itemRunViewSchema.parse(projected).issue),
+    ).toEqual([issue, issue]);
+  }
+});
+
 it('projects fallback lineage together with queue clocks without private run authority', () => {
   const clocks = {
     state: 'claimed' as const,

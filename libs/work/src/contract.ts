@@ -145,7 +145,14 @@ const deliveryBindingSchema = z.object({
 });
 
 export const itemRunViewSchema = z.strictObject({
-  issue: trackerIssueSchema.optional(),
+  issue: trackerIssueSchema
+    .partial({
+      description: true,
+      updatedAt: true,
+      labels: true,
+      assignees: true,
+    })
+    .optional(),
   triagePublication: triagePublicationSchema.optional(),
   delivery: deliveryBindingSchema.optional(),
   runId: z.string(),

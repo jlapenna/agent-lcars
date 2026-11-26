@@ -1,6 +1,7 @@
 import type {
   IssueReference,
   RunEvidence,
+  TrackerIssue,
   TrackerIssueProjection,
 } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
@@ -310,6 +311,12 @@ export interface OrchestratorStore {
   /** Store a run's whole final message out of line, as the chunks
    * `splitRunMessage` produced. Content-addressed by `overflow.sha256` and
    * idempotent; never changes the run document. */
+  readIssueSnapshot(id: string): Promise<TrackerIssue | undefined>;
+  /** A bounded set of unique snapshot IDs for a single detail view. */
+  readIssueSnapshots(
+    ids: readonly string[],
+  ): Promise<Map<string, TrackerIssue>>;
+
   writeRunMessage(input: {
     runId: string;
     overflow: RunMessageOverflow;

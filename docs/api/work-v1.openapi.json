@@ -499,11 +499,7 @@
                                 "identifier",
                                 "url",
                                 "title",
-                                "description",
-                                "state",
-                                "updatedAt",
-                                "labels",
-                                "assignees"
+                                "state"
                               ],
                               "additionalProperties": false
                             },
@@ -2558,11 +2554,7 @@
                                 "identifier",
                                 "url",
                                 "title",
-                                "description",
-                                "state",
-                                "updatedAt",
-                                "labels",
-                                "assignees"
+                                "state"
                               ],
                               "additionalProperties": false
                             },
@@ -4422,11 +4414,7 @@
                               "identifier",
                               "url",
                               "title",
-                              "description",
-                              "state",
-                              "updatedAt",
-                              "labels",
-                              "assignees"
+                              "state"
                             ],
                             "additionalProperties": false
                           },
@@ -5757,11 +5745,7 @@
                               "identifier",
                               "url",
                               "title",
-                              "description",
-                              "state",
-                              "updatedAt",
-                              "labels",
-                              "assignees"
+                              "state"
                             ],
                             "additionalProperties": false
                           },
@@ -7096,11 +7080,7 @@
                               "identifier",
                               "url",
                               "title",
-                              "description",
-                              "state",
-                              "updatedAt",
-                              "labels",
-                              "assignees"
+                              "state"
                             ],
                             "additionalProperties": false
                           },
@@ -8476,11 +8456,7 @@
                               "identifier",
                               "url",
                               "title",
-                              "description",
-                              "state",
-                              "updatedAt",
-                              "labels",
-                              "assignees"
+                              "state"
                             ],
                             "additionalProperties": false
                           },
@@ -9896,11 +9872,7 @@
                                     "identifier",
                                     "url",
                                     "title",
-                                    "description",
-                                    "state",
-                                    "updatedAt",
-                                    "labels",
-                                    "assignees"
+                                    "state"
                                   ],
                                   "additionalProperties": false
                                 },
@@ -11227,11 +11199,7 @@
                               "identifier",
                               "url",
                               "title",
-                              "description",
-                              "state",
-                              "updatedAt",
-                              "labels",
-                              "assignees"
+                              "state"
                             ],
                             "additionalProperties": false
                           },
@@ -12604,11 +12572,7 @@
                               "identifier",
                               "url",
                               "title",
-                              "description",
-                              "state",
-                              "updatedAt",
-                              "labels",
-                              "assignees"
+                              "state"
                             ],
                             "additionalProperties": false
                           },
@@ -14017,11 +13981,7 @@
                               "identifier",
                               "url",
                               "title",
-                              "description",
-                              "state",
-                              "updatedAt",
-                              "labels",
-                              "assignees"
+                              "state"
                             ],
                             "additionalProperties": false
                           },
