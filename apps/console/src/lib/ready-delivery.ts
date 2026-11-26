@@ -101,6 +101,8 @@ async function github(deps: DeliveryGithubDeps, repo: string, path: string) {
       signal: AbortSignal.timeout(10_000),
     },
   );
+  if (response.status === 429 || response.status >= 500)
+    throw new DeliveryReadUnavailable(response.status);
   if (!response.ok)
     throw new Error(`Delivery read refused (${response.status})`);
   return response.json() as Promise<unknown>;
@@ -329,6 +331,26 @@ async function reviews(
   };
 }
 
+/** A transient response from GitHub, without a usable delivery read. */
+export class DeliveryReadUnavailable extends Error {
+  constructor(status: number) {
+    super(`Delivery read refused (${status})`);
+  }
+}
+
+/** A bounded refusal from the authoritative PR read. Only reasons after
+ * the attempt-marker check can carry a verified reference. */
+export class ReadyDeliveryRefusal extends Error {
+  override readonly name = 'ReadyDeliveryRefusal';
+
+  constructor(
+    readonly reason:
+      'invalid-pr-claim' | 'draft-hold' | 'pr-closed' | 'non-squash-arm',
+  ) {
+    super(reason);
+  }
+}
+
 /** Thrown only after an authoritative read proved the run's own exact
  * attempt-marked, non-draft, open PR in its target repository with an
  * established protected target policy, which merely has no auto-merge arm
@@ -359,19 +381,17 @@ export async function readyDeliveryBinding(
   const payload = parsedPayload.data;
   if (payload.spec.target.repo !== repo)
     throw new Error('Delivery target changed');
-  if (
-    pr.number !== number ||
-    (!pr.merged && pr.state !== 'open') ||
-    pr.draft ||
-    !pr.body?.includes(formatClaimMarker(attempt))
-  )
-    throw new Error('Deliverable is not ready and armed');
+  if (pr.number !== number || !pr.body?.includes(formatClaimMarker(attempt)))
+    throw new ReadyDeliveryRefusal('invalid-pr-claim');
+  if (pr.draft) throw new ReadyDeliveryRefusal('draft-hold');
+  if (!pr.merged && pr.state !== 'open')
+    throw new ReadyDeliveryRefusal('pr-closed');
   if (
     !pr.merged &&
     pr.auto_merge !== null &&
     pr.auto_merge.merge_method !== 'squash'
   )
-    throw new Error('Deliverable is armed with a non-squash method');
+    throw new ReadyDeliveryRefusal('non-squash-arm');
   await protectedChecks(deps, repo, pr.base.ref);
   // Proven by the authoritative read above and the established protected
   // target policy: this run's exact marked, ready, open PR in its own target

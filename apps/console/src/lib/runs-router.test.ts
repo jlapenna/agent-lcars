@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 
 import {
+  formatAttemptId,
+  formatClaimMarker,
   RUN_MESSAGE_MAX_BYTES,
   RUN_MESSAGE_PREVIEW_MAX,
 } from '@agent-lcars/dispatch-contracts';
@@ -31,7 +33,10 @@ import { recoverCodexCredentialOperations } from './codex-credential-operations'
 import { codexCentralAuthObject } from './deployment';
 import { TRIAGE_DESCRIPTION } from './fleet-triage-work';
 import { drainOutbox } from './orchestrator-dispatch';
-import { UnqualifiedDeliveryError } from './ready-delivery';
+import {
+  readyDeliveryBinding,
+  UnqualifiedDeliveryError,
+} from './ready-delivery';
 import { agentKey } from './repository-agent-definition';
 import { admitAgentRun } from './repository-agent-runs';
 import type { AgentStore } from './repository-agent-store';
@@ -3616,6 +3621,72 @@ describe('complete', () => {
     expect(run.state).toBe('running');
     expect(run.result).toBeUndefined();
   });
+
+  it.each([
+    { reason: 'draft-hold', matching: true },
+    { reason: 'invalid-pr-claim', matching: false },
+  ])(
+    'retains $reason across a legacy runner failure callback',
+    async ({ reason, matching }) => {
+      const f = await claimedForCompletion(`work-complete-${reason}`);
+      const marker = formatClaimMarker(
+        formatAttemptId({ intentId: f.runId, generation: 1 }),
+      );
+      const fetchImpl = vi.fn(async () =>
+        Response.json({
+          number: 4,
+          body: matching ? marker : '<!-- attempt-claim:old -->',
+          state: 'open',
+          draft: true,
+          head: { sha: 'a'.repeat(40) },
+          base: { ref: 'main' },
+          user: { login: 'agent-lcars[bot]' },
+          merged: false,
+          merge_commit_sha: null,
+          auto_merge: null,
+        }),
+      );
+      const ctx = {
+        ...f,
+        ...context,
+        bearerToken: f.token,
+        loadReadyDeliveryBinding: (
+          deps: Parameters<typeof readyDeliveryBinding>[0],
+          input: Parameters<typeof readyDeliveryBinding>[1],
+        ) => readyDeliveryBinding({ ...deps, fetchImpl }, input),
+      };
+      const path = runPath(f.runId, '/complete');
+      expect(
+        await call(ctx, 'POST', path, {
+          outcome: 'pull-request',
+          outcomeReference: { kind: 'pull-request', number: 4 },
+          message: 'Worker says the PR is ready',
+        }),
+      ).toEqual({
+        status: 200,
+        json: { runId: f.runId, state: 'ready-delivery-refused' },
+      });
+      expect(fetchImpl).toHaveBeenCalledOnce();
+
+      await call(ctx, 'POST', path, {
+        outcome: 'runner-failed',
+        outcomeReference: null,
+        message: 'Runner setup or finalization failed (exit 22).',
+      });
+
+      const run = (await f.store.readRun(f.runId))!;
+      expect(run.state).toBe('finished');
+      expect(run.result).toEqual({
+        ok: false,
+        summary: 'ready-delivery-refused',
+        message: reason,
+        ...(matching
+          ? { ref: 'https://github.com/jlapenna/agent-lcars/pull/4' }
+          : {}),
+      });
+      expect((await f.store.readTask(run.task))!.task.delivery).toBeUndefined();
+    },
+  );
 
   it('settles an initial PR whose ready handoff is not yet qualified, without delivery ownership', async () => {
     const { store, orchestrator, now } = fixture();
