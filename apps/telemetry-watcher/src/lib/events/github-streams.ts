@@ -1,5 +1,6 @@
 import {
   type AgentEventSubscriptionView,
+  MAX_AGENT_EVENT_CLOCK_SKEW_MS,
   parseAgentEventKey,
   subscriptionMatches,
 } from '@agent-lcars/work';
@@ -314,9 +315,11 @@ export class GithubStreams {
               this.remove(s.id);
           }
         }
-        // Overlap one second for GitHub timestamp granularity; router IDs
-        // deduplicate repeats, including ambiguous publication responses.
-        const watermark = new Date(now - 1000).toISOString();
+        // Cover the API's entire supported host clock skew plus timestamp
+        // granularity. Router and delivery IDs deduplicate this overlap.
+        const watermark = new Date(
+          now - MAX_AGENT_EVENT_CLOCK_SKEW_MS - 1000,
+        ).toISOString();
         this.deps.checkpoints?.set(stream.key, watermark);
         stream.since = watermark;
         stream.lastSnapshot = now;

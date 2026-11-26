@@ -6,6 +6,7 @@ import {
   type AgentEventSource,
   agentEventSubscriptionIdSchema,
   type AgentEventSubscriptionView,
+  GITHUB_STREAM_KINDS,
   renderAgentEventNotice,
   validateSubscriptionRequest,
 } from '@agent-lcars/work';
@@ -93,6 +94,11 @@ terminal can receive notices.
 
 Keys and their kinds:
 ${sourceLines().join('\n')}
+
+App repositories use webhooks. Other PRs use this host's GitHub preview
+stream (requires gh preview access); its kinds are ${GITHUB_STREAM_KINDS.join(', ')}.
+Explicit unsupported kinds are refused. Issues/runs and native Work still
+require an App source.
 
   --kinds a,b     only these kinds (default: every kind of the source)
   --until <kind>  end the subscription after the first event of this kind;

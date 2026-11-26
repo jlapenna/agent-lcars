@@ -15,6 +15,7 @@ import {
   type AgentEventSubscription,
   type AgentEventSubscriptionView,
   GITHUB_STREAM_KINDS,
+  MAX_AGENT_EVENT_CLOCK_SKEW_MS,
   parseAgentEventKey,
   validateSubscriptionRequest,
 } from '@agent-lcars/work';
@@ -113,7 +114,7 @@ export function sessionReportedByHost(
 
 /** A host's clock may run a little ahead; a report from further ahead is
  * malformed. */
-export const MAX_REPORT_CLOCK_SKEW_MS = 5 * 60_000;
+export const MAX_REPORT_CLOCK_SKEW_MS = MAX_AGENT_EVENT_CLOCK_SKEW_MS;
 
 /** One id per session, kind and moment, so a report the host repeats after
  * a lost answer routes as a duplicate. */

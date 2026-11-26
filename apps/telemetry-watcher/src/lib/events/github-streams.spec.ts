@@ -2,6 +2,7 @@ import type { AgentEventSubscriptionView } from '@agent-lcars/work';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { OpenPreviewListener } from './github-stream-process';
+import type { GithubPreviewRead } from './github-stream-source';
 import { GithubStreams } from './github-streams';
 import { DeliveryMetrics } from './metrics';
 import type { SubscriptionForwarder } from './subscribe-forwarder';
@@ -105,12 +106,20 @@ function setup({
         base: { repo: { full_name: 'acme/widgets' } },
       };
     }),
-    pages: vi.fn(async () => [[]]),
+    pages: vi.fn<GithubPreviewRead['pages']>(async () => [[]]),
   };
   const metrics = new DeliveryMetrics();
+  const cursors = new Map<string, string>();
+  const checkpoints = {
+    get: (key: string) => cursors.get(key),
+    set: vi.fn((key: string, at: string) => {
+      cursors.set(key, at);
+    }),
+  };
   const streams = new GithubStreams({
     forwarder: base,
     api,
+    checkpoints,
     open,
     metrics,
     log: vi.fn(),
@@ -123,7 +132,17 @@ function setup({
       kinds: ['merged'],
       until: 'merged',
     });
-  return { streams, base, open, handles, api, metrics, subscribe, rows };
+  return {
+    streams,
+    base,
+    open,
+    handles,
+    api,
+    metrics,
+    subscribe,
+    rows,
+    checkpoints,
+  };
 }
 
 describe('host GitHub stream lifecycle', () => {
@@ -215,6 +234,40 @@ describe('host GitHub stream lifecycle', () => {
     expect(await pending).toMatchObject({ ok: false, error: 'unavailable' });
     expect(t.rows.has('s1')).toBe(true);
     expect(t.rows.has('s2')).toBe(false);
+  });
+  it('covers the full allowed clock skew when checkpointing review catch-up', async () => {
+    const t = setup({ existing: true });
+    const prior = t.rows.get('s1')!;
+    t.rows.set('s1', {
+      ...prior,
+      createdAt: new Date(now - 10 * 60_000).toISOString(),
+      kinds: ['review', 'merged'],
+    });
+    await t.streams.restore();
+    const since = t.checkpoints.get(prior.key)!;
+    // Host clock is four minutes ahead of the review's GitHub timestamp.
+    expect(Date.parse(since)).toBeLessThan(now - 4 * 60_000);
+    t.api.pages.mockImplementation(async (path) =>
+      path.includes('/reviews')
+        ? [
+            [
+              {
+                id: 42,
+                user: { login: 'maintainer' },
+                author_association: 'MEMBER',
+                submitted_at: new Date(now - 4 * 60_000).toISOString(),
+                state: 'APPROVED',
+              },
+            ],
+          ]
+        : [[]],
+    );
+    t.handles[0].attach();
+    await vi.waitFor(() =>
+      expect(t.base.reportGithub).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'review', actor: 'maintainer' }),
+      ),
+    );
   });
   it('restores only marked native sources after agent restart', async () => {
     const t = setup({ existing: true });

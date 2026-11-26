@@ -27,6 +27,11 @@ interface SourceDefinition {
   readonly caseInsensitive?: boolean;
 }
 
+/** Maximum future skew accepted for a host event report. Native stream
+ * review catch-up overlaps this whole interval because GitHub timestamps
+ * and a host clock need not agree to one second. */
+export const MAX_AGENT_EVENT_CLOCK_SKEW_MS = 5 * 60_000;
+
 /** Native GitHub preview streams cover fewer kinds than App webhooks.
  * Head changes trigger a state reread, but do not name the pusher. */
 export const GITHUB_STREAM_KINDS = [
