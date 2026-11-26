@@ -26,6 +26,7 @@ import { z } from 'zod';
 
 import { isAdminGithubLogin, isControlPlaneRepository } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
+import { dismissGithubReview } from './github-review-dismissal';
 import {
   admitGithubWork,
   type GithubWorkAdmissionOutcome,
@@ -419,24 +420,17 @@ async function dismissReview(
 ): Promise<void> {
   if (!deps.reviewerTokens) throw new Error('Reviewer credentials unavailable');
   const token = await deps.reviewerTokens.tokenFor(anchor.repo);
-  const response = await (deps.fetchImpl ?? fetch)(
-    `${deps.githubApiBaseUrl ?? 'https://api.github.com'}/repos/${anchor.repo}/pulls/${anchor.issue}/reviews/${reviewId}/dismissals`,
+  await dismissGithubReview(
+    `${deps.githubApiBaseUrl ?? 'https://api.github.com'}/repos/${anchor.repo}/pulls/${anchor.issue}`,
+    reviewId,
+    message,
     {
-      method: 'PUT',
-      headers: {
-        authorization: `Bearer ${token}`,
-        accept: 'application/vnd.github+json',
-        'content-type': 'application/json',
-      },
-      signal: AbortSignal.timeout(10_000),
-      body: JSON.stringify({ message, event: 'DISMISS' }),
+      authorization: `Bearer ${token}`,
+      accept: 'application/vnd.github+json',
+      'content-type': 'application/json',
     },
+    deps.fetchImpl,
   );
-  if (!response.ok) {
-    throw new Error(
-      `dismissing review ${reviewId} on ${anchor.repo}#${anchor.issue} failed (${response.status})`,
-    );
-  }
 }
 
 async function graphql<T>(

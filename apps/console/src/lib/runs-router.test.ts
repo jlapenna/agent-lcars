@@ -3975,7 +3975,26 @@ describe('submitReview', () => {
       calls: 0,
     },
     { name: 'inline comment on approval', inline: true, status: 409, calls: 0 },
-    { name: 'accepted approval', status: 200, calls: 2 },
+    { name: 'accepted approval', status: 200, calls: 3 },
+    {
+      name: 'head moved during approval',
+      postApprovalHead: 'b',
+      status: 409,
+      calls: 4,
+    },
+    {
+      name: 'post-approval head unavailable',
+      verificationUnavailable: true,
+      status: 502,
+      calls: 4,
+    },
+    {
+      name: 'dismissal refused',
+      postApprovalHead: 'b',
+      dismissalRefused: true,
+      status: 502,
+      calls: 4,
+    },
     {
       name: 'accepted change request',
       changesRequested: true,
@@ -4045,7 +4064,24 @@ describe('submitReview', () => {
           },
         }),
       )
-      .mockResolvedValueOnce(Response.json({ id: 7, html_url: reviewUrl }));
+      .mockResolvedValueOnce(Response.json({ id: 7, html_url: reviewUrl }))
+      .mockResolvedValueOnce(
+        'verificationUnavailable' in scenario
+          ? new Response(null, { status: 503 })
+          : Response.json({
+              head: {
+                sha: ('postApprovalHead' in scenario
+                  ? scenario.postApprovalHead
+                  : 'a'
+                ).repeat(40),
+              },
+            }),
+      )
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 'dismissalRefused' in scenario ? 403 : 200,
+        }),
+      );
     vi.stubGlobal('fetch', github);
     try {
       const event =
@@ -4098,7 +4134,28 @@ describe('submitReview', () => {
         }),
       ];
       expect(github.mock.calls[1]).toEqual(
-        scenario.calls === 2 ? expectedPublication : undefined,
+        scenario.calls >= 2 ? expectedPublication : undefined,
+      );
+      const pullUrl =
+        'https://api.github.com/repos/jlapenna/agent-lcars/pulls/42';
+      expect(github.mock.calls[2]?.[0]).toBe(
+        scenario.calls >= 3 ? pullUrl : undefined,
+      );
+      const expectedDismissal = [
+        `${pullUrl}/reviews/7/dismissals`,
+        expect.objectContaining({
+          method: 'PUT',
+          headers: expect.objectContaining({
+            authorization: 'Bearer reviewer-token',
+          }),
+          body: JSON.stringify({
+            message: 'The reviewed head could not be confirmed after approval.',
+            event: 'DISMISS',
+          }),
+        }),
+      ];
+      expect(github.mock.calls[3]).toEqual(
+        scenario.calls === 4 ? expectedDismissal : undefined,
       );
     } finally {
       vi.unstubAllGlobals();
