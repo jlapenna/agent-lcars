@@ -58,7 +58,7 @@ minimumReleaseAgeExclude:
 # excludes the first patched release, so floor the vulnerable range only.
 overrides:
   'proxy-addr@<2.0.8': 2.0.8
-  'brace-expansion@>=2 <2.1.6': 2.1.8
+  'brace-expansion@>=2 <2.1.6': 5.0.12
   'fast-uri@<3.1.7': 4.2.4
   'immutable@<5.1.8': 5.2.1
   'source-map-js@<1.2.2': 1.2.4

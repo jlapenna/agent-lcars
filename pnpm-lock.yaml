@@ -6,7 +6,7 @@ settings:
 
 overrides:
   proxy-addr@<2.0.8: 2.0.8
-  brace-expansion@>=2 <2.1.6: 2.1.8
+  brace-expansion@>=2 <2.1.6: 5.0.12
   fast-uri@<3.1.7: 4.2.4
   immutable@<5.1.8: 5.2.1
   source-map-js@<1.2.2: 1.2.4
@@ -3571,9 +3571,6 @@ packages:
 
   brace-expansion@1.1.22:
     resolution: {integrity: sha512-CKLDTuSsN0+r1ThM0WkzzBI7dnPI6xEGfa/JnVYIK9JNBA1N1NyPwXVHor//NKD/y3sDxp764sZdLhFK7pH8XQ==}
-
-  brace-expansion@2.1.8:
-    resolution: {integrity: sha512-BnlDzDYQoplTsZSvPi86CNzmbcb07X8ufR8fk1zivaiEJlXJkiq1MQyDCVmlWcsWbj6aWXqHnrwwevbrm/Saig==}
 
   brace-expansion@5.0.12:
     resolution: {integrity: sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==}
@@ -11366,10 +11363,6 @@ snapshots:
       balanced-match: 1.0.2
       concat-map: 0.0.1
 
-  brace-expansion@2.1.8:
-    dependencies:
-      balanced-match: 1.0.2
-
   brace-expansion@5.0.12:
     dependencies:
       balanced-match: 4.0.3
@@ -14287,11 +14280,11 @@ snapshots:
 
   minimatch@5.1.9:
     dependencies:
-      brace-expansion: 2.1.8
+      brace-expansion: 5.0.12
 
   minimatch@6.2.3:
     dependencies:
-      brace-expansion: 2.1.8
+      brace-expansion: 5.0.12
 
   minimist@1.2.8: {}
 
