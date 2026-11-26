@@ -341,7 +341,7 @@ describe('automatic pull-request review & conflict remediation', () => {
     });
     expect(review).toMatchObject({
       runId: `${REPO}#3751/r4`,
-      params: { mode: 'review' },
+      params: { mode: 'review', reviewHead: HEAD_2 },
       requestId: `pr-rereview:3751:${HEAD_2.slice(0, 16)}`,
     });
   });
@@ -377,7 +377,7 @@ describe('automatic pull-request review & conflict remediation', () => {
       expect(review).toMatchObject({
         runId: reviewRunId,
         pipeline: 'codex',
-        params: { mode: 'review' },
+        params: { mode: 'review', reviewHead: HEAD_2 },
         requestId: `pr-rereview:3751:${HEAD_2.slice(0, 16)}`,
       });
       expect(f.fetchImpl).toHaveBeenCalledWith(
@@ -433,7 +433,7 @@ describe('automatic pull-request review & conflict remediation', () => {
     });
     expect(await f.store.readActiveRun(anchor)).toMatchObject({
       runId: reviewRunId,
-      params: { mode: 'review' },
+      params: { mode: 'review', reviewHead: HEAD_2 },
     });
     await f.orchestrator.report(reviewRunId, { ok: true, summary: 'review' });
     expect(await sync('repeat-sync-after-failed-remediation')).toMatchObject({

@@ -48,8 +48,6 @@ export interface ResumeTranscriptOptions {
   /** 'opencode' only: runs the trusted OpenCode binary. Defaults to the
    *  same trusted-path-resolving spawn `captureOpenCodeExports` uses. */
   runOpenCode?: RunOpenCode;
-  /** 'opencode' only: removes the temporary file used for `import`. */
-  unlink?: (filePath: string) => void;
 }
 
 /**
@@ -136,7 +134,7 @@ export async function resumeTranscript(
       fs.writeFileSync(filePath, contents));
 
   if (options.agent === 'opencode') {
-    return resumeOpenCodeSession(options, download, writeFile);
+    return resumeOpenCodeSession(options, download);
   }
 
   const file = destinationFor(options);
@@ -182,7 +180,7 @@ export async function resumeTranscript(
  * `import` is its own first-class way in. The binary is resolved through
  * the same trusted-path guard `captureOpenCodeExports` uses -- never PATH
  * -- and only lazily, inside the default `runOpenCode`, so a caller-
- * supplied test double (as every test here uses) never needs a real
+ * supplied test double never needs a real
  * trusted binary on disk. Returns the session id rather than a path: for
  * Claude and Codex `runner resume` prints the file it wrote, but OpenCode's
  * import has no such file -- the caller (`main.ts`) only needs a non-empty
@@ -193,7 +191,6 @@ export async function resumeTranscript(
 async function resumeOpenCodeSession(
   options: ResumeTranscriptOptions,
   download: NonNullable<ResumeTranscriptOptions['download']>,
-  writeFile: NonNullable<ResumeTranscriptOptions['writeFile']>,
 ): Promise<string | undefined> {
   let resolvedExecutable = options.opencodeExecutable;
   const runOpenCode: RunOpenCode =
@@ -207,19 +204,17 @@ async function resumeOpenCodeSession(
       }
       return defaultRunOpenCode(resolvedExecutable, args, commandOptions);
     });
-  const unlink =
-    options.unlink ?? ((filePath: string) => fs.unlinkSync(filePath));
-  const temporary = path.join(
-    os.tmpdir(),
-    `opencode-resume-${options.sessionId}.json`,
-  );
-
   try {
     const contents = await download(options.transcriptGcsUri, {
       projectId: options.projectId,
     });
-    writeFile(temporary, contents);
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-resume-'));
+    const temporary = path.join(scratch, 'session.json');
+    const writeFile =
+      options.writeFile ??
+      ((filePath, data) => fs.writeFileSync(filePath, data, { mode: 0o600 }));
     try {
+      writeFile(temporary, contents);
       // OpenCode 2 cannot import an OpenCode 1 export (it rejects the shape
       // with "Bad Request"), so a pre-upgrade session fails closed here.
       await runOpenCode(
@@ -238,16 +233,7 @@ async function resumeOpenCodeSession(
       );
       return options.sessionId;
     } finally {
-      try {
-        unlink(temporary);
-      } catch (cleanupError) {
-        if ((cleanupError as NodeJS.ErrnoException).code !== 'ENOENT') {
-          logger.warn(
-            `agent-lcars-telemetry-watcher: failed to remove temporary OpenCode resume file ${temporary}`,
-            cleanupError,
-          );
-        }
-      }
+      fs.rmSync(scratch, { recursive: true, force: true });
     }
   } catch (error) {
     logger.warn(

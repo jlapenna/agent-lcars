@@ -42,6 +42,7 @@ import {
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
+import { z } from 'zod';
 
 import { anchorTarget } from './anchor-target';
 import { type CodexAuthStore, CodexAuthStoreError } from './codex-auth-store';
@@ -63,6 +64,8 @@ import type {
   ExpiringDispatchTokenProvider,
 } from './github-app-tokens';
 import { createDispatchTokenProvider } from './github-app-tokens';
+import { formatGithubErrorDetail } from './github-error-detail';
+import { dismissGithubReview } from './github-review-dismissal';
 import { issueReferenceForTask, issueTracker } from './issue-trackers';
 import { workAtRun } from './issue-work-brief';
 import type { JobSecrets } from './job-secrets';
@@ -1674,6 +1677,161 @@ export const runsRouter = os.router({
   reviewerCheckoutToken: os.reviewerCheckoutToken.handler(
     ({ input, context }) => mintCheckoutToken(input.runId, context, true),
   ),
+
+  submitReview: os.submitReview.handler(async ({ input, context, errors }) => {
+    const { runId, commit_id, event, body, comments } = input;
+    const run = await requireRunToken(context, runId);
+    if (run.params?.['mode'] !== 'review' || isWorkAnchor(run.task)) {
+      throw errors.FORBIDDEN({ message: 'Not a GitHub review run' });
+    }
+    const generation = parseRunGeneration(runId);
+    if (
+      generation === undefined ||
+      generation < 1 ||
+      run.params['reviewHead'] !== commit_id ||
+      !usesReviewerCheckout(run) ||
+      (event === 'APPROVE' && comments.length > 0)
+    ) {
+      throw errors.CONFLICT({ message: 'Review head or verdict refused' });
+    }
+    const { repo, issue } = run.task;
+    const url = `https://api.github.com/repos/${repo}/pulls/${issue}`;
+    const marker = `<!-- attempt-claim:${formatAttemptId({ generation, intentId: runId })} -->`;
+    const reviewBody = body
+      .split('\n')
+      .filter((line) => line !== marker)
+      .join('\n')
+      .trim();
+    if (!reviewBody || reviewBody.includes('<!-- attempt-claim:')) {
+      throw errors.CONFLICT({
+        message:
+          'Review body contains a missing verdict or foreign attempt marker',
+      });
+    }
+    const verdict = `${reviewBody}\n\n${marker}`;
+    let token: string;
+    try {
+      if (!context.reviewerTokens) throw new Error('Missing review provider');
+      token = await context.reviewerTokens.tokenFor(repo);
+    } catch {
+      throw errors.BAD_GATEWAY({ message: 'GitHub reviewer unavailable' });
+    }
+    const headers = {
+      authorization: `Bearer ${token}`,
+      accept: 'application/vnd.github+json',
+      'content-type': 'application/json',
+    };
+    const readHead = async (): Promise<string> => {
+      const response = await fetch(url, {
+        headers,
+        cache: 'no-store',
+        redirect: 'error',
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
+      return z
+        .object({ head: z.object({ sha: z.string() }) })
+        .parse(await response.json()).head.sha;
+    };
+
+    // Recheck ownership before reading the live head, so the GitHub read
+    // immediately precedes publication.
+    const task = await context.store.readTask(run.task);
+    const renewed = await requireRunToken(context, runId);
+    if (task?.task.activeRunId !== renewed.runId) {
+      throw errors.CONFLICT({
+        message: 'Review run no longer owns the pull request',
+      });
+    }
+    const head = await readHead().catch(() => {
+      throw errors.BAD_GATEWAY({ message: 'GitHub pull request unavailable' });
+    });
+    if (head !== commit_id) {
+      throw errors.CONFLICT({ message: 'Pull request head changed' });
+    }
+    const response = await fetch(`${url}/reviews`, {
+      method: 'POST',
+      headers,
+      redirect: 'error',
+      signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify({ commit_id, event, body: verdict, comments }),
+    }).catch(() => {
+      logger.warn(
+        'agent-lcars: GitHub review publication request failed for %s',
+        runId,
+      );
+      throw errors.BAD_GATEWAY({
+        message: 'GitHub review publication unavailable',
+      });
+    });
+    if (!response.ok) {
+      logger.warn(
+        'agent-lcars: GitHub review publication returned HTTP %s for %s',
+        response.status,
+        runId,
+      );
+      if (response.status === 422) {
+        const detail = await response.json().catch(() => undefined);
+        throw errors.UNPROCESSABLE_CONTENT({
+          message:
+            formatGithubErrorDetail(detail?.message, detail?.errors, token) ||
+            'GitHub rejected the review payload',
+        });
+      }
+      throw errors.BAD_GATEWAY({
+        message: 'GitHub review publication unavailable',
+      });
+    }
+
+    const publication = z
+      .object({ id: z.number().int(), html_url: z.url() })
+      .safeParse(await response.json().catch(() => undefined));
+    if (!publication.success) {
+      logger.warn(
+        'agent-lcars: GitHub returned an invalid review receipt for %s',
+        runId,
+      );
+      throw errors.BAD_GATEWAY({
+        message: 'GitHub review publication unavailable',
+      });
+    }
+    const published = publication.data;
+
+    if (event === 'APPROVE') {
+      // GitHub can accept the approval for a historical commit after the push
+      // that would have dismissed it. Withdraw it if we cannot confirm the head.
+      const verifiedHead = await readHead().catch(() => undefined);
+      if (verifiedHead !== commit_id) {
+        try {
+          await dismissGithubReview(
+            url,
+            published.id,
+            'The reviewed head could not be confirmed after approval.',
+            headers,
+          );
+        } catch {
+          logger.error(
+            'agent-lcars: could not withdraw review %s on %s#%s after head verification failed',
+            published.id,
+            repo,
+            issue,
+          );
+          throw errors.BAD_GATEWAY({
+            message: 'GitHub review dismissal unavailable',
+          });
+        }
+        if (verifiedHead === undefined) {
+          throw errors.BAD_GATEWAY({
+            message: 'GitHub pull request unavailable after approval',
+          });
+        }
+        throw errors.CONFLICT({
+          message: 'Pull request head changed during approval',
+        });
+      }
+    }
+    return published;
+  }),
 
   codexAuth: os.codexAuth.handler(async ({ input, context, errors }) => {
     const { run, repository } = await requireCodexRun(context, input.runId);

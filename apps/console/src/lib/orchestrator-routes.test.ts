@@ -1862,7 +1862,7 @@ describe('handleWebhookDelivery cross-model PR review and quota fallback', () =>
     const firstRun = await store.readRun(`${REPO}#90/r1`);
     expect(firstRun).toMatchObject({
       pipeline: 'claude',
-      params: { mode: 'review' },
+      params: { mode: 'review', reviewHead: 'a'.repeat(40) },
       providerFallback: {
         principal: 'svc:github-pr-review',
         allowedPipelines: ['agy', 'codex'],
@@ -1878,7 +1878,7 @@ describe('handleWebhookDelivery cross-model PR review and quota fallback', () =>
         expect.objectContaining({
           runId: `${REPO}#90/r2`,
           pipeline: 'agy',
-          params: { mode: 'review' },
+          params: { mode: 'review', reviewHead: 'a'.repeat(40) },
         }),
       ],
     });
@@ -1893,7 +1893,7 @@ describe('handleWebhookDelivery cross-model PR review and quota fallback', () =>
         expect.objectContaining({
           runId: `${REPO}#90/r3`,
           pipeline: 'codex',
-          params: { mode: 'review' },
+          params: { mode: 'review', reviewHead: 'a'.repeat(40) },
           providerFallback: expect.objectContaining({
             attemptedPipelines: ['claude', 'agy', 'codex'],
           }),

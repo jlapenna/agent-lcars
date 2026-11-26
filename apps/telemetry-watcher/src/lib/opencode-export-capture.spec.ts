@@ -755,9 +755,14 @@ describe('captureOpenCodeExports', () => {
     expect(isTrustedOpenCodePath(symlink, currentUid)).toBe(false);
   });
 
-  it('uses standalone mode, workspace cwd, and a credential-free child environment for real processes', async () => {
+  it('isolates configuration for standalone listing and both exports', async () => {
     const realWorkspace = path.join(root, 'checkout');
     fs.mkdirSync(realWorkspace, { recursive: true });
+    const config = path.join(root, 'user-config');
+    const data = path.join(root, 'data');
+    fs.mkdirSync(path.join(config, 'opencode'), { recursive: true });
+    fs.writeFileSync(path.join(config, 'opencode', 'opencode.json'), '{}');
+    fs.writeFileSync(path.join(realWorkspace, 'opencode.json'), '{}');
     const executable = path.join(root, 'fake-opencode');
     const argsLog = path.join(root, 'args.log');
     const envLog = path.join(root, 'env.log');
@@ -767,9 +772,22 @@ describe('captureOpenCodeExports', () => {
     ]);
     fs.writeFileSync(
       executable,
-      `#!/bin/bash\n/bin/pwd >> ${JSON.stringify(cwdLog)}\n/usr/bin/printf '%s\\n' '---' "$@" >> ${JSON.stringify(argsLog)}\n/usr/bin/env >> ${JSON.stringify(envLog)}\nif [ "$2" = list ]; then\n  /usr/bin/printf '%s\\n' '${sessions}'\nelse\n  /usr/bin/printf '%s\\n' '{"info":{"id":"ses_env"},"messages":[]}'\nfi\n`,
+      `#!/bin/bash\n/bin/pwd >> ${JSON.stringify(cwdLog)}\n/usr/bin/printf '%s\\n' '---' "$@" >> ${JSON.stringify(argsLog)}\n/bin/mkdir -- "$XDG_CONFIG_HOME/opencode" || exit 1\n/usr/bin/env >> ${JSON.stringify(envLog)}\nif [ "$2" = list ]; then\n  /usr/bin/printf '%s\\n' '${sessions}'\nelse\n  /usr/bin/printf '%s\\n' '{"info":{"id":"ses_env"},"messages":[]}'\nfi\n`,
       { mode: 0o700 },
     );
+    vi.stubEnv('TMPDIR', root);
+    vi.stubEnv('HOME', root);
+    vi.stubEnv('XDG_DATA_HOME', data);
+    vi.stubEnv('XDG_CONFIG_HOME', config);
+    vi.stubEnv(
+      'OPENCODE_CONFIG',
+      path.join(config, 'opencode', 'opencode.json'),
+    );
+    vi.stubEnv('OPENCODE_CONFIG_DIR', config);
+    vi.stubEnv('OPENCODE_CONFIG_CONTENT', '{"plugin":[]}');
+    vi.stubEnv('OPENCODE_DISABLE_PROJECT_CONFIG', 'false');
+    vi.stubEnv('OPENCODE_DISABLE_AUTOUPDATE', 'false');
+    vi.stubEnv('OPENCODE_DISABLE_MODELS_FETCH', 'false');
     vi.stubEnv('GOOGLE_APPLICATION_CREDENTIALS', '/tmp/writer-secret.json');
     vi.stubEnv('GOOGLE_GHA_CREDS_PATH', '/tmp/writer-secret-gha.json');
     vi.stubEnv(
@@ -789,8 +807,11 @@ describe('captureOpenCodeExports', () => {
     ).toEqual({ status: 'ok', selected: 1, exported: 1, failed: 0 });
 
     const cwds = fs.readFileSync(cwdLog, 'utf8').trim().split('\n');
-    expect(cwds[0]).toBe(fs.realpathSync(realWorkspace));
-    expect(cwds[1]).toBe(fs.realpathSync(realWorkspace));
+    expect(cwds).toEqual([
+      fs.realpathSync(realWorkspace),
+      fs.realpathSync(realWorkspace),
+      fs.realpathSync(process.cwd()),
+    ]);
     const args = fs.readFileSync(argsLog, 'utf8');
     expect(args).toContain(
       '---\nsession\nlist\n--standalone\n--max-count\n10000\n--format\njson\n---',
@@ -799,6 +820,30 @@ describe('captureOpenCodeExports', () => {
       '---\nsession\nexport\n--standalone\nses_env\n--sanitize\n',
     );
     const env = fs.readFileSync(envLog, 'utf8');
+    const configRoots = Array.from(
+      env.matchAll(/^XDG_CONFIG_HOME=(.*)$/gm),
+      (match) => match[1],
+    );
+    expect(new Set(configRoots).size).toBe(3);
+    for (const configRoot of configRoots) {
+      expect(path.dirname(configRoot)).toBe(root);
+      expect(configRoot).not.toBe(config);
+      expect(fs.existsSync(configRoot)).toBe(false);
+    }
+    for (const entry of [
+      `HOME=${root}`,
+      `XDG_DATA_HOME=${data}`,
+      'OPENCODE_DISABLE_PROJECT_CONFIG=true',
+      'OPENCODE_DISABLE_AUTOUPDATE=true',
+      'OPENCODE_DISABLE_MODELS_FETCH=true',
+    ]) {
+      expect(env.split('\n').filter((line) => line === entry)).toHaveLength(3);
+    }
+    expect(env).not.toMatch(/^OPENCODE_CONFIG(?:_DIR|_CONTENT)?=/m);
+    expect(process.env.XDG_CONFIG_HOME).toBe(config);
+    expect(fs.existsSync(path.join(config, 'opencode', 'opencode.json'))).toBe(
+      true,
+    );
     expect(env).not.toContain('writer-secret');
     expect(env).not.toMatch(
       /GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_GHA_CREDS_PATH|CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE|AGENT_TELEMETRY_WRITER_KEY_JSON|WRITER_CREDENTIALS_FILE|OPENCODE_LLM_API_KEY/,
@@ -817,6 +862,7 @@ describe('captureOpenCodeExports', () => {
       { mode: 0o700 },
     );
     const hardLimit = 64 * 1024;
+    vi.stubEnv('TMPDIR', root);
 
     const result = await captureOpenCodeExports({
       workspaceDir: workspace,
@@ -834,6 +880,11 @@ describe('captureOpenCodeExports', () => {
     expect(
       Number(fs.readFileSync(observedSize, 'utf8').trim()),
     ).toBeLessThanOrEqual(hardLimit);
+    expect(fs.readdirSync(root).sort()).toEqual([
+      'observed-size',
+      'oversized-opencode',
+      'sessions',
+    ]);
   });
 
   it('kills a timed-out real process within the configured command bound', async () => {
@@ -841,6 +892,7 @@ describe('captureOpenCodeExports', () => {
     fs.writeFileSync(executable, '#!/bin/bash\n/bin/sleep 5\n', {
       mode: 0o700,
     });
+    vi.stubEnv('TMPDIR', root);
     const startedAt = Date.now();
 
     const result = await captureOpenCodeExports({
@@ -856,6 +908,7 @@ describe('captureOpenCodeExports', () => {
       exported: 0,
       failed: 0,
     });
+    expect(fs.readdirSync(root)).toEqual(['sleeping-opencode']);
     expect(Date.now() - startedAt).toBeLessThan(2_000);
   });
 

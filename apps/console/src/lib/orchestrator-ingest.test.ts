@@ -1285,7 +1285,7 @@ describe('unified cross-model PR review intake', () => {
       kind: 'request',
       taskId: { repo: REPO, issue: 77 },
       pipeline: 'claude',
-      params: { mode: 'review' },
+      params: { mode: 'review', reviewHead: 'a'.repeat(40) },
       fallbackPipelines: ['agy', 'codex'],
       reviewContext: {
         authorPipeline: 'codex',

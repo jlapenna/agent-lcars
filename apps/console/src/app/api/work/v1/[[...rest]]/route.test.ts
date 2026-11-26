@@ -201,6 +201,12 @@ describe('a work.reader-only principal (#2502)', () => {
     recipeComplete: { result: {} },
     completeRun: { outcome: { ok: true, summary: 'done' } },
     invokeRunAgent: { requestId: 'request-1', message: 'Why?' },
+    submitRunReview: {
+      commit_id: 'a'.repeat(40),
+      event: 'APPROVE',
+      body: 'Reviewed.',
+      comments: [],
+    },
     persistRunCodexAuth: {
       generation: '1',
       restoredSha256: '0'.repeat(64),

@@ -71,6 +71,17 @@ both the initial grant and renewals. Dedicated reviews use an endpoint absent
 from older Console releases and fail closed if the endpoint or the dedicated
 credentials are unavailable.
 
+Console also exposes `POST /api/work/v1/runs/{runId}/review` for
+run-token-authenticated verdict submission. It accepts an approval or change
+request only for the GitHub pull request and full commit SHA recorded for the
+live review run bound to the dedicated reviewer. PR webhook and remediation
+admission record that SHA. Console
+compares it with the live head, stamps the attempt marker and publishes as the
+Reviewer App. Legacy and manually admitted runs without a recorded SHA cannot
+use this route. The current runner still uses its checkout grant to publish
+reviews. Runner migration and removal or exclusion of all worker-held approving
+credentials are tracked in [#3595](https://github.com/jlapenna/agent-lcars/issues/3595).
+
 Before rolling back to a Console that predates reviewer binding, stop
 QueueExecutor from starting new runs and let active dedicated reviews settle,
 or cancel them and verify their run leases are no longer live. Keep new
