@@ -72,8 +72,6 @@ _does_ anything with it is separate, ordinary code:
 delayed mergeability read for subscribed PRs targeting that base branch; a
 head update schedules the same check for that PR. Unknown mergeability
 retries through the durable Cloud Task. These pushes do not admit issue Work.
-Agent events do not consume them yet either, which is why `behind` and
-`conflict` are not produced (see below).
 
 ## Agent events from webhook deliveries
 
@@ -112,8 +110,8 @@ MEMBER, COLLABORATOR or a fleet bot); state changes judge the `sender`,
 counting a sender who acts on someone else's pull request or issue as a
 COLLABORATOR because GitHub required repository access; check and run
 results carry no actor and count only for code in the base repository.
-`conflict` and `behind` need a base-branch `push` consumer and are left to a
-follow-up.
+The delayed mergeability read emits `conflict` and `behind` for subscribed
+PRs when GitHub reports those states.
 
 So landing the consumer code and flipping the settings checkbox are both
 required, in either order — neither alone delivers anything.
