@@ -1519,6 +1519,7 @@ export const runsContract = {
       z.strictObject({
         runner: z.string().min(1).max(256),
         placementAware: z.literal(true).optional(),
+        reviewOnly: z.literal(true).optional(),
       }),
     )
     .output(runClaimResponseSchema.optional()),

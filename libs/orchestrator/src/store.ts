@@ -1,7 +1,8 @@
-import type {
-  IssueReference,
-  RunEvidence,
-  TrackerIssueProjection,
+import {
+  isDispatchPipeline,
+  type IssueReference,
+  type RunEvidence,
+  type TrackerIssueProjection,
 } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
@@ -116,6 +117,10 @@ export interface RunTransactionState {
   readonly queueEligibility?: QueueEligibilitySnapshot;
 }
 
+export function fitsReviewSlot(pipeline: string, mode: unknown): boolean {
+  return mode === 'review' && isDispatchPipeline(pipeline);
+}
+
 /** Selects the provider using least live occupancy, then its oldest FIFO age.
  * Priority influences only the chosen provider's durable 4:2:1 class turn.
  * Callers must pass only server-authorized pipelines. */
@@ -126,6 +131,7 @@ export function selectFairQueuedRun(
   now?: string,
   priorityPositions: ReadonlyMap<string, number> = new Map(),
   credentialWindows: Readonly<Record<string, unknown>> = {},
+  reviewOnly = false,
 ): Run | undefined {
   const granted = new Set(pipelines);
   const pipelineOrder = new Map(
@@ -145,6 +151,8 @@ export function selectFairQueuedRun(
   const heads = new Map<string, Run>();
   const candidates = new Map<string, Run[]>();
   for (const run of queuedRuns) {
+    if (reviewOnly && !fitsReviewSlot(run.pipeline, run.params?.['mode']))
+      continue;
     if (!isQueueAdmissionCandidate(run, now) || !granted.has(run.pipeline))
       continue;
     const providerRuns = candidates.get(run.pipeline) ?? [];
@@ -627,6 +635,7 @@ export interface OrchestratorStore {
     claimedBySubject: string;
     tokenHash: string;
     placementAware?: boolean;
+    reviewOnly?: boolean;
   }): Promise<Run | undefined>;
 
   /** Returns a still-live claim to the queue only when the exact claimant

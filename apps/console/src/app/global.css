@@ -4924,6 +4924,15 @@ td.costs-repo-spend__num {
   border-bottom: 1px solid var(--lcars-hairline);
 }
 
+.queue-item-row--native {
+  grid-template-columns: minmax(0, 1fr) max-content;
+}
+
+.queue-item-row--native .ops-ref {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .queue-item-row + .queue-item-row {
   margin-top: 0;
 }

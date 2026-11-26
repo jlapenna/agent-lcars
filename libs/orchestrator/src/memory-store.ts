@@ -942,6 +942,7 @@ export class MemoryStore implements OrchestratorStore {
     claimedBySubject: string;
     tokenHash: string;
     placementAware?: boolean;
+    reviewOnly?: boolean;
   }): Promise<Run | undefined> {
     const runs = [...this.#runs.values()];
     const eligible = input.pipelines.filter(
@@ -958,6 +959,7 @@ export class MemoryStore implements OrchestratorStore {
       input.now,
       this.#priorityPositions,
       Object.fromEntries(this.#credentialWindows),
+      input.reviewOnly,
     );
     if (candidate === undefined) return undefined;
     const claimed = claimQueuedRun(candidate, input);

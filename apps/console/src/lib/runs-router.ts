@@ -528,6 +528,7 @@ export const runsRouter = os.router({
         now: context.now().toISOString(),
         claimedBy: input.runner,
         placementAware: input.placementAware,
+        reviewOnly: input.reviewOnly,
         claimedBySubject: claimantSubject(context.principal),
         tokenHash: hashRunToken(token),
       });

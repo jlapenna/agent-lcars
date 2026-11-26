@@ -17582,6 +17582,10 @@
                   "placementAware": {
                     "type": "boolean",
                     "const": true
+                  },
+                  "reviewOnly": {
+                    "type": "boolean",
+                    "const": true
                   }
                 },
                 "required": ["runner"],

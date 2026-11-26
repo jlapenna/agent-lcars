@@ -21,9 +21,10 @@ import (
 // callback once a claim succeeds -- what a direct-mode worker needs, nothing
 // more. It is never logged whole (runToken is a live credential).
 type directRunnerLaunch struct {
-	runID    string
-	runToken string
-	pipeline string
+	backfillFor string
+	runID       string
+	runToken    string
+	pipeline    string
 	// mode is the claimed run's Work mode ("review", "implement", ...), used
 	// only to pick the Job's resource shape.
 	mode string
@@ -83,8 +84,9 @@ type claimResponse struct {
 }
 
 type directRunnerReservation struct {
-	launch  func(directRunnerLaunch) error
-	release func()
+	reviewOnly bool
+	launch     func(directRunnerLaunch) error
+	release    func()
 }
 
 // claimResponseBodyLimit bounds how much of a claim response pollOnce will
@@ -134,7 +136,11 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 	if err != nil {
 		return queuePollOutcomePollError, fmt.Errorf("minting claim id token: %w", err)
 	}
-	body, err := json.Marshal(map[string]any{"runner": cfg.runnerName, "placementAware": true})
+	claimRequest := map[string]any{"runner": cfg.runnerName, "placementAware": true}
+	if reservation.reviewOnly {
+		claimRequest["reviewOnly"] = true
+	}
+	body, err := json.Marshal(claimRequest)
 	if err != nil {
 		return queuePollOutcomePollError, err
 	}
@@ -182,6 +188,9 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 	if !claimed.PlacementAware {
 		return queuePollOutcomePollError, fmt.Errorf("placement-aware claim not acknowledged")
 	}
+	if reservation.reviewOnly && !fitsReviewSlot(claimed.Pipeline, claimed.Mode) {
+		return queuePollOutcomePollError, fmt.Errorf("console returned an incompatible run for a review-only slot")
+	}
 	queueExecutorClaimsTotal.WithLabelValues(claimed.Pipeline).Inc()
 	err = reservation.launch(directRunnerLaunch{
 		runID:        claimed.RunID,
@@ -196,6 +205,16 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 		return queuePollOutcomeLaunchErr, err
 	}
 	return queuePollOutcomeClaimed, nil
+}
+
+// fitsReviewSlot matches the legacy review shape used by the claim store.
+func fitsReviewSlot(pipeline, mode string) bool {
+	switch pipeline {
+	case "claude", "codex", "opencode", "agy":
+		return mode == "review"
+	default:
+		return false
+	}
 }
 
 // newDirectRunnerIDTokenSource builds the Google ID token source used to
