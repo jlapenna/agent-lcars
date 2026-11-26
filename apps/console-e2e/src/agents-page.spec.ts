@@ -38,6 +38,10 @@ test.describe('/agents page @smoke', () => {
     await expect(
       summaries.getByRole('link', { name: /Inbox/ }),
     ).toHaveAttribute('href', '/inbox');
+    await expect(summaries.getByRole('link', { name: /Work/ })).toHaveAttribute(
+      'href',
+      '/work',
+    );
     const dispatches = page.getByTestId('current-work');
     await expect(
       dispatches.getByRole('heading', { name: 'Active dispatches' }),

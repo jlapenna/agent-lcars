@@ -58,6 +58,15 @@ import {
   parseAgentsViewFilters,
 } from './agents/agents-view-filters';
 import { BridgeDetail } from './bridge-detail';
+import {
+  bridgeDestinationReadouts,
+  bridgeWorkSummary,
+  EVENT_WORK_PANEL_ERROR,
+  loadBridgeEventWork,
+  loadBridgeStoppedPages,
+  STOPPED_WORK_PANEL_ERROR,
+  WORK_SUMMARY_UNAVAILABLE_ERROR,
+} from './bridge-readouts';
 import { resolveBridgeDetail } from './bridge-rows';
 import {
   bridgeSelectionHref,
@@ -79,7 +88,7 @@ import { DataFreshness } from './data-freshness';
 import { decisionRows } from './decision-rows';
 import { DeckInboxSummary } from './deck-inbox-summary';
 import { SPEND_READ_FAILED } from './fleet-readouts';
-import { formatCost, formatRelativeTime } from './format';
+import { formatRelativeTime } from './format';
 import { inboxCardAgent, inboxCardMetadata } from './inbox-card';
 import { LiveDashboard } from './live-dashboard';
 import { NavSuspense } from './nav-suspense';
@@ -93,7 +102,7 @@ import { NavPageLoading, PageLoading } from './page-loading';
 import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
 import { onlineRunnerCount } from './runner-rows';
-import { parseStoppedWorkCursor, stoppedWorkHref } from './stopped-work-query';
+import { stoppedWorkHref } from './stopped-work-query';
 import { withConsolePageShell } from './with-console-page-shell';
 import { cancelItem, redispatchItem } from './work/actions';
 import { context as workContext } from './work/context';
@@ -119,51 +128,111 @@ function toCard(item: ActionItem): BoardCard {
  * *same* item the list renders, matching every other Bridge row kind.
  */
 const STOPPED_WORK_PAGE = 50;
+const EVENT_WORK_READ = 50;
 
 async function getParkedWork(
   repo?: string,
   rawCursor?: string,
+  view: AgentsViewFilters = {},
 ): Promise<{
+  authorized: boolean;
   items: WorkSummary[];
+  /** Uncursored first page of stopped native work for the Work destination
+   *  card, kept independent of the Stopped work panel's cursor pagination. */
+  summaryStoppedItems: WorkSummary[];
+  summaryHasMoreStopped: boolean;
+  summaryError?: string;
+  eventItems: WorkSummary[];
+  /** Event tasks read to find `eventItems`, and whether older ones exist. */
+  eventWindow?: { size: number; windowed: boolean };
+  eventError?: string;
   hasMoreTasks: boolean;
   nextCursor?: TaskListCursor;
   error?: string;
 }> {
+  let work: Awaited<ReturnType<typeof workContext>>;
   try {
-    const work = await workContext();
-    if (!work.principal?.scopes.has('work.operator')) {
-      return { items: [], hasMoreTasks: false };
-    }
-    const page = await listWorkSummaries(work.runtime.store, {
-      limit: STOPPED_WORK_PAGE,
-      cursor: parseStoppedWorkCursor(rawCursor),
-      sortKey: 'stoppedAt',
-    });
-    const items = await excludeClosedGithubAnchors(
-      work.runtime.store,
-      page.items.filter(
-        (item) =>
-          (item.state === 'parked' || item.state === 'failed') &&
-          (!repo || workRepository(item.spec) === repo),
-      ),
-    );
-    return {
-      items,
-      hasMoreTasks: page.nextCursor !== undefined,
-      nextCursor: page.nextCursor,
-    };
+    work = await workContext();
   } catch (error) {
     // The Bridge must never fall to error.tsx because this panel's fetch
     // failed. Keep the rest of the Bridge available and disclose the failed
     // read with a reset link rather than presenting it as an empty queue.
     logger.error('agent-lcars: parked work panel unavailable:', error);
     return {
+      authorized: true,
       items: [],
+      summaryStoppedItems: [],
+      summaryHasMoreStopped: false,
+      summaryError: WORK_SUMMARY_UNAVAILABLE_ERROR,
+      eventItems: [],
+      eventError: EVENT_WORK_PANEL_ERROR,
       hasMoreTasks: false,
-      error:
-        'Could not load stopped work. Retry or reset the stopped-work page.',
+      error: STOPPED_WORK_PANEL_ERROR,
     };
   }
+  if (!work.principal?.scopes.has('work.operator')) {
+    return {
+      authorized: false,
+      items: [],
+      summaryStoppedItems: [],
+      summaryHasMoreStopped: false,
+      eventItems: [],
+      hasMoreTasks: false,
+    };
+  }
+  // Each read takes only tasks carrying the stored sort key (#3566): the
+  // newest stopped tasks and the newest event tasks, instead of the newest
+  // 200 tasks of every state filtered here. Panel cursor parsing / GitHub
+  // projection enrichment, the Work card's uncursored native summary, and
+  // event-driven activity each keep their own failure boundary.
+  const [stopped, events] = await Promise.all([
+    loadBridgeStoppedPages({
+      rawCursor,
+      repo,
+      readPage: (pageCursor) =>
+        listWorkSummaries(work.runtime.store, {
+          limit: STOPPED_WORK_PAGE,
+          cursor: pageCursor,
+          sortKey: 'stoppedAt',
+        }),
+      excludeClosed: (candidates) =>
+        excludeClosedGithubAnchors(work.runtime.store, candidates),
+      onPanelError: (error) => {
+        logger.error('agent-lcars: parked work panel unavailable:', error);
+      },
+      onSummaryError: (error) => {
+        logger.error(
+          'agent-lcars: bridge work summary readout unavailable:',
+          error,
+        );
+      },
+    }),
+    loadBridgeEventWork({
+      repo,
+      view,
+      readEvents: () =>
+        listWorkSummaries(work.runtime.store, {
+          limit: EVENT_WORK_READ,
+          sortKey: 'eventAt',
+        }),
+      onEventError: (error) => {
+        logger.error('agent-lcars: event work activity unavailable:', error);
+      },
+    }),
+  ]);
+  return {
+    authorized: true,
+    items: stopped.items,
+    summaryStoppedItems: stopped.summaryStoppedItems,
+    summaryHasMoreStopped: stopped.summaryHasMoreStopped,
+    summaryError: stopped.summaryError,
+    eventItems: events.eventItems,
+    eventWindow: events.eventWindow,
+    eventError: events.eventError,
+    hasMoreTasks: stopped.hasMoreTasks,
+    nextCursor: stopped.nextCursor,
+    error: stopped.panelError,
+  };
 }
 
 async function getJobsReadout() {
@@ -238,7 +307,14 @@ async function IndexBody({
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
     {
+      authorized: workAuthorized,
       items: parkedWorkItems,
+      summaryStoppedItems,
+      summaryHasMoreStopped,
+      summaryError: workSummaryError,
+      eventItems,
+      eventWindow,
+      eventError: eventWorkError,
       hasMoreTasks: hasMoreParkedTasks,
       nextCursor: stoppedNextCursor,
       error: stoppedError,
@@ -258,7 +334,10 @@ async function IndexBody({
         getRunnerSessionsByRunId([...data.liveRuns, ...data.recentRuns]),
       ),
     ),
-    timings.time('stoppedWork', getParkedWork(repoFilterKey, stoppedCursor)),
+    timings.time(
+      'stoppedWork',
+      getParkedWork(repoFilterKey, stoppedCursor, view),
+    ),
     timings.time(
       'nativeInbox',
       getNativeInboxEvidence(async () => {
@@ -415,7 +494,12 @@ async function IndexBody({
   const selectRun = (run: AgentRun) =>
     bridgeSelectionHref(runKey(run), repoFilterKey, stoppedCursor, view);
   const outcomesHref = agentsScopedHref(repoFilterKey, view);
-  const workHref = workListHref({ repo: repoFilterKey });
+  const workHref = workListHref({
+    repo: repoFilterKey,
+    agent: view.agent,
+    window: view.window,
+    q: view.q,
+  });
   const eventWorkHref = workListHref({
     activity: 'events',
     repo: repoFilterKey,
@@ -481,56 +565,34 @@ async function IndexBody({
     >
       <ConsoleReadouts
         label="Destination summaries"
-        readouts={[
-          {
-            id: 'agents',
-            label: 'Agents',
-            href: outcomesHref,
-            value: activity.queue ? liveRuns.length : '—',
-            detail: cliSessionWarnings.length
-              ? 'Live runs · CLI sessions unavailable'
-              : `Live runs · ${activeCliSessions.length} active CLI sessions`,
-          },
-          {
-            id: 'shuttlebay',
-            label: 'Shuttlebay',
-            href: '/shuttlebay',
-            value: runnerCount ?? '—',
-            detail:
-              runnerCount === undefined
-                ? 'Runner inventory unavailable'
-                : runners
-                  ? 'Runners online · fleet-wide'
-                  : 'ARC runners registered · fleet-wide',
-          },
-          {
-            id: 'inbox',
-            label: 'Inbox',
-            href: inboxHref,
-            value: nativeInbox.available ? decisionCount : '—',
-            detail: nativeInbox.available
-              ? 'Decisions waiting'
-              : 'Native decisions unavailable',
-          },
-          {
-            id: 'jobs',
-            label: 'Jobs',
-            href: '/jobs',
-            value: jobs.count ?? '—',
-            detail: jobs.detail,
-          },
-          {
-            id: 'costs',
-            label: 'Costs',
-            href: repoFilterKey
-              ? `/costs?${new URLSearchParams({ repo: repoFilterKey })}`
-              : '/costs',
-            value: spend ? formatCost(spend.todayUsd) : '—',
-            detail: spend
-              ? `Known spend today (UTC)${spend.todayEstimated ? ' · est.' : ''}`
-              : 'Spend unavailable',
-          },
-        ]}
+        readouts={bridgeDestinationReadouts({
+          agentsHref: outcomesHref,
+          liveRunCount: liveRuns.length,
+          liveRunsAvailable: activity.queue !== undefined,
+          activeCliSessionCount: activeCliSessions.length,
+          cliSessionsAvailable: cliSessionWarnings.length === 0,
+          runnerCount,
+          hasHostInventory: runners !== undefined,
+          inboxHref,
+          decisionCount,
+          nativeInboxAvailable: nativeInbox.available,
+          workHref,
+          jobs,
+          spend,
+          costsHref: repoFilterKey
+            ? `/costs?${new URLSearchParams({ repo: repoFilterKey })}`
+            : '/costs',
+          work: bridgeWorkSummary({
+            authorized: workAuthorized,
+            error: workSummaryError ?? eventWorkError,
+            stoppedItems: summaryStoppedItems,
+            hasMoreStopped: summaryHasMoreStopped,
+            eventCount: eventItems.length,
+            eventWindowed: eventWindow?.windowed ?? false,
+            view,
+            now,
+          }),
+        })}
       />
       <section
         className="bridge-workspace"

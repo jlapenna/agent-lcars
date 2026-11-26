@@ -877,12 +877,16 @@ body:has(.console-header:not([data-streaming-fallback]))
 }
 
 /* Readouts: large figures across the top of a workspace, each separated by
-   a hairline (console-readouts.tsx). */
+   a hairline (console-readouts.tsx). Container queries mirror the auto-fit
+   track count (9.5rem per column) so every wrapped row's leading cell drops
+   its divider and aligns flush with the row above, while every cell keeps
+   identical horizontal padding and 1px border width so 15cqi values match. */
 .lcars-readouts {
+  container: lcars-readouts / inline-size;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
   row-gap: 16px;
-  padding: 20px 20px 0;
+  padding: 20px 8px 0;
 }
 
 .lcars-readout {
@@ -895,8 +899,43 @@ body:has(.console-header:not([data-streaming-fallback]))
 }
 
 .lcars-readout:first-child {
-  padding-left: 4px;
-  border-left: 0;
+  border-left-color: transparent;
+}
+
+@container lcars-readouts (inline-size < 19rem) {
+  .lcars-readout {
+    border-left-color: transparent;
+  }
+}
+
+@container lcars-readouts (inline-size >= 19rem) and (inline-size < 28.5rem) {
+  .lcars-readout:nth-child(2n + 1) {
+    border-left-color: transparent;
+  }
+}
+
+@container lcars-readouts (inline-size >= 28.5rem) and (inline-size < 38rem) {
+  .lcars-readout:nth-child(3n + 1) {
+    border-left-color: transparent;
+  }
+}
+
+@container lcars-readouts (inline-size >= 38rem) and (inline-size < 47.5rem) {
+  .lcars-readout:nth-child(4n + 1) {
+    border-left-color: transparent;
+  }
+}
+
+@container lcars-readouts (inline-size >= 47.5rem) and (inline-size < 57rem) {
+  .lcars-readout:nth-child(5n + 1) {
+    border-left-color: transparent;
+  }
+}
+
+@container lcars-readouts (inline-size >= 57rem) and (inline-size < 66.5rem) {
+  .lcars-readout:nth-child(6n + 1) {
+    border-left-color: transparent;
+  }
 }
 
 a.lcars-readout {

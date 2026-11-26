@@ -262,7 +262,7 @@ test('@navperf Bridge summaries wrap and signal a slow navigation on phones', as
   await expect(agents).toBeVisible();
 
   const details = summaries.locator('.lcars-readout__detail');
-  await expect(details).toHaveCount(5);
+  await expect(details).toHaveCount(6);
   await expect(summaries.getByRole('link', { name: /^Jobs/ })).toHaveAttribute(
     'href',
     '/jobs',
@@ -278,6 +278,35 @@ test('@navperf Bridge summaries wrap and signal a slow navigation on phones', as
         .map((element) => element.textContent),
     ),
   ).toEqual([]);
+
+  const cells = await summaries.locator('.lcars-readout').evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const style = getComputedStyle(node);
+      const value = node.querySelector('.lcars-readout__value');
+      return {
+        left: Math.round(node.getBoundingClientRect().left),
+        top: Math.round(node.getBoundingClientRect().top),
+        borderLeftColor: style.borderLeftColor,
+        paddingLeft: style.paddingLeft,
+        valueFontSize: value ? getComputedStyle(value).fontSize : null,
+      };
+    }),
+  );
+  expect(cells).toHaveLength(6);
+  // All three two-column rows align at 390px.
+  for (const start of [0, 2, 4]) {
+    const left = cells[start]!;
+    const right = cells[start + 1]!;
+    expect(left.top).toBe(right.top);
+    expect(left.left).toBe(cells[0]!.left);
+    expect(right.left).toBe(cells[1]!.left);
+    expect(left.paddingLeft).toBe(cells[0]!.paddingLeft);
+    expect(left.borderLeftColor).toBe('rgba(0, 0, 0, 0)');
+    expect(right.borderLeftColor).not.toBe('rgba(0, 0, 0, 0)');
+  }
+  expect(cells[2]!.top).toBeGreaterThan(cells[0]!.top);
+  expect(cells[4]!.top).toBeGreaterThan(cells[2]!.top);
+  expect(new Set(cells.map((cell) => cell.valueFontSize)).size).toBe(1);
 
   const label = agents.locator('.lcars-readout__label');
   const background = () =>

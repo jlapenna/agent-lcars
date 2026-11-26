@@ -404,5 +404,24 @@ describe('LCARS design system contract', () => {
         expect(routeCopies.map((match) => match[1])).toEqual([]);
       }
     });
+
+    it('drops leading-column readout dividers on wrapped rows without shifting cell padding', () => {
+      // Removing border-left and padding-left only on :first-child left every
+      // subsequent wrapped row (e.g. row 2 col 1 on phones) with a stray outer
+      // hairline, a 12px right indent relative to row 1, and a narrower
+      // content box that shrank its 15cqi value font relative to cell 1.
+      expect(RULES).toMatch(
+        /\.lcars-readouts \{[^}]*container:\s*lcars-readouts \/ inline-size;/,
+      );
+      expect(RULES).toContain(
+        '@container lcars-readouts (inline-size >= 19rem) and (inline-size < 28.5rem)',
+      );
+      expect(RULES).toContain('.lcars-readout:nth-child(2n + 1)');
+      const firstChildRule = RULES.match(
+        /\.lcars-readout:first-child \{([^}]*)\}/,
+      );
+      expect(firstChildRule).not.toBeNull();
+      expect(firstChildRule?.[1]).not.toMatch(/padding-left:/);
+    });
   });
 });
