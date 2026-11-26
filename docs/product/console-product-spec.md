@@ -308,8 +308,8 @@ deploy waits, and live fleet status.
 
 - **FE-BR-1 [Shipped]** The toolbar's primary action, "Review N decisions"
   (or "No decisions waiting"), links to `/inbox` with the Bridge's scope,
-  agent and find. It follows the agent, window and find controls that narrow
-  the Bridge's runs, sessions and items as they do on Agents.
+  agent and find. The Agent and Find controls narrow the Bridge's runs,
+  sessions and items.
 - **FE-BR-2 [Shipped]** `ParkedWorkPanel`, titled "Stopped work (N)", lists
   native and GitHub-anchored tasks whose latest run is parked or failed.
   Native rows offer **Cancel** and **Redispatch**. GitHub-anchored rows link
@@ -733,8 +733,8 @@ GitHub issues, browse and dispatch tracker sources, and manage recurring work.
   shows admitted attempts, recorded source observations, failure summaries and
   triage publication status with a direct published-report link. These are
   semantic source revisions, not an exhaustive webhook-delivery log.
-  Bridge links to event-driven Work with the current repository, agent, time
-  and search scope.
+  Bridge links to event-driven Work with the current repository, agent and
+  search scope.
   A repository is required only when the operation needs one. Lightweight
   inference needs no coding checkout. Internal summary work is inspectable
   without adding human-decision cards or chat notifications for every result.

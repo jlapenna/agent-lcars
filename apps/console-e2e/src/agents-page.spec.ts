@@ -51,7 +51,10 @@ test.describe('/agents page @smoke', () => {
     await expect(
       dispatches.getByRole('link', { name: /Event-driven work/ }),
     ).toHaveAttribute('href', '/work?activity=events');
-    await expect(page.getByTestId('latest-outcomes')).toHaveCount(0);
+    await expect(page.getByRole('radiogroup', { name: 'Window' })).toHaveCount(
+      0,
+    );
+    await expect(page.getByTestId('finished-run-row')).toHaveCount(0);
     await expect(
       page.getByRole('region', { name: 'Event-driven work' }),
     ).toHaveCount(0);

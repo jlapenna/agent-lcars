@@ -47,7 +47,6 @@ import {
   type RunItemRef,
 } from './agent-activity-panel';
 import {
-  AGENTS_WINDOWS,
   type AgentsViewFilters,
   cliSessionsArchiveHref,
   matchesAgentsRun,
@@ -72,7 +71,6 @@ import {
   ToolbarApply,
   ToolbarSearch,
   ToolbarSelect,
-  ToolbarWindow,
 } from './console-toolbar';
 import { ConsoleWorkspace } from './console-workspace';
 import { DataFreshness } from './data-freshness';
@@ -173,7 +171,6 @@ function agentsScopedHref(
   const query = new URLSearchParams();
   if (repo) query.set('repo', repo);
   if (view.agent) query.set('agent', view.agent);
-  if (view.window) query.set('window', view.window);
   if (view.q) query.set('q', view.q);
   return query.size ? `/agents?${query}` : '/agents';
 }
@@ -182,7 +179,6 @@ interface PageProps {
   searchParams: Promise<{
     repo?: string;
     agent?: string;
-    window?: string;
     q?: string;
     sel?: string;
     stoppedCursor?: string;
@@ -199,7 +195,7 @@ async function IndexBody({
 }: {
   repoFilter: WatchedRepo | undefined;
   repoFilterKey?: string;
-  /** The toolbar's agent, window and find, as on Agents. */
+  /** The toolbar's agent and find, as on Agents. */
   view: AgentsViewFilters;
   selectedKey?: string;
   stoppedCursor?: string;
@@ -287,7 +283,7 @@ async function IndexBody({
   // unfiltered data - a repo filter should narrow what's *displayed*, never
   // which items can see each other's runs/sessions. The repository selector
   // and scoped navigation share this same `?repo=` state.
-  // The toolbar's agent, window and find narrow the same rows after it, as
+  // The toolbar's agent and find narrow the same rows after it, as
   // on Agents; find also narrows the item lists by title and reference.
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
@@ -385,7 +381,8 @@ async function IndexBody({
   const eventWorkHref = workListHref({
     activity: 'events',
     repo: repoFilterKey,
-    ...view,
+    agent: view.agent,
+    q: view.q,
   });
 
   return (
@@ -419,18 +416,6 @@ async function IndexBody({
                 value: pipeline,
                 label: pipeline,
               })),
-            ]}
-          />
-          <ToolbarWindow
-            name="window"
-            label="Window"
-            value={view.window ?? ''}
-            options={[
-              ...AGENTS_WINDOWS.map((window) => ({
-                value: window,
-                label: window,
-              })),
-              { value: '', label: 'all' },
             ]}
           />
           <ToolbarSearch
@@ -653,7 +638,7 @@ function IndexViewContent({
     <>
       <LiveDashboard />
       <NavSuspense
-        key={`${repoFilterKey ?? ''}:${view.agent ?? ''}:${view.window ?? ''}:${view.q ?? ''}:${stoppedCursor ?? ''}`}
+        key={`${repoFilterKey ?? ''}:${view.agent ?? ''}:${view.q ?? ''}:${stoppedCursor ?? ''}`}
         fallback={<PageLoading rows={6} header={false} />}
       >
         <IndexBody
@@ -722,7 +707,7 @@ async function IndexShell({ searchParams }: PageProps) {
   const repoFilter = parseRepoFilterParam(params.repo);
   const repoFilterKey = repoFilter ? repoKey(repoFilter) : undefined;
   const selectedKey = parseBridgeSelection(params.sel);
-  const view = parseAgentsViewFilters(params);
+  const view = parseAgentsViewFilters({ agent: params.agent, q: params.q });
 
   const subtitle =
     watchedRepos.length <= 1
