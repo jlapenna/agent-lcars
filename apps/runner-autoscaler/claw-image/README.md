@@ -138,7 +138,8 @@ without them.
 
 The isolated OpenClaw host requires a readable cgroup v2 memory controller and
 a finite container limit. It checks the harness cgroup before launch and
-samples its charged memory every 100 ms through setup, the turn and cleanup.
+samples its working set every 100 ms through setup, the turn and cleanup.
+The working set subtracts reclaimable inactive file cache from charged memory.
 It fails the attempt when remaining headroom reaches 20% of the limit or
 512 MiB, whichever is smaller. The threshold is 2176 MiB for a 2688 MiB
 harness. This gives the Gateway, ACP bridge and tools room to stop and accounts

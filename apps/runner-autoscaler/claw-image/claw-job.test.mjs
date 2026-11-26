@@ -2025,12 +2025,13 @@ async function memoryFixture(root) {
   const setKills = (kills) =>
     write('memory.events', `oom 0\noom_kill ${kills}`);
   await write('memory.max', 2688 * 1024 ** 2);
-  await setUsage(2175);
+  await write('memory.stat', `anon 0\ninactive_file ${256 * 1024 ** 2}`);
+  await setUsage(2431);
   await setKills(3); // An event before this attempt isn't its diagnosis.
   return { path: async () => cgroup, setUsage, setKills };
 }
 
-test('an OpenClaw turn settles across the harness socket', async () => {
+test('an OpenClaw turn settles across the harness socket with reclaimable cache', async () => {
   const made = await fixture({
     acp: {
       steps: [{ say: 'Checking files now' }, { say: 'Done.' }],
@@ -2069,7 +2070,7 @@ test('an isolated OpenClaw turn settles memory pressure and kernel OOM separatel
       )
         await new Promise((resolve) => setTimeout(resolve, 50));
       assert.ok(made.calls.some((call) => call.body?.providerProcessStarted));
-      if (failure === 'pressure') await memory.setUsage(2176);
+      if (failure === 'pressure') await memory.setUsage(2432);
       else await memory.setKills(4);
       const result = await pending;
       assert.deepEqual(result, {

@@ -116,15 +116,22 @@ async function watchHarnessMemory(cgroup, controller, signal) {
   const check = async () => {
     if (signal.aborted) return;
     try {
-      const used = counter(await read(path, 'memory.current'));
       const killed = await oomKills(path);
-      if (killed > initialKills)
+      if (killed > initialKills) {
         controller.abort(
           new ClawFailure(
             'OpenClaw harness cgroup recorded a kernel OOM kill (memory.events oom_kill increased)',
           ),
         );
-      else if (used >= threshold)
+        return;
+      }
+      const current = counter(await read(path, 'memory.current'));
+      const inactiveFile = counter(
+        /^inactive_file (\d+)$/m.exec(await read(path, 'memory.stat'))?.[1],
+      );
+      // The kernel can reclaim inactive file cache under pressure.
+      const used = Math.max(0, current - inactiveFile);
+      if (used >= threshold)
         controller.abort(
           new ClawFailure(
             `OpenClaw harness memory guard stopped the turn at ${Math.ceil(used / MIB)} MiB (threshold ${Math.floor(threshold / MIB)} MiB, limit ${Math.floor(limit / MIB)} MiB); reduce the Gateway or tool working set`,
