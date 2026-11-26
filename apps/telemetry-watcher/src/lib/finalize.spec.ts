@@ -347,16 +347,17 @@ describe('finalizeSidecar', () => {
       );
       expect(uploads).toHaveLength(2);
       const childDoc = upserts.find((doc) => doc.sessionId === 'child');
-      expect(childDoc).toEqual(
+      expect(childDoc?.parentSessionId).toBe(
+        verifiedUsage ? 'codex-runner-session' : undefined,
+      );
+      expect(childDoc?.tokens).toEqual(
         verifiedUsage
-          ? expect.objectContaining({
-              parentSessionId: 'codex-runner-session',
-              tokens: expect.objectContaining({
-                inputTokens: 9,
-                cacheReadTokens: 2,
-                outputTokens: 3,
-              }),
-            })
+          ? {
+              inputTokens: 9,
+              cacheReadTokens: 2,
+              outputTokens: 3,
+              cacheCreationTokens: 0,
+            }
           : undefined,
       );
     },
