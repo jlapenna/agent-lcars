@@ -1,6 +1,7 @@
 import {
   fetchSessionTranscript,
   fetchSessionTranscriptByteRange,
+  fetchSessionTranscriptTail,
   MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
   OPENCODE_EXPORT_MAX_BYTES,
   sliceTranscriptByteRangeFromBuffer,
@@ -9,6 +10,7 @@ import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import {
   encodeTranscriptCursor,
+  getSessionTrajectoryPreview,
   getSessionTranscript,
   parseTranscriptCursor,
 } from './session-transcript';
@@ -21,6 +23,7 @@ vi.mock('@agent-lcars/telemetry/server', async () => {
     ...actual,
     fetchSessionTranscript: vi.fn(),
     fetchSessionTranscriptByteRange: vi.fn(),
+    fetchSessionTranscriptTail: vi.fn(),
   };
 });
 
@@ -352,5 +355,53 @@ describe('getSessionTranscript', () => {
         'codex',
       ),
     ).toBeUndefined();
+  });
+});
+
+it('returns only the last five root messages from complete lines at the end of a JSONL archive', async () => {
+  const line = (
+    role: 'user' | 'assistant',
+    text: string,
+    isSidechain = false,
+  ) =>
+    JSON.stringify({
+      type: role,
+      message: { role, content: [{ type: 'text', text }] },
+      isSidechain,
+    });
+  const finalText = 'x'.repeat(1300);
+  const archive = Buffer.from(
+    [
+      line('user', 'a'.repeat(1024 * 1024)),
+      line('user', 'first complete line'),
+      line('assistant', 'too old'),
+      line('user', 'one'),
+      line('assistant', 'two'),
+      line('user', 'three'),
+      line('assistant', 'four'),
+      line('assistant', 'subagent', true),
+      line('assistant', finalText),
+    ].join('\n'),
+  );
+  vi.mocked(fetchSessionTranscriptTail).mockImplementation(
+    async (_, maxBytes) => archive.subarray(-maxBytes),
+  );
+
+  expect(
+    await getSessionTrajectoryPreview({
+      status: 'eligible',
+      agent: 'claude-code',
+      transcriptGcsUri: 'gs://bucket/trajectory.jsonl',
+      snapshotId: 'snapshot',
+      maxSingleLineBytes: MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
+    }),
+  ).toEqual({
+    messages: [
+      { role: 'user', text: 'one' },
+      { role: 'assistant', text: 'two' },
+      { role: 'user', text: 'three' },
+      { role: 'assistant', text: 'four' },
+      { role: 'assistant', text: finalText.slice(0, 1200) + '…' },
+    ],
   });
 });

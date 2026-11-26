@@ -93,6 +93,7 @@ export function buildQueueView(
     return {
       ...item,
       actionTypes,
+      decisionRunId: item.decisionRunId ?? failedRun?.id ?? diagnosis?.runId,
       ...(diagnosis === undefined
         ? {}
         : { silentErrorDiagnosis: diagnosis.diagnosis }),

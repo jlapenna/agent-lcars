@@ -85,15 +85,17 @@ export async function getAuthoritativeQueueItems(): Promise<ActionItemsResult> {
           const actionTypes = item.actionTypes.filter(
             (type) => type !== 'needs-human',
           );
-          if (
-            (run.state === 'lost' ||
-              (run.state === 'finished' && !run.result?.ok)) &&
-            !actionTypes.includes('run-failed')
-          )
+          const replyFailed =
+            run.state === 'lost' ||
+            (run.state === 'finished' && !run.result?.ok);
+          if (replyFailed && !actionTypes.includes('run-failed'))
             actionTypes.push('run-failed');
           return {
             ...item,
             actionTypes,
+            ...(replyFailed && {
+              decisionRunId: run.runId,
+            }),
           };
         }
         const [actions, decision] = await Promise.all([
@@ -102,6 +104,9 @@ export async function getAuthoritativeQueueItems(): Promise<ActionItemsResult> {
         ]);
         return {
           ...item,
+          ...(run.result?.summary === 'park' && {
+            decisionRunId: run.runId,
+          }),
           ...(actions ? { humanNeededActions: actions } : {}),
           ...(decision ? { humanDecision: decision } : {}),
         };

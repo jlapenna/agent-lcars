@@ -58,8 +58,11 @@ export function classifyAgentRun(
 export function deriveSilentErrorDiagnoses(
   recentRuns: AgentRun[],
   sessionsByRunId: Map<string, IssueAgentSessionDoc>,
-): Map<string, { diagnosis: string; at: string }> {
-  const diagnoses = new Map<string, { diagnosis: string; at: string }>();
+): Map<string, { diagnosis: string; at: string; runId: string }> {
+  const diagnoses = new Map<
+    string,
+    { diagnosis: string; at: string; runId: string }
+  >();
   for (const run of recentRuns) {
     if (run.issueNumber === undefined) continue;
     const session = sessionsByRunId.get(String(run.id));
@@ -68,6 +71,7 @@ export function deriveSilentErrorDiagnoses(
       diagnoses.set(repoItemKey(run.repo, run.issueNumber), {
         diagnosis: classification.diagnosis,
         at: run.updatedAt,
+        runId: run.id,
       });
     }
   }

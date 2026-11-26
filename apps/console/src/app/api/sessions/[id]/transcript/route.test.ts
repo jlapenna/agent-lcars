@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getFirestore: vi.fn(),
   getSessionDoc: vi.fn(),
   getSessionTranscript: vi.fn(),
+  getSessionTrajectoryPreview: vi.fn(),
 }));
 
 vi.mock('@/auth', () => ({ auth: mocks.auth }));
@@ -30,6 +31,7 @@ vi.mock('@/lib/session-transcript', async () => {
   return {
     ...actual,
     getSessionTranscript: mocks.getSessionTranscript,
+    getSessionTrajectoryPreview: mocks.getSessionTrajectoryPreview,
   };
 });
 
@@ -114,6 +116,71 @@ describe('GET /api/sessions/[id]/transcript', () => {
     const operator = await GET(...makeRequest('agent-1'));
     expect(operator.status).toBe(401);
     expect(mocks.getSessionDoc).not.toHaveBeenCalled();
+  });
+
+  it('keeps the recent message preview admin-only and private', async () => {
+    const request = makeRequest(
+      'agent-1',
+      '?view=recent-messages&runId=work%3Aexample%2Fr2',
+    );
+    mocks.auth.mockResolvedValue({ user: { isAdmin: false } });
+    expect((await GET(...request)).status).toBe(401);
+    expect(mocks.getSessionTrajectoryPreview).not.toHaveBeenCalled();
+
+    mocks.auth.mockResolvedValue({ user: { isAdmin: true } });
+    mocks.getSessionDoc.mockResolvedValue(
+      agentDoc({
+        runId: 'work:example/r2',
+        transcriptGcsUri:
+          'gs://bucket/runs/work:example/r2/claude-code/agent-1.jsonl',
+      }),
+    );
+    const preview = {
+      messages: [{ role: 'assistant', text: 'Need a decision' }],
+    };
+    mocks.getSessionTrajectoryPreview.mockResolvedValue(preview);
+    const response = await GET(...request);
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(await response.json()).toEqual(preview);
+    expect(mocks.getSessionTranscript).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a stale session selection',
+      agentDoc({
+        runId: 'next-run',
+        transcriptGcsUri: 'gs://bucket/runs/next-run/claude-code/agent-1.jsonl',
+      }),
+    ],
+    [
+      'a retained transcript URI',
+      agentDoc({
+        runId: 'expected-run',
+        transcriptGcsUri:
+          'gs://bucket/runs/previous-run/claude-code/agent-1.jsonl',
+      }),
+    ],
+    [
+      'a retained OpenCode export URI',
+      agentDoc({
+        agent: 'opencode',
+        runId: 'expected-run',
+        transcriptGcsUri:
+          'gs://bucket/runs/expected-run/opencode/agent-1.jsonl',
+        resumeGcsUri:
+          'gs://bucket/runs/previous-run/opencode/agent-1.export.json',
+      }),
+    ],
+  ])('withholds preview messages for %s', async (_, doc) => {
+    mocks.auth.mockResolvedValue({ user: { isAdmin: true } });
+    mocks.getSessionDoc.mockResolvedValue(doc);
+    const response = await GET(
+      ...makeRequest('agent-1', '?view=recent-messages&runId=expected-run'),
+    );
+    expect(response.status).toBe(404);
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(mocks.getSessionTrajectoryPreview).not.toHaveBeenCalled();
   });
 
   it('returns 404 when the session document does not exist or has no consented archive', async () => {

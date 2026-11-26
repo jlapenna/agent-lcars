@@ -49,6 +49,8 @@ export interface ActionItem {
   labels: string[];
   assigneeLogins: string[];
   humanNeededActions?: HumanNeededActions;
+  /** Exact run associated with the decision, when backed by broker evidence. */
+  decisionRunId?: string;
   humanDecision?: HumanDecision & { runId: string };
   lastCommentBody?: string;
   lastCommentUrl?: string;

@@ -26,6 +26,7 @@ import {
 import type { WatchedRepo } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
 import { ToolbarFoldToggle } from './console-toolbar';
+import { DecisionTrajectory } from './decision-trajectory';
 import { DecisionSlaMeta } from './decision-waiting';
 import { formatAbsoluteLocal } from './format';
 import {
@@ -34,6 +35,7 @@ import {
   inboxCardKey,
   inboxCardMetadata,
   inboxCardSignature,
+  inboxDecisionRunId,
   REPORT_DISMISS_MINUTES,
 } from './inbox-card';
 import { InboxMobileCommandDeck } from './inbox-mobile-command-deck';
@@ -352,6 +354,14 @@ export function QueueWorkspace({
       cards.find((card) => inboxCardKey(card) === inboxCardKey(draftCard)) ??
       draftCard)
     : currentCard;
+  const trajectoryRunId = selectedCard && inboxDecisionRunId(selectedCard);
+  const trajectory = trajectoryRunId && selectedCard?.trajectorySessionId && (
+    <DecisionTrajectory
+      key={JSON.stringify([trajectoryRunId, selectedCard.trajectorySessionId])}
+      runId={trajectoryRunId}
+      sessionId={selectedCard.trajectorySessionId}
+    />
+  );
   // Automatic waits are intentionally absent from the queue. Only the live
   // selected card can establish that a retained draft is still replyable.
   const draftIsReplyableEventWait =
@@ -869,6 +879,7 @@ export function QueueWorkspace({
                     ? { ...selectedCard, canReply: false }
                     : selectedCard
                 }
+                trajectory={trajectory}
                 onReplyDraftChange={onReplyDraftChange}
                 replyToWorkItem={replyToWorkItem}
                 onReplyAdmitted={(message) =>
@@ -887,6 +898,7 @@ export function QueueWorkspace({
               description={selectedCard.description}
               decisionSummary={selectedCard.decisionSummary}
               lastComment={selectedCard.lastComment}
+              trajectory={trajectory}
               multiRepo={watchedRepos.length > 1}
               muted={isSnoozed(
                 inboxCardKey(selectedCard),

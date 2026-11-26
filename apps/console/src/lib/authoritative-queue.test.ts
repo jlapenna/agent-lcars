@@ -329,6 +329,39 @@ it('shows only the current parked run summary, never an older handoff after new 
     expect(item.actionTypes).toEqual(actionTypes);
     expect(item.humanDecision).toBeUndefined();
   }
+  const page = await listOpenGithubAnchorProjectionPage();
+  listOpenGithubAnchorProjectionPage.mockResolvedValueOnce({
+    projections: [
+      {
+        ...page.projections[0],
+        kind: 'pr',
+        checkRuns: [
+          {
+            id: 'verify',
+            name: 'Verify',
+            url: 'https://github.com/jlapenna/agent-lcars/runs/1',
+            status: 'completed',
+            conclusion: 'failure',
+            updatedAt: '2026-10-17T02:00:00Z',
+          },
+        ],
+      },
+    ],
+  });
+  listRuns.mockResolvedValue([
+    parked,
+    {
+      ...parked,
+      runId: 'jlapenna/agent-lcars#42/r2',
+      createdAt: '2026-10-17T01:00:00Z',
+      params: { replyExpectedParkedRunId: parked.runId },
+      result: { ok: true, summary: 'pull-request' },
+    },
+  ]);
+  const [ciDecision] = (await getAuthoritativeQueueItems()).items;
+  expect(ciDecision.actionTypes).toEqual(['run-failed']);
+  expect(ciDecision.decisionRunId).toBeUndefined();
+
   listRuns.mockRejectedValue(new Error('datastore temporarily unavailable'));
   expect((await getAuthoritativeQueueItems()).items[0]).toMatchObject({
     number: 42,

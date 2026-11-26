@@ -231,6 +231,7 @@ export function ActionItemCard({
   primaryAction,
   description,
   decisionSummary,
+  trajectory,
   lastComment,
   multiRepo = false,
   muted,
@@ -242,6 +243,7 @@ export function ActionItemCard({
   primaryAction?: PrimaryAction;
   description?: ReactNode;
   decisionSummary?: ReactNode;
+  trajectory?: ReactNode;
   lastComment?: ReactNode;
   /** Whether more than one repo is watched - passed down from the server
    * route rather than resolved here, since this is a client component and
@@ -824,6 +826,7 @@ export function ActionItemCard({
           </ExpandableMarkdown>
         )}
 
+        {trajectory}
         {replyRetry && (
           <RetryReplyDispatch
             key={replyRetry.commentId}
