@@ -12,7 +12,12 @@ import { parse as parseYaml } from 'yaml';
 
 const execFileAsync = promisify(execFile);
 const API_ROOT = 'https://firebaseapphosting.googleapis.com/v1';
-const PENDING_BUILD_STATES = new Set(['BUILDING', 'BUILT', 'DEPLOYING']);
+const RETRYABLE_BUILD_STATES = new Set([
+  'BUILDING',
+  'BUILT',
+  'DEPLOYING',
+  'READY',
+]);
 const TERMINAL_BUILD_STATES = new Set(['FAILED', 'SKIPPED', 'EXPIRED']);
 const TERMINAL_ROLLOUT_STATES = new Set([
   'FAILED',
@@ -253,7 +258,8 @@ function terminalBuildFailure(build, buildName) {
   const prefix = `App Hosting build ${resourceId(buildName)} entered terminal state ${build.state}`;
   const errors = Array.isArray(build.errors) ? build.errors : [];
   let reason;
-  for (const entry of [...errors, build.error]) {
+  const legacyError = { error: build.error, errorSource: build.errorSource };
+  for (const entry of [...errors, legacyError]) {
     if (entry?.errorSource !== 'CLOUD_RUN') continue;
     reason ??= 'Cloud Run could not prepare the revision';
     const message = entry.error?.message;
@@ -261,7 +267,7 @@ function terminalBuildFailure(build, buildName) {
 
     // Classify provider text, but never echo it. It can contain configuration
     // values, secret references or runtime identities.
-    if (!/\bsecret\b/iu.test(message)) continue;
+    if (!/\b(?:secrets?|secretmanager)\b/iu.test(message)) continue;
     if (
       /permission denied|access denied|not authorized|does not have (?:permission|access)|secretmanager\.versions\.access/iu.test(
         message,
@@ -607,7 +613,7 @@ async function main() {
       if (failure) throw new Error(failure);
       if (
         error.invalidRolloutField ||
-        !PENDING_BUILD_STATES.has(build?.state) ||
+        !RETRYABLE_BUILD_STATES.has(build?.state) ||
         attempt === 5
       ) {
         throw error;

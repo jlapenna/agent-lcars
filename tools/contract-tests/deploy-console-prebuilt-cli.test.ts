@@ -10,14 +10,19 @@ const workspace = path.resolve(import.meta.dirname, '../..');
 it.each([
   'ready',
   'transient',
+  'transient-ready',
   'failed',
   'failed-at-registration',
   'failed-metadata-unavailable',
   'denied',
+  'legacy-denied',
   'invalid',
 ])(
   'validates and deploys a v1 prebuilt image with %s build metadata',
   async (scenario) => {
+    const transient =
+      scenario === 'transient' || scenario === 'transient-ready';
+    const secretDenied = scenario === 'denied' || scenario === 'legacy-denied';
     const fixture = await mkdtemp(
       path.join(os.tmpdir(), 'console-prebuilt-cli-'),
     );
@@ -40,16 +45,22 @@ let build;
 let validationAttempts = 0;
 function failBuild() {
   build.state = 'FAILED';
-  build.errors = [{
-    errorSource: 'CLOUD_RUN',
-    error: {
-      code: scenario === 'denied' ? 9 : 5,
-      message: scenario === 'denied'
-        ? 'Permission denied on secret projects/private/secrets/DO_NOT_LOG/versions/latest'
+  const denied = scenario === 'denied' || scenario === 'legacy-denied';
+  const errorSource = 'CLOUD_RUN';
+  const error = {
+    code: denied ? 9 : 5,
+    message: scenario === 'denied'
+      ? "Permission 'secretmanager.versions.access' denied for resource 'projects/private/secrets/DO_NOT_LOG/versions/1' (or it may not exist)."
+      : scenario === 'legacy-denied'
+        ? 'Permission denied on secret projects/private/secrets/DO_NOT_LOG/versions/1'
         : 'Secret projects/private/secrets/DO_NOT_LOG/versions/latest was not found',
-    },
-  }];
-  if (scenario === 'denied') build.error = build.errors[0];
+  };
+  if (scenario === 'legacy-denied') {
+    build.error = error;
+    build.errorSource = errorSource;
+  } else {
+    build.errors = [{ error, errorSource }];
+  }
 }
 globalThis.fetch = async (input, options = {}) => {
   const url = new URL(input);
@@ -68,7 +79,7 @@ globalThis.fetch = async (input, options = {}) => {
   }
   if (method === 'POST' && url.pathname === parent + '/rollouts') {
     if (url.searchParams.get('validateOnly') && ++validationAttempts === 1) {
-      if (scenario === 'failed' || scenario === 'denied' || scenario === 'failed-metadata-unavailable') {
+      if (scenario === 'failed' || scenario === 'denied' || scenario === 'legacy-denied' || scenario === 'failed-metadata-unavailable') {
         failBuild();
         const message = 'The request was invalid: build "' + url.searchParams.get('rolloutId') + '" failed and a new rollout cannot be created: BUILD_FAILED';
         return new Response(JSON.stringify({ error: {
@@ -77,8 +88,8 @@ globalThis.fetch = async (input, options = {}) => {
         } }), { status: 400 });
       }
       if (scenario === 'transient' || scenario === 'invalid') build.state = 'DEPLOYING';
-      if (scenario === 'transient' || scenario === 'invalid') {
-        const field = scenario === 'transient' ? 'build' : 'displayName';
+      if (scenario === 'transient' || scenario === 'transient-ready' || scenario === 'invalid') {
+        const field = scenario === 'invalid' ? 'displayName' : 'build';
         return new Response(JSON.stringify({ error: {
           message: 'DO_NOT_LOG',
           details: [{ '@type': 'type.googleapis.com/google.rpc.BadRequest', fieldViolations: [{ field }] }],
@@ -163,13 +174,9 @@ globalThis.fetch = async (input, options = {}) => {
       const buildId = new URLSearchParams(registered.query).get('buildId');
       expect(child.error).toBeUndefined();
       expect(validations).toHaveLength(
-        scenario === 'transient'
-          ? 2
-          : scenario === 'failed-at-registration'
-            ? 0
-            : 1,
+        transient ? 2 : scenario === 'failed-at-registration' ? 0 : 1,
       );
-      if (scenario === 'ready' || scenario === 'transient') {
+      if (scenario === 'ready' || transient) {
         expect(child.status, child.stderr).toBe(0);
         expect(creations).toHaveLength(1);
         expect(await readFile(output, 'utf8')).toContain('source_uri=' + image);
@@ -187,7 +194,7 @@ globalThis.fetch = async (input, options = {}) => {
             `build ${buildId} entered terminal state FAILED`,
           );
           expect(child.stderr).toContain(
-            scenario === 'denied'
+            secretDenied
               ? 'runtime secret access failure'
               : 'could not resolve a runtime secret or version',
           );
