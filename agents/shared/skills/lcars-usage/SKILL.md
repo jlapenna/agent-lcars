@@ -111,8 +111,9 @@ lcars session unsubscribe <id>
 GitHub events arrive for repositories LCARS watches. A pull request notice
 covers reviews, review threads, comments, pushes, auto-merge changes, checks
 finishing (`all passed` or `<n> failed`, counting the newest run of each
-check) and merging or closing. Merge conflicts and falling behind the base
-branch have no event yet; check those with `gh`.
+check), merging or closing, merge conflicts (`conflict`), and falling behind
+the base branch (`behind`). The App source checks mergeability after a base
+branch push or a trusted PR head or base change.
 
 For PRs outside App coverage, an updated host agent uses GitHub's preview
 stream with that host's existing `gh` identity. It confirms attachment and a
