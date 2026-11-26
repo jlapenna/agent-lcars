@@ -31,7 +31,6 @@ export function stoppedWorkHref(
   const query = new URLSearchParams();
   if (repo) query.set('repo', repo);
   if (view.agent) query.set('agent', view.agent);
-  if (view.window) query.set('window', view.window);
   if (view.q) query.set('q', view.q);
   if (cursor) query.set('stoppedCursor', JSON.stringify(cursor));
   return `/${query.size ? `?${query}` : ''}`;

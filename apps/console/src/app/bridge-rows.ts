@@ -49,7 +49,7 @@ interface RunItemRef {
 export function resolveBridgeDetail({
   selectedKey,
   liveRuns,
-  recentRuns,
+  recentRuns = [],
   cliSessions,
   waitingOnDeploy,
   blocked = [],
@@ -60,7 +60,7 @@ export function resolveBridgeDetail({
 }: {
   selectedKey: BridgeSelectionKey | undefined;
   liveRuns: AgentRun[];
-  recentRuns: AgentRun[];
+  recentRuns?: AgentRun[];
   cliSessions: CliSession[];
   waitingOnDeploy: BoardCard[];
   blocked?: BoardCard[];

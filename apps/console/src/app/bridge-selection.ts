@@ -45,10 +45,9 @@ export function parseBridgeSelection(
   return value && value.length > 0 ? value : undefined;
 }
 
-/** The toolbar's agent, window and find (`?agent=`, `?window=`, `?q=`). */
+/** The toolbar's agent and find (`?agent=`, `?q=`). */
 export interface BridgeView {
   agent?: string;
-  window?: string;
   q?: string;
 }
 
@@ -67,7 +66,6 @@ export function bridgeSelectionHref(
   const params = new URLSearchParams();
   if (repoFilterKey) params.set('repo', repoFilterKey);
   if (view.agent) params.set('agent', view.agent);
-  if (view.window) params.set('window', view.window);
   if (view.q) params.set('q', view.q);
   if (key) params.set(SEL_PARAM, key);
   if (stoppedCursor) params.set('stoppedCursor', stoppedCursor);

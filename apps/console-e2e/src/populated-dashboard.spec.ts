@@ -275,7 +275,7 @@ test.describe('populated dashboard', () => {
     await agentsEditor.getByRole('button', { name: 'Cancel' }).click();
   });
 
-  test('renders live and finished run rows across the status palette', async ({
+  test('shows live runs on Bridge and outcome statuses on Agents', async ({
     page,
   }) => {
     await page.goto('/');
@@ -302,9 +302,9 @@ test.describe('populated dashboard', () => {
     await expect(duplicateAlert).toBeVisible();
     await expect(duplicateAlert).toContainText('2 claude');
 
-    // The five latest outcomes are visible immediately, without expanding
-    // a remembered disclosure.
-    const recent = page.getByTestId('latest-outcomes');
+    await page.getByRole('link', { name: 'Run outcomes →' }).click();
+    await expect(page).toHaveURL('/agents');
+    const recent = page.getByTestId('recent-outcomes');
     await expect(recent).toBeVisible();
 
     // success / failed / timeout: the three data colors #40 calls out as
@@ -797,8 +797,10 @@ test.describe('responsive decision inbox', () => {
       ).toHaveCount(0);
       await expect(page.getByTestId('deck-inbox-summary')).toBeVisible();
       await expect(page.getByTestId('current-work')).toBeVisible();
-      await expect(page.getByTestId('latest-outcomes')).toBeVisible();
-      await expect(page.getByTestId('finished-run-row')).toHaveCount(5);
+      await expect(
+        page.getByRole('link', { name: 'Run outcomes →' }),
+      ).toBeVisible();
+      await expect(page.getByTestId('finished-run-row')).toHaveCount(0);
 
       const directActions = page.locator(
         '.deck-inbox-summary__action:visible, .operations-panel a:visible, .operations-panel button:visible',

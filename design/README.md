@@ -63,9 +63,11 @@ Decisions the prototype already carries:
   from the browser to the host, so it is one tap from the list on a phone. A
   row without such a terminal keeps the single action. When two sessions name
   one pane, only the one most recently seen in it carries the link.
-- Bridge includes recent event-driven triage and summaries, linking into Work.
-  Work exposes an event-driven filter and source activity on detail pages; source
-  revisions represent admitted work, not every raw webhook delivery.
+- Bridge shows active dispatches, deploy waits, blockers, stopped work,
+  decisions and live fleet status. The Active dispatches footer links to
+  Work, Schedules, run outcomes in Agents and event-driven Work. Agents and
+  Work carry their own time filters. Work details show admitted source
+  revisions and activity.
 - The Bridge has no repository select; its panels summarise the whole fleet.
 - Every toolbar control applies on change; there is no Apply step.
 - On phones the Inbox list and selected detail grow with their content; the
