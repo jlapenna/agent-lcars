@@ -264,6 +264,7 @@ function createFixture() {
     orchestrator,
     drain,
     tokens,
+    reviewerTokens: { tokenFor: async () => 'reviewer-token' },
     fetchImpl,
     now: () => now,
     sleepMs: vi.fn(async () => undefined),
@@ -650,9 +651,8 @@ describe('automatic pull-request review & conflict remediation', () => {
     });
     expect(
       await reconcilePullRequestRemediation(f.remediationDeps, anchor),
-      // The later pass supersedes the block. The pull request is the App's own,
-      // so a passed head goes to the maintainers for its approval.
-    ).toEqual({ action: 'ignored', reason: 'maintainer-review-requested' });
+      // The later pass supersedes the historical block without asking a human.
+    ).toEqual({ action: 'ignored', reason: 'clean' });
 
     f.setPr(LCARS_REPO, 3500, {
       headRepository: { nameWithOwner: LCARS_REPO },
@@ -1306,101 +1306,40 @@ describe('automatic pull-request review & conflict remediation', () => {
     expect(await f.store.readActiveRun(anchor)).toBeUndefined();
   });
 
-  describe('a pull request the LCARS App opened', () => {
-    const LCARS = { __typename: 'Bot', login: 'agent-lcars' };
+  it('recognizes the dedicated reviewer on a fleet-authored PR without asking a maintainer or repeating review', async () => {
+    const f = createFixture();
     const anchor = { repo: REPO, issue: 4040 };
-    const pass = {
-      databaseId: 970,
-      state: 'COMMENTED',
-      body: 'No blocking defects.\n\n<!-- lcars-review:pass -->',
-      author: LCARS,
-      commit: { oid: HEAD_1 },
-    };
-    const requests = (f: ReturnType<typeof createFixture>) =>
+    f.setPr(REPO, 4040, {
+      author: { __typename: 'Bot', login: 'agent-lcars' },
+      reviews: [
+        {
+          databaseId: 970,
+          state: 'APPROVED',
+          author: { __typename: 'Bot', login: 'agent-lcars-reviewer' },
+          commit: { oid: HEAD_1 },
+        },
+      ],
+    });
+    const afterRun = {
+      runId: `${REPO}#4040/r1`,
+      params: { mode: 'review' },
+      result: { ok: true, summary: 'review' },
+    } as unknown as Run;
+    expect(
+      await reconcilePullRequestRemediation(f.remediationDeps, anchor, {
+        afterRun,
+      }),
+    ).toEqual({ action: 'ignored', reason: 'clean' });
+    expect(
       vi
         .mocked(f.fetchImpl)
         .mock.calls.filter(
           ([url, init]) =>
-            String(url).endsWith(
-              `/repos/${REPO}/pulls/4040/requested_reviewers`,
-            ) && init?.method === 'POST',
-        )
-        .map(([, init]) => JSON.parse(String(init?.body)) as unknown);
-
-    it('asks the maintainers to approve it once LCARS has passed the head', async () => {
-      const f = createFixture();
-      f.setPr(REPO, 4040, { author: LCARS, reviews: [pass] });
-
-      expect(
-        await reconcilePullRequestRemediation(f.remediationDeps, anchor),
-      ).toEqual({ action: 'ignored', reason: 'maintainer-review-requested' });
-      expect(requests(f)).toEqual([{ reviewers: ['jlapenna'] }]);
-    });
-
-    it.each([
-      ['the maintainer is already asked', { reviewRequests: ['jlapenna'] }],
-      [
-        'the maintainer already approved the head',
-        {
-          reviews: [
-            pass,
-            {
-              databaseId: 971,
-              state: 'APPROVED',
-              author: { login: 'jlapenna' },
-              commit: { oid: HEAD_1 },
-            },
-          ],
-        },
-      ],
-      ['LCARS has not reviewed the head', { reviews: [] }],
-      [
-        'LCARS passed an earlier head only',
-        { headRefOid: HEAD_2, reviews: [pass] },
-      ],
-    ])('does not ask when %s', async (_case, overrides) => {
-      const f = createFixture();
-      f.setPr(REPO, 4040, { author: LCARS, reviews: [pass], ...overrides });
-
-      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
-
-      expect(requests(f)).toEqual([]);
-    });
-
-    it('asks only the maintainer, not every console admin', async () => {
-      vi.stubEnv('AGENT_LCARS_ADMIN_GITHUB_LOGINS', 'jlapenna,lizsprinkles');
-      const f = createFixture();
-      f.setPr(REPO, 4040, { author: LCARS, reviews: [pass] });
-
-      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
-
-      expect(requests(f)).toEqual([{ reviewers: ['jlapenna'] }]);
-    });
-
-    it('asks even while a delivery binding owns the pull request, without admitting a run', async () => {
-      const f = createFixture();
-      f.setPr(REPO, 4040, { author: LCARS, reviews: [pass] });
-      vi.spyOn(f.store, 'readWaitingDeliveryTasks').mockResolvedValue([
-        {} as never,
-      ]);
-
-      expect(
-        await reconcilePullRequestRemediation(f.remediationDeps, anchor, {
-          wakeDelivery: false,
-        }),
-      ).toEqual({ action: 'ignored', reason: 'maintainer-review-requested' });
-      expect(requests(f)).toEqual([{ reviewers: ['jlapenna'] }]);
-      expect(await f.store.readActiveRun(anchor)).toBeUndefined();
-    });
-
-    it("does not ask about a maintainer's own pull request", async () => {
-      const f = createFixture();
-      f.setPr(REPO, 4040, { author: { login: 'jlapenna' }, reviews: [pass] });
-
-      await reconcilePullRequestRemediation(f.remediationDeps, anchor);
-
-      expect(requests(f)).toEqual([]);
-    });
+            String(url).endsWith('/requested_reviewers') &&
+            init?.method === 'POST',
+        ),
+    ).toEqual([]);
+    expect(await f.store.readActiveRun(anchor)).toBeUndefined();
   });
 
   it('defers while the issue-anchored run authoring the PR branch is still live', async () => {

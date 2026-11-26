@@ -1,6 +1,9 @@
 import 'server-only';
 
-import { AGENT_BOT_LOGINS } from '@agent-lcars/dispatch-contracts';
+import {
+  AGENT_BOT_LOGINS,
+  REVIEWER_BOT_LOGIN,
+} from '@agent-lcars/dispatch-contracts';
 import {
   formatAttemptId,
   formatClaimMarker,
@@ -285,7 +288,7 @@ async function reviews(
       latestVerdict.set(authorKey, 'clear');
     } else if (
       review.state === 'COMMENTED' &&
-      authorKey === 'agent-lcars[bot]'
+      (authorKey === 'agent-lcars[bot]' || authorKey === REVIEWER_BOT_LOGIN)
     ) {
       if (hasReviewLineMarker(review.body, '<!-- lcars-review:block -->')) {
         latestVerdict.set(authorKey, 'blocked');

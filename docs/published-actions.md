@@ -56,24 +56,19 @@ bot and signed by GitHub (excluding LCARS's qualification-gated
 `renovate/runner-cli-runtimes`, `renovate/major-runner-cli-runtimes`,
 `renovate/anthropic-review-workflow`, and
 `renovate/major-anthropic-review-workflow` branches) get an approving review
-from the control plane, as `agent-lcars[bot]`, without a review run. It does
+from the control plane, as `agent-lcars-reviewer[bot]`, without a review run. It does
 not approve a head that carries `status:needs-human` or `status:blocked`, a
 change request, an open trusted review thread, or a dismissed LCARS review.
 A commit from anyone else ends the exemption and the PR is reviewed normally.
 
-Two limits follow from using GitHub's rule. Any identity with write access
-can approve, so `can_approve_pull_request_reviews` stays off for the Actions
-token in every gated repository. And no account can approve its own pull
-request, so dispatched runs never open pull requests as `agent-lcars[bot]`:
-the console's checkout token carries a second token from the
-`agent-lcars-author` App, and the runner's `gh pr create` uses it. The PR's
-author is `agent-lcars-author[bot]`, and the LCARS review approves it like
-any other PR. A PR that still reaches GitHub as `agent-lcars[bot]` (the
-author App not configured or not installed on the owner) falls back to the
-old path: LCARS reviews it as a `COMMENT` carrying `<!-- lcars-review:pass -->`
-or `<!-- lcars-review:block -->`, and once it passes the control plane
-requests the maintainer's review. That fallback is a configuration fault to
-fix, not a supported route.
+All review runs authenticate as the dedicated `agent-lcars-reviewer` App,
+with read access to source, issues and CI plus pull-request write access.
+Automatic dependency approvals use the same App. Missing reviewer credentials
+refuse the review; there is no fallback to an authoring identity.
+Implementation authors remain unchanged, including `agent-lcars[bot]`, and
+GitHub's ordinary approving review counts because author and reviewer differ.
+The existing fleet App webhook receives these reviews and wakes auto-merge.
+Actions' `can_approve_pull_request_reviews` remains off in every gated repository.
 
 Enabling the gate in a repository is one change to its ruleset root
 (`infra/github-ruleset`), applied by Homelab's executor. Before adding it,

@@ -78,6 +78,41 @@
         "metadata": "read"
       },
       "_note": "What runner scale-set listeners register with. Its private key is deployed on the homelab controller for those listeners (github-runner-autoscaler/lcars-app-private-key.pem) and the collector reads it there in place, so this App is asserted from the same host with no new key distribution (jlapenna/homelab#768). It was previously modelled as unassertable on the belief that the key only existed in the ansible vault; that was wrong. Its former actions:read grant (2026-09-20) served only the github-actions-exporter's REST polling (jlapenna/agent-lcars#2024) and was removed once the exporter moved to App webhooks over Pub/Sub (jlapenna/agent-lcars#3525). Prose: docs/fleet-credentials.md ('Actions exporter key')."
+    },
+    {
+      "key": "reviewer",
+      "slug": "agent-lcars-reviewer",
+      "clientId": "Iv23liqY0yfhlYJB6YtN",
+      "owner": {
+        "login": "jlapenna",
+        "type": "User"
+      },
+      "installations": [
+        {
+          "id": 185984458,
+          "account": "jlapenna",
+          "repositorySelection": "all"
+        },
+        {
+          "id": 185984517,
+          "account": "supersprinklesracing",
+          "repositorySelection": "all"
+        },
+        {
+          "id": 185984591,
+          "account": "jlaorg",
+          "repositorySelection": "all"
+        }
+      ],
+      "permissions": {
+        "actions": "read",
+        "checks": "read",
+        "contents": "read",
+        "issues": "read",
+        "metadata": "read",
+        "pull_requests": "write"
+      },
+      "_note": "Dedicated review identity for every review run and automatic dependency approval; implementation authors are unchanged. Private key is in the existing Secret Manager AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY slot, exposed to Console as AGENT_LCARS_REVIEWER_APP_PRIVATE_KEY."
     }
   ],
   "_fleetCoverageNote": "Every entry in fleetRepositories must be covered by some App installation. supersprinklesracing/www was found uncovered this way (#1380).",

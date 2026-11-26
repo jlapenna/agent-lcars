@@ -344,6 +344,14 @@ env:
     availability:
       - RUNTIME
 
+  # Dedicated review role; key slot was provisioned before the role decision.
+  - variable: AGENT_LCARS_REVIEWER_APP_CLIENT_ID
+    value: 'Iv23liqY0yfhlYJB6YtN'
+    availability: [RUNTIME]
+  - variable: AGENT_LCARS_REVIEWER_APP_PRIVATE_KEY
+    secret: AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY
+    availability: [RUNTIME]
+
   # Application-owned job credentials; values are resolved at runtime, never during build.
   - variable: AGENT_LCARS_JOB_SECRETS_PROJECT
     value: agent-lcars-job-secrets

@@ -64,6 +64,9 @@ NUM="${NUM:-}"
 # endpoint 404s when #NUM is not a pull request, and review mode is the one
 # case this script already knows it is.
 : "${MODE:?MODE is required}"
+if [ "$MODE" = review ]; then
+  : "${EXPECTED_REVIEW_LOGIN:?review-mode expected identity is required}"
+fi
 
 if [ -z "${ATTEMPT_ID:-}" ]; then
   echo "::error::ATTEMPT_ID is required: this gate is exact-marker-only. The run's deliverable must carry its own <!-- attempt-claim:<attempt-id> --> marker; the legacy time-window/login inference mode (STARTED_AT/EXPECTED_COMMENT_LOGIN) was deleted because every fleet consumer now passes ATTEMPT_ID."
@@ -91,9 +94,10 @@ lookup_hits() {
     errors+=("$kind lookup (gh api $endpoint) failed: $pages")
     return 1
   fi
-  if ! hits=$(jq -ce --arg marker "$claim_marker" --arg kind "$kind" '
+  if ! hits=$(jq -ce --arg marker "$claim_marker" --arg kind "$kind" --arg reviewer "${EXPECTED_REVIEW_LOGIN:-}" '
     [ .[][]
       | select(.user.type == "Bot")
+      | select($kind != "review" or .user.login == $reviewer)
       | select((if $kind == "PR" then ((.title // "") + "\n" + (.body // "")) else (.body // "") end) | contains($marker))
     ]' <<< "$pages" 2>&1); then
     errors+=("$kind lookup returned invalid REST data: $hits")

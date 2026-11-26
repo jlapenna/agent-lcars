@@ -28,16 +28,26 @@ history — move values with pipes, `read -rs`, or files created under
 | `work-reader` ID token    | interactive sessions' `lcars work owner` (Console Work API)                                     | none stored; minted per call by Google impersonation                                     | `user:jlapenna@gmail.com` only     |
 | `claw-operator` ID token  | interactive claw admission (`POST /api/work/v1/claw/agents/{owner}/{repo}/{name}/runs`, cancel) | none stored; minted per call by Google impersonation                                     | `user:jlapenna@gmail.com` only     |
 
-Two GitHub Apps exist and are easy to confuse:
+Three GitHub Apps serve separate roles:
 
 - **Fleet App** (`agent-lcars`, client `Iv23liO6X8pLJLcTFzyv`): what the
-  lanes and console authenticate as — claims, PRs, comments as
+  implementation lanes and console authenticate as — claims, PRs, comments as
   `agent-lcars[bot]`. Since 2026-11-19 it also carries `checks: write`
   (App settings UI) so it can publish code-review check runs on Homelab PRs
   (jlapenna/homelab#3647); modelled in `tools/iam-contract/model.json`.
   Installations:
   [jlapenna 150568943](https://github.com/settings/installations/150568943),
   [supersprinklesracing 150568991](https://github.com/organizations/supersprinklesracing/settings/installations/150568991).
+- **Reviewer App** (`agent-lcars-reviewer`, client `Iv23liqY0yfhlYJB6YtN`):
+  every review run and automatic dependency approval uses this identity.
+  Authors keep their existing identities. Permissions are source, issues and
+  CI read access plus pull-request write access; no code pushes or CI reruns.
+  Owner: `jlapenna`. All-repository installations: `185984458` (jlapenna),
+  `185984517` (supersprinklesracing), `185984591` (jlaorg). The private key
+  remains in Secret Manager `AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY`, provisioned
+  before this role decision; App Hosting exposes it as
+  `AGENT_LCARS_REVIEWER_APP_PRIVATE_KEY`. A missing or failed reviewer mint
+  refuses a review run; it never falls back to the authoring App.
 - **Autoscaler App** (`agent-lcars-autoscaler`, client `Iv23lir3t9e2k4RAkWxw`):
   what runner scale-set listeners register with (Administration R/W and
   Metadata R/O). Its former Actions R/O grant served only the

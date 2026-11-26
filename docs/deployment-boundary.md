@@ -213,7 +213,7 @@ when a caller omits or empties the legacy override variables.
 | `AGENT_FLEET_LOGIN`               | `agent-lcars-bot`                                                                | claim steps and queue hand-off                                                                  |
 | `AGENT_LCARS_CLIENT_ID`           | `Iv23liO6X8pLJLcTFzyv` (the Agent LCARS GitHub App)                              | Console labels/comments, configure-github-app-webhook, and label-contract-audit                 |
 | `APPHOSTING_BACKEND_ID`           | `agent-lcars`                                                                    | deploy-console                                                                                  |
-| `AGENT_BOT_LOGINS`                | `["claude[bot]","agent-lcars[bot]","agent-lcars-author[bot]"]`                   | agent-automerge — REST-shaped, see `docs/bot-identity-formats.md`                               |
+| `AGENT_BOT_LOGINS`                | `["claude[bot]","agent-lcars[bot]","agent-lcars-reviewer[bot]"]`                 | agent-automerge — REST-shaped, see `docs/bot-identity-formats.md`                               |
 | `NX_CACHE_URL`                    | homelab Nx cache                                                                 | CI jobs                                                                                         |
 
 `deploy-console.yml` runs admission, native container construction, and
