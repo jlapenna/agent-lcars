@@ -2,6 +2,7 @@ import { logger } from '@agent-lcars/logging';
 import { isSafeIdentifier } from '@agent-lcars/telemetry';
 import { spawn } from 'child_process';
 import * as fs from 'fs';
+import { tmpdir } from 'os';
 import * as path from 'path';
 
 import { extractLastAssistantText } from './opencode-last-message';
@@ -78,7 +79,6 @@ interface ListedSession {
 const CHILD_ENV_ALLOWLIST = [
   'HOME',
   'XDG_DATA_HOME',
-  'XDG_CONFIG_HOME',
   'XDG_CACHE_HOME',
   'TMPDIR',
   'LANG',
@@ -137,13 +137,40 @@ export function resolveTrustedOpenCodeExecutable(
   return isTrustedOpenCodePath(candidate) ? candidate : undefined;
 }
 
-function openCodeChildEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
+function openCodeChildEnv(configHome: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    XDG_CONFIG_HOME: configHome,
+    OPENCODE_DISABLE_PROJECT_CONFIG: 'true',
+    OPENCODE_DISABLE_AUTOUPDATE: 'true',
+    OPENCODE_DISABLE_MODELS_FETCH: 'true',
+  };
   for (const key of CHILD_ENV_ALLOWLIST) {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
   return env;
+}
+
+async function withArchiveConfig<T>(
+  run: (
+    env: NodeJS.ProcessEnv,
+    resolve: (result: T) => void,
+    reject: (error: Error) => void,
+  ) => void,
+): Promise<T> {
+  // Keep HOME and XDG_DATA_HOME for the session store while giving each
+  // standalone command a private, empty global config root. Project discovery
+  // is disabled separately so listing can still use the real workspace cwd.
+  const configHome = fs.mkdtempSync(
+    path.join(tmpdir(), 'lcars-opencode-config-'),
+  );
+  try {
+    return await new Promise<T>((resolve, reject) =>
+      run(openCodeChildEnv(configHome), resolve, reject),
+    );
+  } finally {
+    fs.rmSync(configHome, { recursive: true, force: true });
+  }
 }
 
 function killCommand(child: {
@@ -177,12 +204,12 @@ export function defaultRunOpenCode(
   args: string[],
   options: CommandOptions,
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
+  return withArchiveConfig<string>((env, resolve, reject) => {
     const cwd = existingDirectory(options.cwd);
     const child = spawn(executable, args, {
       detached: true,
       ...(cwd ? { cwd } : {}),
-      env: openCodeChildEnv(),
+      env,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     const chunks: Buffer[] = [];
@@ -234,7 +261,7 @@ function defaultRunOpenCodeToFile(
   outputPath: string,
   options: CommandOptions,
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
+  return withArchiveConfig<void>((env, resolve, reject) => {
     const fileBlocks = Math.floor(options.maxBytes / 1024);
     if (fileBlocks < 1) {
       reject(new Error('OpenCode file bound must be at least 1024 bytes'));
@@ -260,7 +287,7 @@ function defaultRunOpenCodeToFile(
       {
         detached: true,
         ...(cwd ? { cwd } : {}),
-        env: openCodeChildEnv(),
+        env,
         stdio: ['ignore', output, 'ignore'],
       },
     );
