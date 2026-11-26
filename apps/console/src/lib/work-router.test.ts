@@ -3518,29 +3518,38 @@ describe('shared repository authority', () => {
   });
 });
 
-it.each(['pending', 'parked'] as const)(
-  'requires a Goose grant to cancel a %s recipe occurrence',
-  async (state) => {
+const codingPipelines = ['claude', 'codex', 'opencode', 'agy'] as const;
+it.each([
+  ['pending', 'goose', codingPipelines],
+  ['parked', 'goose', codingPipelines],
+  ['pending', 'claude', codingPipelines],
+  ['parked', 'claude', codingPipelines],
+  ['pending', 'claude', ['goose']],
+  ['parked', 'claude', ['goose']],
+] as const)(
+  'requires Jobs and execution grants to cancel a %s repository job on %s with %j',
+  async (state, pipeline, pipelines) => {
     const ctx = context({
       principal: {
         ...operator,
         principal: 'svc:work-reader',
         subject: 'work-reader@agent-lcars.iam.gserviceaccount.com',
         via: 'google',
-        pipelines: ['claude', 'codex', 'opencode', 'agy'],
+        pipelines,
       },
     });
     await ctx.runtime.orchestrator.request({
       taskId: { workId: ID },
       requestId: 'recipe-1',
-      pipeline: 'goose',
+      pipeline,
+      params: { jobOccurrence: 'a'.repeat(64) },
       work: {
         origin: { principal: githubActionsOperator.principal, channel: 'api' },
         spec: {
           ...spec,
-          pipeline: 'goose',
+          pipeline,
           priority: 'background',
-          jobOccurrence: 'a'.repeat(64),
+          ...(pipeline === 'goose' ? { jobOccurrence: 'a'.repeat(64) } : {}),
         },
       },
     });
@@ -3558,7 +3567,10 @@ it.each(['pending', 'parked'] as const)(
     expect(await ctx.runtime.store.readTask({ workId: ID })).toEqual(item);
     expect(await ctx.runtime.store.readRun(runId)).toEqual(run);
 
-    ctx.principal = { ...githubActionsOperator, pipelines: ['goose'] };
+    ctx.principal = {
+      ...githubActionsOperator,
+      pipelines: pipeline === 'goose' ? ['goose'] : ['goose', pipeline],
+    };
     expect(await call(ctx, 'POST', `/items/${ID}/cancel`)).toMatchObject({
       status: 200,
       json: { state: 'canceled' },

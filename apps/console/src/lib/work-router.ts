@@ -515,6 +515,13 @@ export const workRouter = os.router({
         live?.pipeline ?? readStoredWorkSpec(task.task.work['spec'])?.pipeline;
       if (pipeline === undefined || !principal.pipelines.includes(pipeline))
         throw errors.FORBIDDEN();
+      // Harness-backed jobs record their occurrence on the run, including
+      // after it settles. Canceling them also requires Jobs authority.
+      if (
+        !principal.pipelines.includes('goose') &&
+        runs.some((run) => Boolean(run.params?.['jobOccurrence']))
+      )
+        throw errors.FORBIDDEN();
     }
     const state = deriveItemState(task.task, runs);
     if (state === 'done' || state === 'canceled') {
