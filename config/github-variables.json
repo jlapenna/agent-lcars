@@ -106,7 +106,6 @@
     "fleet-member": {
       "repositories": [
         "jlapenna/homelab",
-        "supersprinklesracing/www",
         "jlapenna/nx-cache-server",
         "jlapenna/sync-padd",
         "jlapenna/messages-control",

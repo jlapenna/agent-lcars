@@ -56,7 +56,6 @@ variable "homelab_repository" {
 variable "additional_fleet_repositories" {
   type = list(string)
   default = [
-    "supersprinklesracing/www",
     "jlapenna/nx-cache-server",
     "jlapenna/sync-padd",
   ]

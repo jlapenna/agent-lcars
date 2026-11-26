@@ -70,7 +70,7 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
-    condition     = google_iam_workload_identity_pool_provider.github.attribute_condition == "assertion.repository in ['jlapenna/agent-lcars', 'supersprinklesracing/sprinkles', 'jlapenna/homelab', 'supersprinklesracing/www', 'jlapenna/nx-cache-server', 'jlapenna/sync-padd']"
+    condition     = google_iam_workload_identity_pool_provider.github.attribute_condition == "assertion.repository in ['jlapenna/agent-lcars', 'supersprinklesracing/sprinkles', 'jlapenna/homelab', 'jlapenna/nx-cache-server', 'jlapenna/sync-padd']"
     error_message = "The WIF provider must authorize exactly the seven fleet repositories, in order."
   }
 

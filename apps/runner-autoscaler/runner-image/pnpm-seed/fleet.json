@@ -1,7 +1,3 @@
 {
-  "repositories": [
-    "jlapenna/agent-lcars",
-    "supersprinklesracing/sprinkles",
-    "supersprinklesracing/www"
-  ]
+  "repositories": ["jlapenna/agent-lcars", "supersprinklesracing/sprinkles"]
 }
