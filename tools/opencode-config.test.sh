@@ -50,6 +50,10 @@ jq -e '.plugin == ["./lcars-session", "./context-lifecycle", "./lcars-telemetry"
 jq -e '.permission.task == "deny" and .permission.subagent == "deny" and .permission.execute == "deny" and .permission.question == "deny" and .permission.generate_image == "deny"' "$config" >/dev/null ||
   fail "opencode.json must deny subagent/task delegation, Code Mode execute, interactive questions, and image generation by default"
 
+jq -e '.automations == false' "$config" "$config_dir/review-overlay-v2.json" |
+  jq -es '. == [true, true]' >/dev/null ||
+  fail "the runner configuration and v2 review overlay must disable automations"
+
 for plugin_name in lcars-session context-lifecycle lcars-telemetry hindsight; do
   plugin_dir="$repo_root/agents/opencode/$plugin_name"
   test -f "$plugin_dir/package.json" || fail "agents/opencode/$plugin_name/package.json is missing"

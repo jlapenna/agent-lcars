@@ -1,4 +1,5 @@
 {
+  "automations": false,
   "$schema": "https://opencode.ai/config.json",
   "instructions": ["~/.config/opencode/instructions.md"],
   "plugin": [
