@@ -3961,6 +3961,151 @@ describe('complete', () => {
   });
 });
 
+describe('submitReview', () => {
+  it.each([
+    { name: 'implementation run', mode: 'implement', status: 403, calls: 0 },
+    { name: 'unbound run', binding: undefined, status: 409, calls: 0 },
+    { name: 'wrong reviewed commit', commit: 'b', status: 409, calls: 0 },
+    { name: 'moved PR head', current: 'b', status: 409, calls: 1 },
+    { name: 'invalid run token', invalidToken: true, status: 401, calls: 0 },
+    {
+      name: 'foreign attempt marker',
+      foreignMarker: true,
+      status: 409,
+      calls: 0,
+    },
+    { name: 'inline comment on approval', inline: true, status: 409, calls: 0 },
+    { name: 'accepted approval', status: 200, calls: 2 },
+    {
+      name: 'accepted change request',
+      changesRequested: true,
+      inline: true,
+      status: 200,
+      calls: 2,
+    },
+  ])('handles $name', async (scenario) => {
+    const { store, orchestrator, now } = fixture();
+    const sha = 'a'.repeat(40);
+    const issue = 42;
+    const request = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue },
+      requestId: 'review',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec: {
+          title: 'Review PR',
+          description: 'Review the admitted head',
+          pipeline: 'claude',
+          target: { repo: 'jlapenna/agent-lcars' },
+        },
+      },
+      params: {
+        mode: 'mode' in scenario ? scenario.mode : 'review',
+        ...('binding' in scenario ? {} : { reviewHead: sha }),
+      },
+    });
+    if ('refused' in request || !request.run)
+      throw new Error('Review admission failed');
+    const { runId } = request.run;
+    await store.enqueueRun({ runId, now: NOW });
+    await orchestrator.confirmDispatch(runId);
+    const bearerToken = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'review-runner',
+      claimedBySubject: 'executor@example.com',
+      tokenHash: hashRunToken(bearerToken),
+    });
+    const reviewContext = {
+      ...context,
+      store,
+      orchestrator,
+      now,
+      bearerToken,
+      reviewerCheckoutV1: true,
+      reviewerTokens: {
+        tokenFor: vi.fn(async () => 'reviewer-token'),
+        expiringTokenFor: vi.fn(),
+        expiringTokenForRepositories: vi.fn(),
+      },
+    };
+    expect(
+      (await call(reviewContext, 'POST', runPath(runId, '/heartbeat'))).status,
+    ).toBe(200);
+    const reviewUrl =
+      'https://github.com/jlapenna/agent-lcars/pull/42#pullrequestreview-7';
+    const github = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          head: {
+            sha: ('current' in scenario ? scenario.current : 'a').repeat(40),
+          },
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ id: 7, html_url: reviewUrl }));
+    vi.stubGlobal('fetch', github);
+    try {
+      const event =
+        'changesRequested' in scenario ? 'REQUEST_CHANGES' : 'APPROVE';
+      const comments =
+        'inline' in scenario
+          ? [
+              {
+                path: 'src/file.ts',
+                body: 'Validate this input',
+                line: 10,
+                side: 'RIGHT',
+              },
+            ]
+          : [];
+      const result = await call(
+        'invalidToken' in scenario
+          ? { ...reviewContext, bearerToken: mintRunToken() }
+          : reviewContext,
+        'POST',
+        runPath(runId, '/review'),
+        {
+          commit_id: ('commit' in scenario ? scenario.commit : 'a').repeat(40),
+          event,
+          body:
+            'foreignMarker' in scenario
+              ? 'Reviewed.\n\n<!-- attempt-claim:g2:jlapenna/agent-lcars#42/r2 -->'
+              : 'Reviewed.',
+          comments,
+        },
+      );
+      expect(result.status).toBe(scenario.status);
+      expect(github).toHaveBeenCalledTimes(scenario.calls);
+      expect(scenario.status === 200 ? result.json : undefined).toEqual(
+        scenario.status === 200 ? { id: 7, html_url: reviewUrl } : undefined,
+      );
+      const expectedPublication = [
+        'https://api.github.com/repos/jlapenna/agent-lcars/pulls/42/reviews',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            authorization: 'Bearer reviewer-token',
+          }),
+          body: JSON.stringify({
+            commit_id: sha,
+            event,
+            body: `Reviewed.\n\n<!-- attempt-claim:g1:${runId} -->`,
+            comments,
+          }),
+        }),
+      ];
+      expect(github.mock.calls[1]).toEqual(
+        scenario.calls === 2 ? expectedPublication : undefined,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe('checkoutToken', () => {
   it("mints a token for the spec's target repo without leaking the run token", async () => {
     const { store, orchestrator, now } = fixture();

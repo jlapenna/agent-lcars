@@ -42,6 +42,7 @@ import {
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
+import { z } from 'zod';
 
 import { anchorTarget } from './anchor-target';
 import { type CodexAuthStore, CodexAuthStoreError } from './codex-auth-store';
@@ -1674,6 +1675,90 @@ export const runsRouter = os.router({
   reviewerCheckoutToken: os.reviewerCheckoutToken.handler(
     ({ input, context }) => mintCheckoutToken(input.runId, context, true),
   ),
+
+  submitReview: os.submitReview.handler(async ({ input, context, errors }) => {
+    const { runId, commit_id, event, body, comments } = input;
+    const run = await requireRunToken(context, runId);
+    if (run.params?.['mode'] !== 'review' || isWorkAnchor(run.task)) {
+      throw errors.FORBIDDEN({ message: 'Not a GitHub review run' });
+    }
+    const generation = parseRunGeneration(runId);
+    if (
+      generation === undefined ||
+      generation < 1 ||
+      run.params['reviewHead'] !== commit_id ||
+      !usesReviewerCheckout(run) ||
+      (event === 'APPROVE' && comments.length > 0)
+    ) {
+      throw errors.CONFLICT({ message: 'Review head or verdict refused' });
+    }
+    const { repo, issue } = run.task;
+    const url = `https://api.github.com/repos/${repo}/pulls/${issue}`;
+    const marker = `<!-- attempt-claim:${formatAttemptId({ generation, intentId: runId })} -->`;
+    const reviewBody = body
+      .split('\n')
+      .filter((line) => line !== marker)
+      .join('\n')
+      .trim();
+    if (!reviewBody || reviewBody.includes('<!-- attempt-claim:')) {
+      throw errors.CONFLICT({
+        message:
+          'Review body contains a missing verdict or foreign attempt marker',
+      });
+    }
+    const verdict = `${reviewBody}\n\n${marker}`;
+    let headers: Record<string, string>;
+    let head: string;
+    try {
+      if (!context.reviewerTokens) throw new Error('Missing review provider');
+      const token = await context.reviewerTokens.tokenFor(repo);
+      headers = {
+        authorization: `Bearer ${token}`,
+        accept: 'application/vnd.github+json',
+        'content-type': 'application/json',
+      };
+      const response = await fetch(url, {
+        headers,
+        redirect: 'error',
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
+      const pr = z
+        .object({ head: z.object({ sha: z.string() }) })
+        .parse(await response.json());
+      head = pr.head.sha;
+    } catch {
+      throw errors.BAD_GATEWAY({ message: 'GitHub pull request unavailable' });
+    }
+    if (head !== commit_id) {
+      throw errors.CONFLICT({ message: 'Pull request head changed' });
+    }
+    // Reauthenticate after GitHub reads and verify the run still owns its slot.
+    const task = await context.store.readTask(run.task);
+    const renewed = await requireRunToken(context, runId);
+    if (task?.task.activeRunId !== renewed.runId) {
+      throw errors.CONFLICT({
+        message: 'Review run no longer owns the pull request',
+      });
+    }
+    try {
+      const response = await fetch(`${url}/reviews`, {
+        method: 'POST',
+        headers,
+        redirect: 'error',
+        signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ commit_id, event, body: verdict, comments }),
+      });
+      if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
+      return z
+        .object({ id: z.number().int(), html_url: z.url() })
+        .parse(await response.json());
+    } catch {
+      throw errors.BAD_GATEWAY({
+        message: 'GitHub review publication unavailable',
+      });
+    }
+  }),
 
   codexAuth: os.codexAuth.handler(async ({ input, context, errors }) => {
     const { run, repository } = await requireCodexRun(context, input.runId);

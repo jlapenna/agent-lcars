@@ -1553,6 +1553,7 @@ async function reconcilePullRequestRemediationOnce(
       requestId,
       params: {
         mode: 'review',
+        reviewHead: snapshot.headRefOid,
         ...crossRepo,
       },
       work: buildAnchorWork(selection.pipeline),

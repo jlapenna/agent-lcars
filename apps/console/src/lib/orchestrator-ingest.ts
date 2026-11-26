@@ -277,6 +277,7 @@ function buildReviewRequestDecision(input: {
   labels: readonly { name: string }[];
   userLogin?: string;
   headRef?: string;
+  headSha?: string;
   requestedPipeline?: Pipeline;
   labelRouting?: GithubLabelRouting;
 }): IngestResult {
@@ -315,7 +316,11 @@ function buildReviewRequestDecision(input: {
     input.issue,
     input.deliveryId,
     selection.pipeline,
-    { mode: 'review', ...crossRepoParams(input.labels) },
+    {
+      mode: 'review',
+      ...crossRepoParams(input.labels),
+      ...(input.headSha === undefined ? {} : { reviewHead: input.headSha }),
+    },
     work,
     undefined,
     labelRouting,
@@ -446,6 +451,7 @@ function interpretPullRequestEvent(
         .find((pipeline) => pipeline !== undefined),
       userLogin: pullRequest.user.login,
       headRef: pullRequest.head?.ref,
+      headSha: pullRequest.head?.sha,
     });
   }
 
@@ -497,6 +503,7 @@ function interpretPullRequestEvent(
       labels: pullRequest.labels ?? [],
       userLogin: pullRequest.user?.login,
       headRef: pullRequest.head?.ref,
+      headSha: pullRequest.head?.sha,
       requestedPipeline: reviewPipeline,
       labelRouting: {
         mode: 'review',
