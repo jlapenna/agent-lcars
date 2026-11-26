@@ -599,20 +599,26 @@ func TestQueueConfigValidatesReviewResources(t *testing.T) {
 
 func TestReviewReservationBehindUnschedulablePod(t *testing.T) {
 	for _, tc := range []struct {
+		name       string
 		freeMemory string
+		withClaw   bool
 		wantReview bool
 	}{
-		{"2Gi", false},
-		{"3Gi", true},
-		{"6Gi", false},
+		{"review cannot fit", "2Gi", false, false},
+		{"review fits", "3Gi", false, true},
+		{"review fits with Claw configured", "3Gi", true, true},
+		{"waiting job fits", "6Gi", false, false},
 	} {
-		t.Run(tc.freeMemory, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
 			node := queueReadyNode()
 			q, client := kubeQueueFixture(node)
 			q.config.MaxConcurrent = 4
 			q.config.Requests = map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"}
 			q.config.ReviewResources = map[string]string{"cpu": "1", "memory": "3Gi", "ephemeral-storage": "8Gi"}
+			if tc.withClaw {
+				q.config.Runtimes = map[string]queueRuntimeConfig{"claw-investigator": testClawRuntime()}
+			}
 			job, err := q.job(directRunnerLaunch{runID: "work:pending/r1", pipeline: "codex"})
 			if err != nil {
 				t.Fatal(err)

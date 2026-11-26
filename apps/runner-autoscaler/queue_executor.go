@@ -188,7 +188,7 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 	if !claimed.PlacementAware {
 		return queuePollOutcomePollError, fmt.Errorf("placement-aware claim not acknowledged")
 	}
-	if reservation.reviewOnly && (claimed.Mode != "review" || claimed.Pipeline == "goose") {
+	if reservation.reviewOnly && !fitsReviewSlot(claimed.Pipeline, claimed.Mode) {
 		return queuePollOutcomePollError, fmt.Errorf("console returned an incompatible run for a review-only slot")
 	}
 	queueExecutorClaimsTotal.WithLabelValues(claimed.Pipeline).Inc()
@@ -205,6 +205,16 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 		return queuePollOutcomeLaunchErr, err
 	}
 	return queuePollOutcomeClaimed, nil
+}
+
+// fitsReviewSlot matches the legacy review shape used by the claim store.
+func fitsReviewSlot(pipeline, mode string) bool {
+	switch pipeline {
+	case "claude", "codex", "opencode", "agy":
+		return mode == "review"
+	default:
+		return false
+	}
 }
 
 // newDirectRunnerIDTokenSource builds the Google ID token source used to

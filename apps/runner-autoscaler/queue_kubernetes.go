@@ -670,7 +670,7 @@ func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (placementAdmiss
 		if placement.Reason == "scheduled" {
 			continue
 		}
-		if admission.waiting != nil || placement.Reason != "unschedulable" || len(q.config.ReviewResources) == 0 || q.config.RuntimesOnly || len(q.config.Runtimes) != 0 {
+		if admission.waiting != nil || placement.Reason != "unschedulable" || len(q.config.ReviewResources) == 0 || q.config.RuntimesOnly {
 			return placementAdmission{blocked: true}, nil
 		}
 		for _, pod := range pods.Items {
@@ -901,7 +901,7 @@ func (q *kubernetesQueue) legacyJobShape(l directRunnerLaunch, runTokenEnv core.
 		mounts = append(mounts, core.VolumeMount{Name: "codex-volatile", MountPath: directRunnerCodexVolatileMountPath})
 	}
 	requests, limits := q.config.Requests, q.config.Limits
-	if l.mode == "review" && l.pipeline != "goose" && len(q.config.ReviewResources) > 0 {
+	if fitsReviewSlot(l.pipeline, l.mode) && len(q.config.ReviewResources) > 0 {
 		requests, limits = q.config.ReviewResources, q.config.ReviewResources
 	}
 	return queueJobShape{

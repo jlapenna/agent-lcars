@@ -149,12 +149,16 @@ describe('priority inside provider-fair selection', () => {
       ...queued(3, 'normal', 'goose'),
       params: { mode: 'review' },
     };
-    const candidates = [implement, recipe, review];
+    const runtime = {
+      ...queued(4, 'normal', 'claw-investigator'),
+      params: { mode: 'review' },
+    };
+    const candidates = [implement, recipe, runtime, review];
     const select = (live: Run[]) =>
       selectFairQueuedRun(
         candidates,
         live,
-        ['codex', 'goose'],
+        ['codex', 'goose', 'claw-investigator'],
         NOW,
         new Map(),
         {},

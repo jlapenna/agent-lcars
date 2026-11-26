@@ -1,7 +1,8 @@
-import type {
-  IssueReference,
-  RunEvidence,
-  TrackerIssueProjection,
+import {
+  isDispatchPipeline,
+  type IssueReference,
+  type RunEvidence,
+  type TrackerIssueProjection,
 } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
@@ -117,7 +118,7 @@ export interface RunTransactionState {
 }
 
 export function fitsReviewSlot(pipeline: string, mode: unknown): boolean {
-  return pipeline !== 'goose' && mode === 'review';
+  return mode === 'review' && isDispatchPipeline(pipeline);
 }
 
 /** Selects the provider using least live occupancy, then its oldest FIFO age.
