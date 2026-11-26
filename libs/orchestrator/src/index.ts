@@ -6,6 +6,7 @@ export {
   type FirestoreScheduleStoreOptions,
 } from './firestore-schedule-store';
 export { FirestoreStore, type FirestoreStoreOptions } from './firestore-store';
+export { readRunIssue, readRunIssues } from './issue-snapshot';
 export * from './item-state';
 export * from './lifecycle-metrics';
 export { MemoryScheduleStore } from './memory-schedule-store';
