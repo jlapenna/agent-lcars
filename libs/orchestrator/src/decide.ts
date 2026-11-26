@@ -1398,6 +1398,13 @@ export function updateTaskWork(input: {
   return { task: { ...task, work, updatedAt: now }, outbox: [] };
 }
 
+/** A queued run has no worker or credentials to retire after settlement. */
+export function retireUnclaimedQueue(run: Run): Run {
+  return run.queue?.state === 'queued'
+    ? { ...run, queue: { ...run.queue, state: 'retired' } }
+    : run;
+}
+
 /** Shared tail of every settle path. Events that arrived while this run held
  * the Work are handed to the drain now that the lock is released; if another
  * run took the lock in the same decision, that run's settlement hands them on
@@ -1405,7 +1412,7 @@ export function updateTaskWork(input: {
 function settle(releasedTask: Task, settledRun: Run, now: string): Decision {
   return {
     task: releasedTask,
-    run: settledRun,
+    run: retireUnclaimedQueue(settledRun),
     outbox: [
       outcomeEntry(settledRun, now),
       ...((releasedTask.eventResumes?.pending.length ?? 0) > 0 &&

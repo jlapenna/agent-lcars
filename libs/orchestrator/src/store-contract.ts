@@ -1051,6 +1051,7 @@ export function runOrchestratorStoreContract(
         ]);
         expect(await store.readRun(run.runId)).toMatchObject({
           state: 'canceled',
+          queue: { state: 'retired' },
         });
         expect(await store.readTask(TASK)).toMatchObject({
           task: {
@@ -1108,6 +1109,7 @@ export function runOrchestratorStoreContract(
         expect(await store.readRun(run.runId)).toMatchObject({
           pipeline: 'claude',
           state: 'canceled',
+          queue: { state: 'retired' },
         });
         expect(
           await store.claimQueuedRun({
@@ -4037,11 +4039,46 @@ export function runOrchestratorStoreContract(
         expect(queued[0]?.queue).toEqual({ state: 'queued' });
       });
 
+      it('retires an unclaimed queue on cancellation', async () => {
+        const { store, orchestrator } = await fixture();
+        const run = await queuedRun(orchestrator, 'q30');
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        await orchestrator.cancel(run.runId);
+        expect(await store.readRun(run.runId)).toMatchObject({
+          state: 'canceled',
+          queue: { state: 'retired' },
+        });
+      });
+
+      it('ignores stale enqueue work after cancellation before dispatch', async () => {
+        const { store, orchestrator } = await fixture();
+        const run = await queuedRun(orchestrator, 'q34');
+        await orchestrator.cancel(run.runId);
+        const canceled = await store.readRun(run.runId);
+        expect(canceled).toMatchObject({ state: 'canceled' });
+        expect(canceled?.queue).toBeUndefined();
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        expect(await store.readRun(run.runId)).toEqual(canceled);
+      });
+
       it('does not let terminal queue remnants consume listing or claim capacity', async () => {
         const { store, orchestrator } = await fixture();
         const terminal = await queuedRun(orchestrator, 'q31');
         await store.enqueueRun({ runId: terminal.runId, now: T0 });
         await orchestrator.cancel(terminal.runId);
+        // Restore the shape written before queue retirement at settlement.
+        await store.transactRun({
+          runId: terminal.runId,
+          decide: ({ task, run }) => {
+            if (task === undefined || run === undefined)
+              throw new Error('missing canceled fixture');
+            return {
+              task: task.task,
+              run: { ...run, queue: { state: 'queued' } },
+              outbox: [],
+            };
+          },
+        });
         const live = await queuedRun(orchestrator, 'q32');
         await store.enqueueRun({ runId: live.runId, now: T0 });
 
@@ -4059,6 +4096,17 @@ export function runOrchestratorStoreContract(
         expect(await store.readRun(terminal.runId)).toMatchObject({
           state: 'canceled',
           queue: { state: 'queued' },
+        });
+      });
+
+      it('retires the queue when an internal report settles an unclaimed run', async () => {
+        const { store, orchestrator } = await fixture();
+        const run = await queuedRun(orchestrator, 'q33');
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        await orchestrator.report(run.runId, { ok: true });
+        expect(await store.readRun(run.runId)).toMatchObject({
+          state: 'finished',
+          queue: { state: 'retired' },
         });
       });
 

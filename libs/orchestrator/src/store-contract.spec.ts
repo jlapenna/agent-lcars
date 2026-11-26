@@ -97,6 +97,57 @@ if (
 describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
   let prefixCounter = 0;
 
+  it('repairs only legacy terminal queued records and can run again after completion', async () => {
+    const collectionPrefix = `terminal-queue-repair-${crypto.randomUUID()}-`;
+    const options = {
+      projectId: 'demo-orchestrator',
+      databaseId: '(default)',
+      collectionPrefix,
+      emulatorHost: emulatorHost ?? 'localhost:8080',
+    };
+    const firestore = new Firestore({
+      projectId: options.projectId,
+      databaseId: options.databaseId,
+      host: options.emulatorHost,
+      ssl: false,
+    });
+    const store = new FirestoreStore(options);
+    const runs = firestore.collection(`${collectionPrefix}runs`);
+    const records = [
+      ['canceled', 'queued'],
+      ['finished', 'queued'],
+      ['lost', 'queued'],
+      ['pending', 'queued'],
+      ['running', 'queued'],
+      ['finished', 'claimed'],
+      ['canceled', 'retired'],
+    ] as const;
+    try {
+      for (const [index, [state, queueState]] of records.entries()) {
+        await runs.doc(String(index)).set({
+          state,
+          queue: { state: queueState, preserved: index },
+          updatedAt: '2026-08-15T12:00:00.000Z',
+        });
+      }
+
+      expect(await store.retireTerminalQueueBatch()).toBe(3);
+      expect(await store.retireTerminalQueueBatch()).toBe(0);
+      for (const [index, [state, queueState]] of records.entries()) {
+        expect((await runs.doc(String(index)).get()).data()).toEqual({
+          state,
+          queue: {
+            state: index < 3 ? 'retired' : queueState,
+            preserved: index,
+          },
+          updatedAt: '2026-08-15T12:00:00.000Z',
+        });
+      }
+    } finally {
+      await firestore.terminate();
+    }
+  });
+
   it('persists priority turns across store restart and refuses a corrupt cursor without claiming', async () => {
     const now = '2026-08-15T12:00:00.000Z';
     const collectionPrefix = `orchestrator-test-priority-${crypto.randomUUID()}-`;

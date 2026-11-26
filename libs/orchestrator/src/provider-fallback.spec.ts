@@ -831,6 +831,7 @@ function runFallbackContract(
       expect(rerouted).toHaveLength(1);
       expect(await f.store.readRun(queued.runId)).toMatchObject({
         state: 'canceled',
+        queue: { state: 'retired' },
         events: [
           expect.any(Object),
           {

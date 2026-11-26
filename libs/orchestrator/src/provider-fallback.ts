@@ -6,6 +6,7 @@ import {
   refused,
   reportResult,
   requestRun,
+  retireUnclaimedQueue,
 } from './decide';
 import {
   isWorkAnchor,
@@ -315,7 +316,7 @@ export function rerouteQueuedRun(input: {
   const { activeRunId: _activeRunId, ...released } = task;
   const settled: Decision = {
     task: { ...released, updatedAt: now },
-    run: {
+    run: retireUnclaimedQueue({
       ...run,
       state: 'canceled',
       updatedAt: now,
@@ -328,7 +329,7 @@ export function rerouteQueuedRun(input: {
           note: `Provider cooldown from ${cooldown.runId}; fresh fallback to ${pipeline}`,
         },
       ],
-    },
+    }),
     // The successor outcome carries the auditable reroute. Do not publish an
     // operator-cancellation outcome for work the user still expects to run.
     outbox: [],
