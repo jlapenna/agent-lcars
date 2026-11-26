@@ -262,15 +262,15 @@ function terminalBuildFailure(build, buildName) {
     // Classify provider text, but never echo it. It can contain configuration
     // values, secret references or runtime identities.
     if (!/\bsecret\b/iu.test(message)) continue;
-    if (/\bnot found\b|\bdoes not exist\b|\bno versions?\b/iu.test(message)) {
-      return `${prefix}: Cloud Run could not resolve a runtime secret or version. Check that the version exists and the runtime identity can access it.`;
-    }
     if (
       /permission denied|access denied|not authorized|does not have (?:permission|access)|secretmanager\.versions\.access/iu.test(
         message,
       )
     ) {
       return `${prefix}: Cloud Run reported a runtime secret access failure. Check access for the runtime identity.`;
+    }
+    if (/\bnot found\b|\bdoes not exist\b|\bno versions?\b/iu.test(message)) {
+      return `${prefix}: Cloud Run could not resolve a runtime secret or version. Check that the version exists and the runtime identity can access it.`;
     }
   }
   return reason ? `${prefix}: ${reason}` : prefix;

@@ -43,12 +43,13 @@ function failBuild() {
   build.errors = [{
     errorSource: 'CLOUD_RUN',
     error: {
-      code: scenario === 'denied' ? 7 : 5,
+      code: scenario === 'denied' ? 9 : 5,
       message: scenario === 'denied'
         ? 'Permission denied on secret projects/private/secrets/DO_NOT_LOG/versions/latest'
         : 'Secret projects/private/secrets/DO_NOT_LOG/versions/latest was not found',
     },
   }];
+  if (scenario === 'denied') build.error = build.errors[0];
 }
 globalThis.fetch = async (input, options = {}) => {
   const url = new URL(input);
