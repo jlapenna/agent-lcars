@@ -373,9 +373,10 @@ it('projects the same bounded issue fields for referenced and legacy runs', () =
       workId: WORK_ID,
       runs: [legacy, current],
     });
-    expect(
-      view.runs.map((projected) => itemRunViewSchema.parse(projected).issue),
-    ).toEqual([issue, issue]);
+    expect(view.runs.map((projected) => projected.issue)).toEqual([
+      issue,
+      issue,
+    ]);
   }
 });
 

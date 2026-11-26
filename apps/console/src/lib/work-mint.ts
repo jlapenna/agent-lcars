@@ -4,7 +4,6 @@ import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
   isRefusal,
-  type Run,
   type ScheduleStore,
   type Task,
   withFullRunMessages,
@@ -17,11 +16,7 @@ import {
   type WorkOrigin,
   type WorkSpec,
 } from '@agent-lcars/work';
-import {
-  type ItemSessionView,
-  type ItemView,
-  toItemView,
-} from '@agent-lcars/work/derive';
+import { type ItemSessionView, toItemView } from '@agent-lcars/work/derive';
 import { ORPCError } from '@orpc/server';
 
 import type { CliSessionsResult } from './cli-sessions';
@@ -93,11 +88,7 @@ export async function readWorkTask(context: WorkContext, workId: string) {
   return task;
 }
 
-async function viewOf(
-  context: WorkContext,
-  workId: string,
-  task: Task,
-): Promise<{ item: ItemView; runs: Run[] }> {
+async function viewOf(context: WorkContext, workId: string, task: Task) {
   const { store } = context.runtime;
   const runs = await store.listRuns({ workId });
   const sessions = await context.sessionsFor(runs.map((run) => run.runId));
@@ -117,14 +108,13 @@ async function viewOf(
     ),
     sessions,
   });
-  return { item, runs };
+  return {
+    item: { ...item, runs: await withItemRunIssues(store, item.runs, runs) },
+    runs,
+  };
 }
 
-export async function view(
-  context: WorkContext,
-  workId: string,
-  task: Task,
-): Promise<ItemView> {
+export async function view(context: WorkContext, workId: string, task: Task) {
   return (await viewOf(context, workId, task)).item;
 }
 
@@ -136,21 +126,17 @@ export async function viewWithEvidence(
   context: WorkContext,
   workId: string,
   task: Task,
-): Promise<ItemView> {
+) {
   const { item, runs } = await viewOf(context, workId, task);
   const store = context.runtime.store;
   return {
     ...item,
-    runs: await withRunEvidence(
-      store,
-      await withItemRunIssues(store, item.runs, runs),
-      runs,
-      (error) =>
-        logger.error(
-          'agent-lcars: run evidence unreadable for work %s; serving the item without it: %s',
-          workId,
-          String(error),
-        ),
+    runs: await withRunEvidence(store, item.runs, runs, (error) =>
+      logger.error(
+        'agent-lcars: run evidence unreadable for work %s; serving the item without it: %s',
+        workId,
+        String(error),
+      ),
     ),
   };
 }
