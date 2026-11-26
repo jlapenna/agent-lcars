@@ -262,6 +262,8 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
 /* phase readout: five flat blocks */
 .phase { display: flex; gap: 2px; }
 .phase i { display: block; width: 18px; height: 8px; background: var(--track); }
+.dispatch-table .links { display: flex; align-items: center; flex-wrap: wrap; gap: 0 8px; }
+
 .phase i.done { background: var(--accent); }
 .phase i.cur { background: linear-gradient(to right, var(--accent) var(--p), var(--accent-muted) var(--p)); }
 .phase-label { font: 500 11px/1 var(--f-mono); color: var(--ink-dim); margin-top: 6px; text-transform: uppercase; white-space: nowrap; }
@@ -418,6 +420,19 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
   td.num { text-align: left; display: inline-block; margin-right: 12px; }
   .cell-clip, .cost-7d { max-width: none; width: auto !important; }
   .item-title { white-space: normal; }
+  .dispatch-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px 12px;
+    padding-block: 6px;
+  }
+  .dispatch-table td { min-inline-size: 0; padding: 0; }
+  .dispatch-table :is(.cell-clip, .dispatch-budget, .dispatch-runner) { grid-column: 1 / -1; width: auto !important; }
+  .dispatch-table td.num { grid-area: 3 / 2; text-align: right; margin: 0; }
+  .dispatch-table .item-title { display: flex; align-items: center; min-block-size: 44px; overflow-wrap: anywhere; }
+  .dispatch-table .budget { white-space: normal; }
+  .dispatch-table .links a { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; }
   .telemetry { grid-template-columns: 1fr; gap: 12px; }
   .telemetry > div { border-left: 0; padding-left: 0; }
   .op-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
@@ -712,15 +727,16 @@ function budgetCell(r) {
 function runsPanel(full) {
   const rows = RUNS.map((r) => `<tr data-od-id="run-${r.repo}-${r.ref.replace('#', '')}">
     <td><span class="tag">${r.agent}</span></td>
-    <td class="cell-clip"><span class="ref">${r.repo}${r.ref}</span><span class="item-title" title="${r.title}">${r.title}</span><span class="links"><a href="#">Task/run</a> · <a href="#">View run on GitHub ↗</a></span></td>
+    <td class="cell-clip"><a class="item-title" href="#" title="${r.title}">${r.title}</a><span class="links"><a class="ref" href="#">${r.repo}${r.ref}</a><a href="#">Task/run</a><a href="#">View run on GitHub ↗</a></span></td>
     <td>${phaseCell(r)}</td>
-    ${full ? `<td class="mono dim" style="font-size:12px">${r.runner}</td>` : ''}
+    ${full ? `<td class="dispatch-runner mono dim" style="font-size:12px">${r.runner}</td>` : ''}
     <td class="num">${r.el}</td>
-    <td style="width:150px">${budgetCell(r)}</td>
+    <td class="dispatch-budget" style="width:150px">${budgetCell(r)}</td>
   </tr>`).join('');
   return `<section class="panel" data-od-id="panel-active-dispatches"><div>
     <div class="panel-head"><h2>Active dispatches</h2><span class="count">${RUNS.length}</span><span class="meta">claude 4 · codex 2 · opencode 1 · updated 4 s ago</span></div>
-    <table><thead><tr><th>Agent</th><th>Work item</th><th>Phase</th>${full ? '<th>Runner</th>' : ''}<th class="num">Elapsed</th><th>Budget</th></tr></thead><tbody>${rows}</tbody></table>
+    <table class="dispatch-table"><thead><tr><th>Agent</th><th>Work item</th><th>Phase</th>${full ? '<th>Runner</th>' : ''}<th class="num">Elapsed</th><th>Budget</th></tr></thead><tbody>${rows}</tbody></table>
+    ${full ? '' : '<div class="empty-note"><a href="#work">Browse Work →</a></div>'}
   </div></section>`;
 }
 
@@ -786,6 +802,7 @@ function cliPanel() {
   return `<section class="panel" data-od-id="panel-cli-sessions"><div>
     <div class="panel-head"><h2>CLI sessions</h2><span class="count">${CLI.length}</span></div>
     <div class="ops-rows">${rows}</div>
+    <div class="empty-note"><a href="#sessions">Browse CLI sessions →</a></div>
   </div></section>`;
 }
 

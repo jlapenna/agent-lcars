@@ -111,6 +111,17 @@ const SESSION_AGENT: Record<AgentPipeline, SessionAgent> = {
   agy: 'antigravity',
 };
 
+/** The Sessions archive uses CLI adapter names for its agent filter. */
+export function cliSessionsArchiveHref(
+  repo: string | undefined,
+  agent: AgentPipeline | undefined,
+): string {
+  const query = new URLSearchParams({ source: 'cli' });
+  if (repo) query.set('repo', repo);
+  if (agent) query.set('agent', SESSION_AGENT[agent]);
+  return `/sessions?${query}`;
+}
+
 /** Agent and find narrow interactive sessions too; they are live, so the
  * window does not apply. */
 export function matchesAgentsSession(

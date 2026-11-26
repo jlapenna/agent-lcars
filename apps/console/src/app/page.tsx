@@ -50,6 +50,7 @@ import {
 import {
   AGENTS_WINDOWS,
   type AgentsViewFilters,
+  cliSessionsArchiveHref,
   matchesAgentsRun,
   matchesAgentsSession,
   matchesClaimedAgent,
@@ -199,7 +200,7 @@ async function getParkedWork(
   }
 }
 
-/** All outcomes on Agents, in the Bridge's repository scope and view. */
+/** Agents in the Bridge's repository scope and view. */
 function agentsScopedHref(
   repo: string | undefined,
   view: AgentsViewFilters,
@@ -437,6 +438,9 @@ async function IndexBody({
   const selectRun = (run: AgentRun) =>
     bridgeSelectionHref(runKey(run), repoFilterKey, stoppedCursor, view);
   const outcomesHref = agentsScopedHref(repoFilterKey, view);
+  const workHref = repoFilterKey
+    ? `/work?${new URLSearchParams({ repo: repoFilterKey })}`
+    : '/work';
 
   return (
     <ConsoleWorkspace
@@ -553,6 +557,15 @@ async function IndexBody({
               itemsByRunId={itemsByRunId}
               sessionsByRunId={sessionsByRunId}
               selectHrefFor={selectRun}
+              footer={
+                <Anchor
+                  href={workHref}
+                  size="sm"
+                  className="operations-more-link"
+                >
+                  Browse Work →
+                </Anchor>
+              }
             />
             <RecentCompletionsPanel
               runs={filteredActivity.recentRuns.slice(0, RECENT_OUTCOMES_LIMIT)}
@@ -625,6 +638,15 @@ async function IndexBody({
             />
             <CliSessionsPanel
               sessions={activeCliSessions}
+              footer={
+                <Anchor
+                  href={cliSessionsArchiveHref(repoFilterKey, view.agent)}
+                  size="sm"
+                  className="operations-more-link"
+                >
+                  Browse CLI sessions →
+                </Anchor>
+              }
               selectHrefFor={(session) =>
                 bridgeSelectionHref(
                   sessionKey(session),
