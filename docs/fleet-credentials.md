@@ -42,8 +42,12 @@ Three GitHub Apps serve separate roles:
   compatible runner review checkouts and automatic dependency approvals use
   this identity. See the [review rollout](published-actions.md) for legacy
   runner behavior.
-  Authors keep their existing identities. Permissions are source, issues and
-  CI read access plus pull-request write access; no code pushes or CI reruns.
+  Authors keep their existing identities. The App carries `contents: write` and
+  `pull_requests: write` alongside `actions: read`, `checks: read`, and
+  `issues: read` so GitHub counts its approvals toward branch rulesets
+  (`authorCanPushToRepository: true`), while Console's `REVIEWER_PERMISSIONS`
+  downscopes every minted review installation token to `contents: read` (no
+  code pushes or CI reruns).
   Owner: `jlapenna`. All-repository installations: `185984458` (jlapenna),
   `185984517` (supersprinklesracing), `185984591` (jlaorg). The private key
   remains in Secret Manager `AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY`, provisioned
