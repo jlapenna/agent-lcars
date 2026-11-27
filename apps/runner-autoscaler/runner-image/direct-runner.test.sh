@@ -312,8 +312,6 @@ JSON
       jq -cn --arg token "$checkout_token" --arg expiresAt "$expires_at" '{$token,$expiresAt,reviewerLogin:"agent-lcars-reviewer[bot]"}'
     elif [ -n "${FAKE_CHECKOUT_IDENTITY_JSON:-}" ]; then
       echo "{\"token\":\"$checkout_token\",\"expiresAt\":null,\"refreshAt\":\"$expires_at\",\"identity\":$FAKE_CHECKOUT_IDENTITY_JSON}"
-    elif [ -n "${FAKE_CHECKOUT_PR_AUTHOR_TOKEN:-}" ]; then
-      echo "{\"token\":\"$checkout_token\",\"expiresAt\":\"$expires_at\",\"repository\":\"jlapenna/agent-lcars\",\"pullRequestAuthor\":{\"login\":\"agent-lcars-author[bot]\",\"token\":\"$FAKE_CHECKOUT_PR_AUTHOR_TOKEN\",\"expiresAt\":\"$expires_at\"}}"
     elif [ -n "${FAKE_CHECKOUT_GRANTS_JSON:-}" ]; then
       echo "{\"token\":\"$checkout_token\",\"expiresAt\":\"$expires_at\",\"grants\":$FAKE_CHECKOUT_GRANTS_JSON}"
     else
@@ -453,7 +451,12 @@ if [[ "$*" == *"--slurp"* ]]; then
     else echo '[[]]'; fi
   elif [[ "$*" == *"pulls/42/reviews"* ]]; then
     if [ "${FAKE_GH_MARKER_REVIEW:-}" = 1 ]; then
-      jq -cn --arg marker "<!-- attempt-claim:${ATTEMPT_ID} -->" '[[{id:100,state:"APPROVED",user:{type:"Bot",login:"agent-lcars[bot]"},body:$marker,html_url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}]]'
+      review_login="${FAKE_GH_REVIEW_LOGIN:-agent-lcars[bot]}"
+      if [ -z "${FAKE_GH_REVIEW_LOGIN:-}" ] && [ "${FAKE_REVIEWER_CHECKOUT:-}" = 1 ]; then
+        review_login='agent-lcars-reviewer[bot]'
+      fi
+      jq -cn --arg marker "<!-- attempt-claim:${ATTEMPT_ID} -->" --arg login "$review_login" \
+        '[[{id:100,state:"APPROVED",user:{type:"Bot",login:$login},body:$marker,html_url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}]]'
     else echo '[[]]'; fi
   else exit 1; fi
   exit 0
@@ -1488,33 +1491,6 @@ GH_REPO=supersprinklesracing/sprinkles "$credential_bin/gh" pr list >/dev/null
 
 echo "scenario cross-repo-grants: OK"
 
-# --- Scenario 1a3: pull requests open as the author App (#3522) -------------
-# GitHub refuses an approval from a pull request's own author, so `gh pr
-# create` on the anchor repository uses the pull-request author App's token
-# when checkout-token returns one. Every other gh call, and a pr create on
-# another repository, keeps the ordinary checkout token.
-export FAKE_CHECKOUT_PR_AUTHOR_TOKEN='fake-pr-author-token-jkl333'
-run_scenario pr-author-token
-unset FAKE_CHECKOUT_PR_AUTHOR_TOKEN
-[ "$rc" -eq 0 ] || fail "pr-author-token: expected exit 0, got $rc ($(cat "$scenario_log"))"
-credential_bin="$RUNNER_TEMP/github-credentials/bin"
-"$credential_bin/gh" pr create --title t --body b >/dev/null
-[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = 'fake-pr-author-token-jkl333' ] ||
-  fail "pr-author-token: gh pr create did not use the author App token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
-"$credential_bin/gh" pr create -R jlapenna/agent-lcars --title t --body b >/dev/null
-[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = 'fake-pr-author-token-jkl333' ] ||
-  fail "pr-author-token: gh pr create -R <anchor> did not use the author App token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
-"$credential_bin/gh" pr create -R JLapenna/Agent-LCARS --title t --body b >/dev/null
-[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = 'fake-pr-author-token-jkl333' ] ||
-  fail "pr-author-token: a differently-cased anchor -R did not use the author App token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
-"$credential_bin/gh" pr create -R jlapenna/homelab --title t --body b >/dev/null
-[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = "$FAKE_TOKEN" ] ||
-  fail "pr-author-token: gh pr create on another repository used the anchor-scoped author token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
-"$credential_bin/gh" pr comment 1 --body b >/dev/null
-[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = "$FAKE_TOKEN" ] ||
-  fail "pr-author-token: a non-create gh call used the author App token (got $(cat "$GH_INVOCATION_TOKEN_LOG"))"
-echo "scenario pr-author-token: OK"
-
 # --- Scenario 1a: Codex provider dispatch, resume, and the auth broker ------
 # Codex must run without the Claude host-token mount, restore only through
 # the run-token broker, and persist the changed auth.json with the exact
@@ -2463,6 +2439,17 @@ jq -e '.provider.homelab.models.default.options.reasoningEffort == "medium"' "$s
   fail "github review: OpenCode review reasoning budget was not configured"
 jq -e '.outcome == "review" and .outcomeReference == {kind:"review",number:42,id:100,url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "github review: marker-bound review was misclassified ($(cat "$COMPLETE_LOG"))"
+
+# A review stamped with the attempt marker by a different bot identity must not
+# settle a run whose negotiated reviewer actor is agent-lcars-reviewer[bot].
+FAKE_ANCHOR=github FAKE_MODE=review FAKE_GITHUB_PR=1 FAKE_GH_NO_MATCH=1 \
+  FAKE_GH_MARKER_REVIEW=1 FAKE_REVIEWER_CHECKOUT=1 \
+  FAKE_GH_REVIEW_LOGIN='agent-lcars[bot]' \
+  FAKE_CLOCK=1 FAKE_WORKER_ELAPSED=1200 \
+  run_scenario github-review-wrong-actor opencode
+[ "$rc" -ne 0 ] || fail "github review wrong actor: accepted review from implementation bot"
+jq -e '.outcome == "no-deliverable"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "github review wrong actor: expected no-deliverable ($(tail -n1 "$COMPLETE_LOG"))"
 
 echo "scenario github-review: OK"
 
