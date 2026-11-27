@@ -1080,6 +1080,36 @@ describe('outcomeCommentBody', () => {
   );
 
   it.each(['pull-request', 'merged-deliverable'] as const)(
+    'suppresses the redundant finished comment when a succeeded %s run targets the same PR anchor',
+    (summary) => {
+      expect(
+        outcomeCommentBody(
+          run({
+            state: 'finished',
+            result: {
+              ok: true,
+              summary,
+              ref: `https://github.com/${TASK.repo}/pull/${TASK.issue}`,
+            },
+            providerFallback: {
+              principal: 'github:pr-qualification',
+              allowedPipelines: ['codex'],
+              attemptedPipelines: ['claude', 'codex'],
+              originalRunId: `${TASK.repo}#${TASK.issue}/r1`,
+              fromRunId: `${TASK.repo}#${TASK.issue}/r1`,
+              trigger: {
+                reason: 'provider-cooldown',
+                failureRunId: `${TASK.repo}#${TASK.issue}/r1`,
+                limitedPipeline: 'claude',
+              },
+            },
+          }),
+        ),
+      ).toBeUndefined();
+    },
+  );
+
+  it.each(['pull-request', 'merged-deliverable'] as const)(
     'still posts the finished comment when a succeeded %s run links a separate PR',
     (summary) => {
       const body = outcomeCommentBody(
@@ -1098,16 +1128,21 @@ describe('outcomeCommentBody', () => {
   );
 
   it('still skips the redundant comment during drainOutbox while clearing status:needs-human', async () => {
-    for (const summary of ['review', 'comment', 'no-op'] as const) {
+    for (const [summary, ref] of [
+      [
+        'review',
+        'https://github.com/octo/example/pull/7#pullrequestreview-100',
+      ],
+      ['comment', 'https://github.com/octo/example/pull/7#issuecomment-100'],
+      ['no-op', 'https://github.com/octo/example/pull/7#issuecomment-100'],
+      ['pull-request', 'https://github.com/octo/example/pull/7'],
+    ] as const) {
       const { store, orchestrator } = fixture();
       const finished = await requested(orchestrator);
       await orchestrator.report(finished.runId, {
         ok: true,
         summary,
-        ref:
-          summary === 'review'
-            ? 'https://github.com/octo/example/pull/7#pullrequestreview-100'
-            : 'https://github.com/octo/example/pull/7#issuecomment-100',
+        ref,
       });
       const calls: { url: string; method: string }[] = [];
       const fetchImpl = vi.fn(
