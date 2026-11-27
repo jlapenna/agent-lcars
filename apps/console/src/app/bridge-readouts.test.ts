@@ -1,4 +1,4 @@
-import type { WorkSummary } from '@agent-lcars/work/derive';
+import type { ItemView, WorkSummary } from '@agent-lcars/work/derive';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RunTimeline } from '../lib/run-history';
@@ -9,10 +9,9 @@ import {
   bridgeReadouts,
   bridgeWorkSummary,
   dayOfHours,
-  EVENT_WORK_PANEL_ERROR,
   fleetReadoutInput,
-  loadBridgeEventWork,
-  loadBridgeStoppedPages,
+  loadBridgeAdmittedWork,
+  loadBridgeStoppedPage,
   STOPPED_WORK_PANEL_ERROR,
   WORK_SUMMARY_UNAVAILABLE_ERROR,
 } from './bridge-readouts';
@@ -276,14 +275,12 @@ describe('bridgeDestinationReadouts', () => {
     workHref: '/work?repo=jlapenna%2Fagent-lcars',
     work: {
       authorized: true,
-      stoppedCount: 3,
-      hasMoreStopped: false,
-      eventCount: 4,
-      eventWindowed: false,
+      admittedCount: 1,
+      hasMoreAdmitted: false,
     },
   };
 
-  it('builds the six linked destination summaries including Work', () => {
+  it('builds the six linked destination summaries including Work admitted queue', () => {
     const readouts = bridgeDestinationReadouts(healthyDestinations);
     expect(readouts.map((r) => r.id)).toEqual([
       'agents',
@@ -297,25 +294,23 @@ describe('bridgeDestinationReadouts', () => {
       id: 'work',
       label: 'Work',
       href: '/work?repo=jlapenna%2Fagent-lcars',
-      value: 3,
-      detail: 'Stopped work · 4 event-driven',
+      value: 1,
+      detail: 'Admitted queue · native work',
     });
   });
 
-  it('marks paged stopped work and windowed event counts as lower bounds', () => {
+  it('marks a full page of admitted work as a lower bound', () => {
     const readouts = bridgeDestinationReadouts({
       ...healthyDestinations,
       work: {
         authorized: true,
-        stoppedCount: 50,
-        hasMoreStopped: true,
-        eventCount: 12,
-        eventWindowed: true,
+        admittedCount: 200,
+        hasMoreAdmitted: true,
       },
     });
     expect(readouts[3]).toMatchObject({
-      value: '50+',
-      detail: 'Stopped work · 12+ event-driven',
+      value: '200+',
+      detail: 'Admitted queue · native work',
     });
   });
 
@@ -324,10 +319,8 @@ describe('bridgeDestinationReadouts', () => {
       ...healthyDestinations,
       work: {
         authorized: false,
-        stoppedCount: 0,
-        hasMoreStopped: false,
-        eventCount: 0,
-        eventWindowed: false,
+        admittedCount: 0,
+        hasMoreAdmitted: false,
       },
     });
     expect(unauthorized[3]).toMatchObject({
@@ -339,17 +332,49 @@ describe('bridgeDestinationReadouts', () => {
       ...healthyDestinations,
       work: {
         authorized: true,
-        error: 'Could not load stopped work.',
-        stoppedCount: 0,
-        hasMoreStopped: false,
-        eventCount: 0,
-        eventWindowed: false,
+        error: WORK_SUMMARY_UNAVAILABLE_ERROR,
+        admittedCount: 0,
+        hasMoreAdmitted: false,
       },
     });
     expect(errored[3]).toMatchObject({
       value: '—',
       detail: 'Work summary unavailable',
     });
+  });
+
+  const makeAdmittedItem = (overrides: {
+    id: string;
+    updatedAt: string;
+    repo?: string;
+    pipeline?: ItemView['spec']['pipeline'];
+    title?: string;
+    principal?: string;
+    state?: ItemView['state'];
+    runPipelines?: ItemView['spec']['pipeline'][];
+  }): ItemView => ({
+    id: overrides.id,
+    state: overrides.state ?? 'running',
+    spec: {
+      title: overrides.title ?? `Admitted ${overrides.id}`,
+      description: 'Description',
+      target: { repo: overrides.repo ?? 'jlapenna/agent-lcars' },
+      pipeline: overrides.pipeline ?? 'claude',
+    },
+    origin: {
+      channel: 'console',
+      principal: overrides.principal ?? 'github:jlapenna',
+    },
+    runs: (overrides.runPipelines ?? []).map((pipeline, index) => ({
+      runId: `work:${overrides.id}/r${index + 1}`,
+      pipeline,
+      state: 'running',
+      createdAt: overrides.updatedAt,
+      updatedAt: overrides.updatedAt,
+    })),
+    sessions: [],
+    createdAt: overrides.updatedAt,
+    updatedAt: overrides.updatedAt,
   });
 
   const makeStoppedSummary = (overrides: {
@@ -361,57 +386,55 @@ describe('bridgeDestinationReadouts', () => {
     title?: string;
     principal?: string;
     state?: WorkSummary['state'];
-    runPipelines?: WorkSummary['spec']['pipeline'][];
   }): WorkSummary => ({
     id: overrides.id,
     anchor: overrides.anchor ?? { workId: overrides.id },
     state: overrides.state ?? 'parked',
     spec: {
       title: overrides.title ?? `Stopped ${overrides.id}`,
-      body: 'Body',
+      description: 'Description',
       target: { repo: overrides.repo ?? 'jlapenna/agent-lcars' },
       pipeline: overrides.pipeline ?? 'claude',
-      deliverable: 'pr',
     },
     origin: {
-      kind: 'user',
+      channel: 'console',
       principal: overrides.principal ?? 'github:jlapenna',
     },
-    runs: (overrides.runPipelines ?? []).map((pipeline, index) => ({
-      attemptId: `g1:work:${overrides.id}/r${index + 1}`,
-      pipeline,
-      state: 'failed',
-      startedAt: overrides.updatedAt,
-      updatedAt: overrides.updatedAt,
-    })),
+    runs: [],
     createdAt: overrides.updatedAt,
     updatedAt: overrides.updatedAt,
   });
 
-  it('applies the Work destination activity window, agent, and find filters to the stopped count', () => {
+  it('applies the Work destination activity window, agent, and find filters and ignores non-running items', () => {
     const now = Date.parse('2026-11-26T18:00:00.000Z');
     const items = [
-      makeStoppedSummary({
+      makeAdmittedItem({
         id: '01RECENT000000000000000001',
         updatedAt: '2026-11-26T17:30:00.000Z', // 30m ago
         pipeline: 'claude',
-        title: 'Fresh parked item',
+        title: 'Fresh running item',
         principal: 'github:jlapenna',
       }),
-      makeStoppedSummary({
+      makeAdmittedItem({
         id: '01STALE0000000000000000002',
         updatedAt: '2026-11-26T16:00:00.000Z', // 2h ago
         pipeline: 'claude',
-        title: 'Two-hour-old parked item',
+        title: 'Two-hour-old running item',
         principal: 'github:jlapenna',
       }),
-      makeStoppedSummary({
+      makeAdmittedItem({
         id: '01RUNMATCH0000000000000003',
         updatedAt: '2026-11-26T17:45:00.000Z', // 15m ago
         pipeline: 'claude',
         runPipelines: ['codex'],
         title: 'Retried on codex',
         principal: 'github:operator-2',
+      }),
+      makeAdmittedItem({
+        id: '01PARKED000000000000000004',
+        updatedAt: '2026-11-26T17:50:00.000Z',
+        state: 'parked',
+        title: 'Parked item excluded from admitted queue',
       }),
     ];
 
@@ -420,10 +443,8 @@ describe('bridgeDestinationReadouts', () => {
       workHref: '/work?repo=jlapenna%2Fagent-lcars&window=1h',
       work: bridgeWorkSummary({
         authorized: true,
-        stoppedItems: items,
-        hasMoreStopped: false,
-        eventCount: 1,
-        eventWindowed: false,
+        admittedItems: items,
+        hasMoreAdmitted: false,
         view: { window: '1h' },
         now,
       }),
@@ -436,10 +457,8 @@ describe('bridgeDestinationReadouts', () => {
         '/work?repo=jlapenna%2Fagent-lcars&agent=codex&window=1h&q=operator-2',
       work: bridgeWorkSummary({
         authorized: true,
-        stoppedItems: items,
-        hasMoreStopped: false,
-        eventCount: 0,
-        eventWindowed: false,
+        admittedItems: items,
+        hasMoreAdmitted: false,
         view: { agent: 'codex', window: '1h', q: 'operator-2' },
         now,
       }),
@@ -447,87 +466,66 @@ describe('bridgeDestinationReadouts', () => {
     expect(agentAndFind[3]?.value).toBe(1);
   });
 
-  it('keeps the Work stopped count independent of the panel cursor on the final cursor page', async () => {
-    const now = Date.parse('2026-11-26T18:00:00.000Z');
-    const firstPageItems = Array.from({ length: 50 }, (_, index) =>
-      makeStoppedSummary({
-        id: `01PAGE1${String(index).padStart(19, '0')}`,
-        updatedAt: '2026-11-26T17:50:00.000Z',
-      }),
-    );
-    const secondPageItems = [
-      makeStoppedSummary({
-        id: '01PAGE20000000000000000051',
-        updatedAt: '2026-11-26T17:40:00.000Z',
-      }),
-    ];
-    const page1Cursor = {
-      taskKey: 'work:01PAGE10000000000000000049',
+  it('loads admitted native work scoped by repository and reports errors without throwing', async () => {
+    const lcarsItem = makeAdmittedItem({
+      id: '01LCARS0000000000000000001',
+      updatedAt: '2026-11-26T17:55:00.000Z',
+      repo: 'jlapenna/agent-lcars',
+    });
+    const homelabItem = makeAdmittedItem({
+      id: '01HOMELAB00000000000000002',
       updatedAt: '2026-11-26T17:50:00.000Z',
-    };
-    const readPage = vi.fn(async (cursor?: typeof page1Cursor) =>
-      cursor
-        ? { items: secondPageItems, nextCursor: undefined }
-        : { items: firstPageItems, nextCursor: page1Cursor },
-    );
-    const excludeClosed = vi.fn(async (items: WorkSummary[]) => items);
-
-    // Page 1: single uncursored read shared by panel and destination summary.
-    const firstPage = await loadBridgeStoppedPages({
-      repo: 'jlapenna/agent-lcars',
-      readPage,
-      excludeClosed,
+      repo: 'jlapenna/homelab',
     });
-    expect(readPage).toHaveBeenCalledTimes(1);
-    expect(firstPage.items).toHaveLength(50);
-    expect(firstPage.hasMoreTasks).toBe(true);
+    const parkedItem = makeAdmittedItem({
+      id: '01PARKED000000000000000003',
+      updatedAt: '2026-11-26T17:45:00.000Z',
+      repo: 'jlapenna/agent-lcars',
+      state: 'parked',
+    });
+
+    const scoped = await loadBridgeAdmittedWork({
+      repo: 'jlapenna/agent-lcars',
+      readAdmitted: vi.fn(async () => ({
+        items: [lcarsItem, homelabItem, parkedItem],
+        hasMore: false,
+      })),
+    });
+    expect(scoped.error).toBeUndefined();
+    expect(scoped.hasMoreAdmitted).toBe(false);
+    expect(scoped.admittedItems.map((item) => item.id)).toEqual([lcarsItem.id]);
+
+    const failure = new Error('Firestore deadline exceeded');
+    const onError = vi.fn();
+    const failed = await loadBridgeAdmittedWork({
+      repo: 'jlapenna/agent-lcars',
+      readAdmitted: vi.fn(async () => {
+        throw failure;
+      }),
+      onError,
+    });
+    expect(onError).toHaveBeenCalledWith(failure);
+    expect(failed.admittedItems).toEqual([]);
+    expect(failed.hasMoreAdmitted).toBe(false);
+    expect(failed.error).toBe(WORK_SUMMARY_UNAVAILABLE_ERROR);
     expect(
       bridgeDestinationReadouts({
         ...healthyDestinations,
         work: bridgeWorkSummary({
           authorized: true,
-          stoppedItems: firstPage.summaryStoppedItems,
-          hasMoreStopped: firstPage.summaryHasMoreStopped,
-          eventCount: 2,
-          eventWindowed: false,
+          error: failed.error,
+          admittedItems: failed.admittedItems,
+          hasMoreAdmitted: failed.hasMoreAdmitted,
           view: {},
-          now,
         }),
-      })[3]?.value,
-    ).toBe('50+');
-
-    // Final cursor page (item #51): panel shows 1 item with no next cursor,
-    // while the Work destination readout stays qualified at 50+.
-    readPage.mockClear();
-    const finalPage = await loadBridgeStoppedPages({
-      rawCursor: JSON.stringify(page1Cursor),
-      repo: 'jlapenna/agent-lcars',
-      readPage,
-      excludeClosed,
+      })[3],
+    ).toMatchObject({
+      value: '—',
+      detail: 'Work summary unavailable',
     });
-    expect(readPage).toHaveBeenCalledTimes(2);
-    expect(finalPage.items).toHaveLength(1);
-    expect(finalPage.hasMoreTasks).toBe(false);
-    expect(finalPage.panelError).toBeUndefined();
-    expect(
-      bridgeDestinationReadouts({
-        ...healthyDestinations,
-        work: bridgeWorkSummary({
-          authorized: true,
-          error: finalPage.summaryError,
-          stoppedItems: finalPage.summaryStoppedItems,
-          hasMoreStopped: finalPage.summaryHasMoreStopped,
-          eventCount: 2,
-          eventWindowed: false,
-          view: {},
-          now,
-        }),
-      })[3]?.value,
-    ).toBe('50+');
   });
 
-  it('counts only native Work items in the Work card while retaining GitHub-anchored items for the panel', async () => {
-    const now = Date.parse('2026-11-26T18:00:00.000Z');
+  it('keeps the Stopped work panel isolated from admitted work across cursors and failures', async () => {
     const githubParked = makeStoppedSummary({
       id: 'jlapenna/agent-lcars#3662',
       anchor: { repo: 'jlapenna/agent-lcars', issue: 3662 },
@@ -537,402 +535,61 @@ describe('bridgeDestinationReadouts', () => {
       id: '01NATIVE000000000000000001',
       updatedAt: '2026-11-26T17:50:00.000Z',
     });
+    const page1Cursor = {
+      taskKey: 'work:01NATIVE000000000000000001',
+      updatedAt: '2026-11-26T17:50:00.000Z',
+    };
 
-    // With one open parked GitHub issue and zero native matches, the Work card
-    // reports 0 (matching `/work`), not 1.
-    const githubOnly = bridgeDestinationReadouts({
-      ...healthyDestinations,
-      work: bridgeWorkSummary({
-        authorized: true,
-        stoppedItems: [githubParked],
-        hasMoreStopped: false,
-        eventCount: 0,
-        eventWindowed: false,
-        view: {},
-        now,
-      }),
-    });
-    expect(githubOnly[3]?.value).toBe(0);
-
-    // Page 1: panel keeps both anchors, Work summary keeps only native items.
+    // Valid cursor page keeps both GitHub and native stopped items for the panel.
     const readPage = vi.fn(async () => ({
       items: [githubParked, nativeParked],
-      nextCursor: undefined,
+      nextCursor: page1Cursor,
     }));
     const excludeClosed = vi.fn(async (items: WorkSummary[]) => items);
-    const page1 = await loadBridgeStoppedPages({
+    const loaded = await loadBridgeStoppedPage({
+      rawCursor: JSON.stringify(page1Cursor),
       repo: 'jlapenna/agent-lcars',
       readPage,
       excludeClosed,
     });
-    expect(page1.items.map((item) => item.id)).toEqual([
+    expect(readPage).toHaveBeenCalledWith(page1Cursor);
+    expect(loaded.panelError).toBeUndefined();
+    expect(loaded.items.map((item) => item.id)).toEqual([
       githubParked.id,
       nativeParked.id,
     ]);
-    expect(page1.summaryStoppedItems.map((item) => item.id)).toEqual([
-      nativeParked.id,
-    ]);
-    expect(
-      bridgeDestinationReadouts({
-        ...healthyDestinations,
-        work: bridgeWorkSummary({
-          authorized: true,
-          stoppedItems: page1.summaryStoppedItems,
-          hasMoreStopped: page1.summaryHasMoreStopped,
-          eventCount: 0,
-          eventWindowed: false,
-          view: {},
-          now,
-        }),
-      })[3]?.value,
-    ).toBe(1);
-  });
+    expect(loaded.hasMoreTasks).toBe(true);
+    expect(loaded.nextCursor).toEqual(page1Cursor);
 
-  it('keeps the selected cursor page healthy when the uncursored Work summary read fails and skips page-one GitHub lookups', async () => {
-    const page1Cursor = {
-      taskKey: 'work:01PAGE10000000000000000049',
-      updatedAt: '2026-11-26T17:50:00.000Z',
-    };
-    const page2Cursor = {
-      taskKey: 'work:01PAGE20000000000000000099',
-      updatedAt: '2026-11-26T17:40:00.000Z',
-    };
-    const page1Github = makeStoppedSummary({
-      id: 'jlapenna/agent-lcars#9001',
-      anchor: { repo: 'jlapenna/agent-lcars', issue: 9001 },
-      updatedAt: '2026-11-26T17:55:00.000Z',
-    });
-    const page1Native = makeStoppedSummary({
-      id: '01PAGE1NATIVE0000000000001',
-      updatedAt: '2026-11-26T17:52:00.000Z',
-    });
-    const page2Item = makeStoppedSummary({
-      id: '01PAGE20000000000000000051',
-      updatedAt: '2026-11-26T17:40:00.000Z',
-    });
-
-    // Case 1: uncursored summary query fails while the selected cursor page
-    // succeeds with items and a nextCursor — panel data stays intact and only
-    // the Work card receives `summaryError`.
-    const summaryFailure = new Error('Firestore deadline exceeded');
-    const onSummaryError = vi.fn();
-    const failedSummary = await loadBridgeStoppedPages({
-      rawCursor: JSON.stringify(page1Cursor),
-      repo: 'jlapenna/agent-lcars',
-      readPage: vi.fn(async (cursor?: typeof page1Cursor) => {
-        if (!cursor) throw summaryFailure;
-        return { items: [page2Item], nextCursor: page2Cursor };
-      }),
-      excludeClosed: vi.fn(async (items: WorkSummary[]) => items),
-      onSummaryError,
-    });
-    expect(onSummaryError).toHaveBeenCalledWith(summaryFailure);
-    expect(failedSummary.panelError).toBeUndefined();
-    expect(failedSummary.items).toEqual([page2Item]);
-    expect(failedSummary.hasMoreTasks).toBe(true);
-    expect(failedSummary.nextCursor).toEqual(page2Cursor);
-    expect(failedSummary.summaryStoppedItems).toEqual([]);
-    expect(failedSummary.summaryHasMoreStopped).toBe(false);
-    expect(failedSummary.summaryError).toBe(WORK_SUMMARY_UNAVAILABLE_ERROR);
-    expect(
-      bridgeDestinationReadouts({
-        ...healthyDestinations,
-        work: bridgeWorkSummary({
-          authorized: true,
-          error: failedSummary.summaryError,
-          stoppedItems: failedSummary.summaryStoppedItems,
-          hasMoreStopped: failedSummary.summaryHasMoreStopped,
-          eventCount: 2,
-          eventWindowed: false,
-          view: {},
-        }),
-      })[3],
-    ).toMatchObject({
-      value: '—',
-      detail: 'Work summary unavailable',
-    });
-
-    // Case 2: on a cursor page, page-one GitHub anchors never pass through
-    // `excludeClosed` (so a projection failure for a page-one GitHub issue
-    // cannot break the cursor page or the native Work summary).
-    const excludeClosed = vi.fn(async (items: WorkSummary[]) => {
-      if (items.some((item) => item.id === page1Github.id)) {
-        throw new Error('GitHub projection read failed');
-      }
-      return items;
-    });
-    const healthyCursor = await loadBridgeStoppedPages({
-      rawCursor: JSON.stringify(page1Cursor),
-      repo: 'jlapenna/agent-lcars',
-      readPage: vi.fn(async (cursor?: typeof page1Cursor) =>
-        cursor
-          ? { items: [page2Item], nextCursor: page2Cursor }
-          : { items: [page1Github, page1Native], nextCursor: page1Cursor },
-      ),
-      excludeClosed,
-    });
-    expect(excludeClosed).toHaveBeenCalledTimes(1);
-    expect(healthyCursor.panelError).toBeUndefined();
-    expect(healthyCursor.items).toEqual([page2Item]);
-    expect(healthyCursor.nextCursor).toEqual(page2Cursor);
-    expect(healthyCursor.summaryError).toBeUndefined();
-    expect(healthyCursor.summaryStoppedItems).toEqual([page1Native]);
-    expect(healthyCursor.summaryHasMoreStopped).toBe(true);
-  });
-
-  it('keeps the Work card available when the Stopped work panel fails on an invalid cursor or GitHub projection read', async () => {
-    const now = Date.parse('2026-11-26T18:00:00.000Z');
-    const page1Cursor = {
-      taskKey: 'work:01PAGE10000000000000000049',
-      updatedAt: '2026-11-26T17:50:00.000Z',
-    };
-    const githubItem = makeStoppedSummary({
-      id: 'jlapenna/agent-lcars#9002',
-      anchor: { repo: 'jlapenna/agent-lcars', issue: 9002 },
-      updatedAt: '2026-11-26T17:55:00.000Z',
-    });
-    const nativeItem = makeStoppedSummary({
-      id: '01NATIVEHEALTHY00000000001',
-      updatedAt: '2026-11-26T17:52:00.000Z',
-    });
-
-    // Case 1: invalid `stoppedCursor` fails only the Stopped work panel;
-    // the uncursored native Work summary still succeeds without a cursor read.
-    const invalidCursorReadPage = vi.fn(async () => ({
-      items: [githubItem, nativeItem],
-      nextCursor: page1Cursor,
-    }));
-    const invalidCursorExcludeClosed = vi.fn(
-      async (items: WorkSummary[]) => items,
-    );
-    const onInvalidCursorPanelError = vi.fn();
-    const onInvalidCursorSummaryError = vi.fn();
-    const invalidCursorResult = await loadBridgeStoppedPages({
+    // Invalid cursor fails only the Stopped work panel without reading the store.
+    const invalidRead = vi.fn();
+    const onPanelError = vi.fn();
+    const invalid = await loadBridgeStoppedPage({
       rawCursor: '{not-valid-json',
       repo: 'jlapenna/agent-lcars',
-      readPage: invalidCursorReadPage,
-      excludeClosed: invalidCursorExcludeClosed,
-      onPanelError: onInvalidCursorPanelError,
-      onSummaryError: onInvalidCursorSummaryError,
+      readPage: invalidRead,
+      excludeClosed,
+      onPanelError,
     });
-    expect(invalidCursorReadPage).toHaveBeenCalledTimes(1);
-    expect(invalidCursorReadPage).toHaveBeenCalledWith(undefined);
-    expect(invalidCursorExcludeClosed).not.toHaveBeenCalled();
-    expect(onInvalidCursorPanelError).toHaveBeenCalledTimes(1);
-    expect(onInvalidCursorSummaryError).not.toHaveBeenCalled();
-    expect(invalidCursorResult.panelError).toBe(STOPPED_WORK_PANEL_ERROR);
-    expect(invalidCursorResult.items).toEqual([]);
-    expect(invalidCursorResult.hasMoreTasks).toBe(false);
-    expect(invalidCursorResult.summaryError).toBeUndefined();
-    expect(invalidCursorResult.summaryStoppedItems).toEqual([nativeItem]);
-    expect(invalidCursorResult.summaryHasMoreStopped).toBe(true);
-    expect(
-      bridgeDestinationReadouts({
-        ...healthyDestinations,
-        work: bridgeWorkSummary({
-          authorized: true,
-          error: invalidCursorResult.summaryError,
-          stoppedItems: invalidCursorResult.summaryStoppedItems,
-          hasMoreStopped: invalidCursorResult.summaryHasMoreStopped,
-          eventCount: 3,
-          eventWindowed: false,
-          view: {},
-          now,
-        }),
-      })[3],
-    ).toMatchObject({
-      value: '1+',
-      detail: 'Stopped work · 3 event-driven',
-    });
+    expect(invalidRead).not.toHaveBeenCalled();
+    expect(onPanelError).toHaveBeenCalledTimes(1);
+    expect(invalid.panelError).toBe(STOPPED_WORK_PANEL_ERROR);
+    expect(invalid.items).toEqual([]);
+    expect(invalid.hasMoreTasks).toBe(false);
 
-    // Case 2: initial page GitHub projection rejection fails only the panel;
-    // the shared uncursored read runs once and the native Work summary stays healthy.
-    const projectionFailure = new Error('GitHub projection read rejected');
-    const page1ReadPage = vi.fn(async () => ({
-      items: [githubItem, nativeItem],
-      nextCursor: undefined,
-    }));
-    const onPage1PanelError = vi.fn();
-    const onPage1SummaryError = vi.fn();
-    const page1ProjectionFailed = await loadBridgeStoppedPages({
+    // GitHub projection failure fails only the Stopped work panel.
+    const projectionError = new Error('GitHub projection read failed');
+    const onProjectionError = vi.fn();
+    const projectionFailed = await loadBridgeStoppedPage({
       repo: 'jlapenna/agent-lcars',
-      readPage: page1ReadPage,
+      readPage,
       excludeClosed: vi.fn(async () => {
-        throw projectionFailure;
+        throw projectionError;
       }),
-      onPanelError: onPage1PanelError,
-      onSummaryError: onPage1SummaryError,
+      onPanelError: onProjectionError,
     });
-    expect(page1ReadPage).toHaveBeenCalledTimes(1);
-    expect(onPage1PanelError).toHaveBeenCalledWith(projectionFailure);
-    expect(onPage1SummaryError).not.toHaveBeenCalled();
-    expect(page1ProjectionFailed.panelError).toBe(STOPPED_WORK_PANEL_ERROR);
-    expect(page1ProjectionFailed.items).toEqual([]);
-    expect(page1ProjectionFailed.summaryError).toBeUndefined();
-    expect(page1ProjectionFailed.summaryStoppedItems).toEqual([nativeItem]);
-    expect(page1ProjectionFailed.summaryHasMoreStopped).toBe(false);
-    expect(
-      bridgeDestinationReadouts({
-        ...healthyDestinations,
-        work: bridgeWorkSummary({
-          authorized: true,
-          error: page1ProjectionFailed.summaryError,
-          stoppedItems: page1ProjectionFailed.summaryStoppedItems,
-          hasMoreStopped: page1ProjectionFailed.summaryHasMoreStopped,
-          eventCount: 2,
-          eventWindowed: false,
-          view: {},
-          now,
-        }),
-      })[3],
-    ).toMatchObject({
-      value: 1,
-      detail: 'Stopped work · 2 event-driven',
-    });
-
-    // Case 3: cursor-page GitHub projection rejection fails only the panel;
-    // the uncursored native Work summary stays healthy.
-    const cursorProjectionFailed = await loadBridgeStoppedPages({
-      rawCursor: JSON.stringify(page1Cursor),
-      repo: 'jlapenna/agent-lcars',
-      readPage: vi.fn(async (cursor?: typeof page1Cursor) =>
-        cursor
-          ? { items: [githubItem], nextCursor: undefined }
-          : { items: [nativeItem], nextCursor: page1Cursor },
-      ),
-      excludeClosed: vi.fn(async () => {
-        throw projectionFailure;
-      }),
-    });
-    expect(cursorProjectionFailed.panelError).toBe(STOPPED_WORK_PANEL_ERROR);
-    expect(cursorProjectionFailed.items).toEqual([]);
-    expect(cursorProjectionFailed.summaryError).toBeUndefined();
-    expect(cursorProjectionFailed.summaryStoppedItems).toEqual([nativeItem]);
-    expect(cursorProjectionFailed.summaryHasMoreStopped).toBe(true);
-
-    // Case 4: page-1 uncursored store read failure sets both panelError and
-    // summaryError without throwing.
-    const storeFailure = new Error('Firestore unavailable');
-    const onStorePanelError = vi.fn();
-    const onStoreSummaryError = vi.fn();
-    const page1StoreFailed = await loadBridgeStoppedPages({
-      repo: 'jlapenna/agent-lcars',
-      readPage: vi.fn(async () => {
-        throw storeFailure;
-      }),
-      excludeClosed: vi.fn(async (items: WorkSummary[]) => items),
-      onPanelError: onStorePanelError,
-      onSummaryError: onStoreSummaryError,
-    });
-    expect(onStorePanelError).toHaveBeenCalledWith(storeFailure);
-    expect(onStoreSummaryError).toHaveBeenCalledWith(storeFailure);
-    expect(page1StoreFailed.panelError).toBe(STOPPED_WORK_PANEL_ERROR);
-    expect(page1StoreFailed.summaryError).toBe(WORK_SUMMARY_UNAVAILABLE_ERROR);
-  });
-
-  it('isolates event-driven work reads from stopped panel failures and marks Work unavailable on event errors', async () => {
-    const now = Date.parse('2026-11-26T18:00:00.000Z');
-    const makeEventWork = (
-      id: string,
-      updatedAt: string,
-      repo = 'jlapenna/agent-lcars',
-    ): WorkSummary => ({
-      ...makeStoppedSummary({ id, updatedAt, repo, state: 'done' }),
-      runs: [
-        {
-          attemptId: `g1:work:${id}/r1`,
-          pipeline: 'claude',
-          state: 'succeeded',
-          startedAt: updatedAt,
-          updatedAt,
-          sourceRevision: {
-            revision: 'rev-1',
-            input: { operation: 'fleet-triage:v1' },
-            observedAt: { github: updatedAt },
-          },
-        },
-      ],
-    });
-
-    const olderEvent = makeEventWork(
-      '01EVENTOLDER00000000000001',
-      '2026-11-26T17:35:00.000Z',
-    );
-    const newerEvent = makeEventWork(
-      '01EVENTNEWER00000000000002',
-      '2026-11-26T17:55:00.000Z',
-    );
-    const outsideWindowEvent = makeEventWork(
-      '01EVENTSTALE00000000000003',
-      '2026-11-26T15:00:00.000Z',
-    );
-    const nonEventNative = makeStoppedSummary({
-      id: '01NONVENT00000000000000004',
-      updatedAt: '2026-11-26T17:58:00.000Z',
-    });
-
-    const loadedEvents = await loadBridgeEventWork({
-      repo: 'jlapenna/agent-lcars',
-      view: { window: '1h' },
-      now,
-      readEvents: vi.fn(async () => ({
-        items: [olderEvent, newerEvent, outsideWindowEvent, nonEventNative],
-        nextCursor: {
-          taskKey: 'work:01NONVENT00000000000000004',
-          updatedAt: '2026-11-26T17:58:00.000Z',
-        },
-      })),
-    });
-    expect(loadedEvents.eventError).toBeUndefined();
-    expect(loadedEvents.eventItems.map((item) => item.id)).toEqual([
-      newerEvent.id,
-      olderEvent.id,
-    ]);
-    expect(loadedEvents.eventWindow).toEqual({ size: 4, windowed: true });
-
-    const eventFailure = new Error('Event index read failed');
-    const onEventError = vi.fn();
-    const failedEvents = await loadBridgeEventWork({
-      repo: 'jlapenna/agent-lcars',
-      now,
-      readEvents: vi.fn(async () => {
-        throw eventFailure;
-      }),
-      onEventError,
-    });
-    expect(onEventError).toHaveBeenCalledWith(eventFailure);
-    expect(failedEvents.eventItems).toEqual([]);
-    expect(failedEvents.eventWindow).toBeUndefined();
-    expect(failedEvents.eventError).toBe(EVENT_WORK_PANEL_ERROR);
-
-    // When the event read fails, deriving card error from summaryError ?? eventError
-    // marks the Work card unavailable instead of reporting `0 event-driven`.
-    const healthyStopped = await loadBridgeStoppedPages({
-      repo: 'jlapenna/agent-lcars',
-      readPage: vi.fn(async () => ({
-        items: [nonEventNative],
-        nextCursor: undefined,
-      })),
-      excludeClosed: vi.fn(async (items: WorkSummary[]) => items),
-    });
-    expect(healthyStopped.summaryError).toBeUndefined();
-    expect(
-      bridgeDestinationReadouts({
-        ...healthyDestinations,
-        work: bridgeWorkSummary({
-          authorized: true,
-          error: healthyStopped.summaryError ?? failedEvents.eventError,
-          stoppedItems: healthyStopped.summaryStoppedItems,
-          hasMoreStopped: healthyStopped.summaryHasMoreStopped,
-          eventCount: failedEvents.eventItems.length,
-          eventWindowed: failedEvents.eventWindow?.windowed ?? false,
-          view: {},
-          now,
-        }),
-      })[3],
-    ).toMatchObject({
-      value: '—',
-      detail: 'Work summary unavailable',
-    });
+    expect(onProjectionError).toHaveBeenCalledWith(projectionError);
+    expect(projectionFailed.panelError).toBe(STOPPED_WORK_PANEL_ERROR);
+    expect(projectionFailed.items).toEqual([]);
   });
 });

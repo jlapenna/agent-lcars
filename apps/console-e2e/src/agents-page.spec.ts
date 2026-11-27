@@ -38,10 +38,9 @@ test.describe('/agents page @smoke', () => {
     await expect(
       summaries.getByRole('link', { name: /Inbox/ }),
     ).toHaveAttribute('href', '/inbox');
-    await expect(summaries.getByRole('link', { name: /Work/ })).toHaveAttribute(
-      'href',
-      '/work',
-    );
+    const workSummary = summaries.getByRole('link', { name: /Work/ });
+    await expect(workSummary).toHaveAttribute('href', '/work');
+    await expect(workSummary).toContainText('Admitted queue · native work');
     const dispatches = page.getByTestId('current-work');
     await expect(
       dispatches.getByRole('heading', { name: 'Active dispatches' }),

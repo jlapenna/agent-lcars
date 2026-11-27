@@ -2,7 +2,7 @@ import { logger } from '@agent-lcars/logging';
 import type { TaskListCursor } from '@agent-lcars/orchestrator';
 import { workRepository } from '@agent-lcars/work';
 import { PIPELINES } from '@agent-lcars/work';
-import type { WorkSummary } from '@agent-lcars/work/derive';
+import type { ItemView, WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor, Group } from '@mantine/core';
 import { redirect } from 'next/navigation';
 
@@ -10,6 +10,7 @@ import { assertAdmin } from '@/lib/auth-guards';
 import { consoleLandingPath } from '@/lib/console-access';
 import {
   excludeClosedGithubAnchors,
+  listAdmittedNativeWork,
   listWorkSummaries,
 } from '@/lib/work-summary';
 
@@ -61,9 +62,8 @@ import { BridgeDetail } from './bridge-detail';
 import {
   bridgeDestinationReadouts,
   bridgeWorkSummary,
-  EVENT_WORK_PANEL_ERROR,
-  loadBridgeEventWork,
-  loadBridgeStoppedPages,
+  loadBridgeAdmittedWork,
+  loadBridgeStoppedPage,
   STOPPED_WORK_PANEL_ERROR,
   WORK_SUMMARY_UNAVAILABLE_ERROR,
 } from './bridge-readouts';
@@ -106,7 +106,7 @@ import { stoppedWorkHref } from './stopped-work-query';
 import { withConsolePageShell } from './with-console-page-shell';
 import { cancelItem, redispatchItem } from './work/actions';
 import { context as workContext } from './work/context';
-import { workListHref } from './work/work-list-query';
+import { WORK_PAGE_LIMIT, workListHref } from './work/work-list-query';
 
 function toCard(item: ActionItem): BoardCard {
   return {
@@ -128,24 +128,19 @@ function toCard(item: ActionItem): BoardCard {
  * *same* item the list renders, matching every other Bridge row kind.
  */
 const STOPPED_WORK_PAGE = 50;
-const EVENT_WORK_READ = 50;
 
 async function getParkedWork(
   repo?: string,
   rawCursor?: string,
-  view: AgentsViewFilters = {},
 ): Promise<{
   authorized: boolean;
   items: WorkSummary[];
-  /** Uncursored first page of stopped native work for the Work destination
-   *  card, kept independent of the Stopped work panel's cursor pagination. */
-  summaryStoppedItems: WorkSummary[];
-  summaryHasMoreStopped: boolean;
+  /** Native Work items in `running` state for the Work destination card,
+   *  matching `/work`'s Admitted queue and independent of the Stopped work
+   *  panel's cursor pagination. */
+  admittedItems: ItemView[];
+  hasMoreAdmitted: boolean;
   summaryError?: string;
-  eventItems: WorkSummary[];
-  /** Event tasks read to find `eventItems`, and whether older ones exist. */
-  eventWindow?: { size: number; windowed: boolean };
-  eventError?: string;
   hasMoreTasks: boolean;
   nextCursor?: TaskListCursor;
   error?: string;
@@ -161,32 +156,29 @@ async function getParkedWork(
     return {
       authorized: true,
       items: [],
-      summaryStoppedItems: [],
-      summaryHasMoreStopped: false,
+      admittedItems: [],
+      hasMoreAdmitted: false,
       summaryError: WORK_SUMMARY_UNAVAILABLE_ERROR,
-      eventItems: [],
-      eventError: EVENT_WORK_PANEL_ERROR,
       hasMoreTasks: false,
       error: STOPPED_WORK_PANEL_ERROR,
     };
   }
-  if (!work.principal?.scopes.has('work.operator')) {
+  const { principal } = work;
+  if (!principal?.scopes.has('work.operator')) {
     return {
       authorized: false,
       items: [],
-      summaryStoppedItems: [],
-      summaryHasMoreStopped: false,
-      eventItems: [],
+      admittedItems: [],
+      hasMoreAdmitted: false,
       hasMoreTasks: false,
     };
   }
-  // Each read takes only tasks carrying the stored sort key (#3566): the
-  // newest stopped tasks and the newest event tasks, instead of the newest
-  // 200 tasks of every state filtered here. Panel cursor parsing / GitHub
-  // projection enrichment, the Work card's uncursored native summary, and
-  // event-driven activity each keep their own failure boundary.
-  const [stopped, events] = await Promise.all([
-    loadBridgeStoppedPages({
+  // Stopped work reads the newest stopped tasks by stored `stoppedAt` sort
+  // key (#3566), while the Work destination card reads admitted (`running`)
+  // native Work items by stored `derived.state` (#3633), matching `/work`'s
+  // Admitted queue. Each keeps its own failure boundary.
+  const [stopped, admitted] = await Promise.all([
+    loadBridgeStoppedPage({
       rawCursor,
       repo,
       readPage: (pageCursor) =>
@@ -200,35 +192,28 @@ async function getParkedWork(
       onPanelError: (error) => {
         logger.error('agent-lcars: parked work panel unavailable:', error);
       },
-      onSummaryError: (error) => {
+    }),
+    loadBridgeAdmittedWork({
+      repo,
+      readAdmitted: () =>
+        listAdmittedNativeWork(work.runtime.store, {
+          principal,
+          limit: WORK_PAGE_LIMIT,
+        }),
+      onError: (error) => {
         logger.error(
           'agent-lcars: bridge work summary readout unavailable:',
           error,
         );
       },
     }),
-    loadBridgeEventWork({
-      repo,
-      view,
-      readEvents: () =>
-        listWorkSummaries(work.runtime.store, {
-          limit: EVENT_WORK_READ,
-          sortKey: 'eventAt',
-        }),
-      onEventError: (error) => {
-        logger.error('agent-lcars: event work activity unavailable:', error);
-      },
-    }),
   ]);
   return {
     authorized: true,
     items: stopped.items,
-    summaryStoppedItems: stopped.summaryStoppedItems,
-    summaryHasMoreStopped: stopped.summaryHasMoreStopped,
-    summaryError: stopped.summaryError,
-    eventItems: events.eventItems,
-    eventWindow: events.eventWindow,
-    eventError: events.eventError,
+    admittedItems: admitted.admittedItems,
+    hasMoreAdmitted: admitted.hasMoreAdmitted,
+    summaryError: admitted.error,
     hasMoreTasks: stopped.hasMoreTasks,
     nextCursor: stopped.nextCursor,
     error: stopped.panelError,
@@ -309,12 +294,9 @@ async function IndexBody({
     {
       authorized: workAuthorized,
       items: parkedWorkItems,
-      summaryStoppedItems,
-      summaryHasMoreStopped,
+      admittedItems,
+      hasMoreAdmitted,
       summaryError: workSummaryError,
-      eventItems,
-      eventWindow,
-      eventError: eventWorkError,
       hasMoreTasks: hasMoreParkedTasks,
       nextCursor: stoppedNextCursor,
       error: stoppedError,
@@ -334,10 +316,7 @@ async function IndexBody({
         getRunnerSessionsByRunId([...data.liveRuns, ...data.recentRuns]),
       ),
     ),
-    timings.time(
-      'stoppedWork',
-      getParkedWork(repoFilterKey, stoppedCursor, view),
-    ),
+    timings.time('stoppedWork', getParkedWork(repoFilterKey, stoppedCursor)),
     timings.time(
       'nativeInbox',
       getNativeInboxEvidence(async () => {
@@ -368,6 +347,9 @@ async function IndexBody({
       ...autoscaler.warnings,
       ...(tokenRateSnapshot ? [] : [TOKEN_RATE_READ_FAILED]),
       ...(jobs.warning ? [jobs.warning] : []),
+      ...(workSummaryError
+        ? ['Work summary unavailable (admitted native work read failed).']
+        : []),
       ...(spend === undefined ? [SPEND_READ_FAILED] : []),
     ]),
   );
@@ -584,11 +566,9 @@ async function IndexBody({
             : '/costs',
           work: bridgeWorkSummary({
             authorized: workAuthorized,
-            error: workSummaryError ?? eventWorkError,
-            stoppedItems: summaryStoppedItems,
-            hasMoreStopped: summaryHasMoreStopped,
-            eventCount: eventItems.length,
-            eventWindowed: eventWindow?.windowed ?? false,
+            error: workSummaryError,
+            admittedItems,
+            hasMoreAdmitted,
             view,
             now,
           }),
