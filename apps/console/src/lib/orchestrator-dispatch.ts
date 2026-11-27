@@ -1335,6 +1335,34 @@ const SAME_ANCHOR_OUTCOME_SUMMARIES: ReadonlySet<string> = new Set([
   'no-op',
 ]);
 
+/**
+ * True when a succeeded run's verified deliverable is already on the same
+ * GitHub anchor: either a review/comment/no-op on the anchor itself, or a
+ * pull-request/merged-deliverable whose ref points to that exact PR anchor
+ * (for example a qualification or remediation run that updated the PR body
+ * and commits on the same PR).
+ */
+function isSameAnchorDeliverable(run: Run): boolean {
+  if (
+    run.result?.ok !== true ||
+    run.delivery !== undefined ||
+    run.result.summary === undefined ||
+    (run.result.relatedRefs?.length ?? 0) > 0
+  ) {
+    return false;
+  }
+  if (SAME_ANCHOR_OUTCOME_SUMMARIES.has(run.result.summary)) {
+    return true;
+  }
+  return (
+    (run.result.summary === 'pull-request' ||
+      run.result.summary === 'merged-deliverable') &&
+    !isWorkAnchor(run.task) &&
+    run.result.ref ===
+      `https://github.com/${run.task.repo}/pull/${run.task.issue}`
+  );
+}
+
 /** Only an explicit agent park establishes a human-only blocker. */
 function runNeedsHumanLabel(run: Run): boolean {
   return run.result?.summary === PARK_OUTCOME_SUMMARY;
@@ -1429,14 +1457,7 @@ export function outcomeCommentBody(
       const wait = fallbackSuccessor?.providerFallback?.providerWait;
       const waiting =
         fallbackSuccessor !== undefined && wait?.afterRunId === run.runId;
-      if (
-        !waiting &&
-        run.result?.ok === true &&
-        run.delivery === undefined &&
-        run.result.summary !== undefined &&
-        SAME_ANCHOR_OUTCOME_SUMMARIES.has(run.result.summary) &&
-        (run.result.relatedRefs?.length ?? 0) === 0
-      ) {
+      if (!waiting && isSameAnchorDeliverable(run)) {
         return undefined;
       }
       const lines = waiting
