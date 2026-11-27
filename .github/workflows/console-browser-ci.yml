@@ -2,7 +2,11 @@ name: Console browser CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # Draft PRs already run full E2E selection and browser verification with
+    # the same base/head diff and dependency graph. Omit `ready_for_review` so
+    # marking a verified draft ready at an unchanged head reuses the existing
+    # head run instead of canceling and restarting it (#3668).
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
   workflow_call:
