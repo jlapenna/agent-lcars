@@ -893,34 +893,31 @@ async function handleReportOutcome(
           body: outcomeCommentBody(run, fallbackSuccessor, latestSubsequentRun),
           needsHumanLabel: run.state === 'finished' && runNeedsHumanLabel(run),
         };
-  if (outcome.body === undefined) {
-    await settleClaim(deps, entry, 'done');
-    result.reported.push(run.runId);
-    return;
-  }
-  const url = `${githubApiBaseUrl(deps)}/repos/${target.repo}/issues/${target.issue}/comments`;
+  if (outcome.body !== undefined) {
+    const url = `${githubApiBaseUrl(deps)}/repos/${target.repo}/issues/${target.issue}/comments`;
 
-  let response: Response;
-  try {
-    const token = await tokens.tokenFor(target.repo);
-    response = await fetchImpl(url, {
-      method: 'POST',
-      headers: githubHeaders(token),
-      body: JSON.stringify({ body: outcome.body }),
-    });
-  } catch (error) {
-    await settleRetryableFailure(deps, entry, result, error);
-    return;
-  }
+    let response: Response;
+    try {
+      const token = await tokens.tokenFor(target.repo);
+      response = await fetchImpl(url, {
+        method: 'POST',
+        headers: githubHeaders(token),
+        body: JSON.stringify({ body: outcome.body }),
+      });
+    } catch (error) {
+      await settleRetryableFailure(deps, entry, result, error);
+      return;
+    }
 
-  if (response.status !== 201) {
-    await settleRetryableFailure(
-      deps,
-      entry,
-      result,
-      `issue comment returned ${response.status}`,
-    );
-    return;
+    if (response.status !== 201) {
+      await settleRetryableFailure(
+        deps,
+        entry,
+        result,
+        `issue comment returned ${response.status}`,
+      );
+      return;
+    }
   }
 
   if (outcome.needsHumanLabel) {
@@ -1325,6 +1322,19 @@ function githubHeaders(token: string): Record<string, string> {
  *  (which flags the issue despite `ok: true`). */
 const PARK_OUTCOME_SUMMARY = 'park';
 
+/**
+ * Successful outcomes whose verified deliverable is already a pull-request
+ * review or issue/PR comment on the same GitHub anchor (`verify-outcome.sh`,
+ * `run-result.ts`). Posting an extra `✅ Run ... finished.` comment from
+ * `agent-lcars[bot]` immediately beneath that artifact duplicates it on the
+ * timeline.
+ */
+const SAME_ANCHOR_OUTCOME_SUMMARIES: ReadonlySet<string> = new Set([
+  'review',
+  'comment',
+  'no-op',
+]);
+
 /** Only an explicit agent park establishes a human-only blocker. */
 function runNeedsHumanLabel(run: Run): boolean {
   return run.result?.summary === PARK_OUTCOME_SUMMARY;
@@ -1413,12 +1423,22 @@ export function outcomeCommentBody(
   run: Run,
   fallbackSuccessor?: Run,
   latestSubsequentRun?: Run,
-): string {
+): string | undefined {
   switch (run.state) {
     case 'finished': {
       const wait = fallbackSuccessor?.providerFallback?.providerWait;
       const waiting =
         fallbackSuccessor !== undefined && wait?.afterRunId === run.runId;
+      if (
+        !waiting &&
+        run.result?.ok === true &&
+        run.delivery === undefined &&
+        run.result.summary !== undefined &&
+        SAME_ANCHOR_OUTCOME_SUMMARIES.has(run.result.summary) &&
+        (run.result.relatedRefs?.length ?? 0) === 0
+      ) {
+        return undefined;
+      }
       const lines = waiting
         ? [`⏳ Run ${run.runId} stopped on a provider limit.`]
         : run.result?.ok

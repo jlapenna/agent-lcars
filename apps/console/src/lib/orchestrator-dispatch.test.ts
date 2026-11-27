@@ -1048,6 +1048,92 @@ describe('outcomeCommentBody', () => {
     );
     expect(body).toContain("see this run's own comment above");
   });
+
+  it.each(['review', 'comment', 'no-op'] as const)(
+    'suppresses the redundant finished comment when a succeeded %s run already posted on the anchor',
+    (summary) => {
+      const ref =
+        summary === 'review'
+          ? 'https://github.com/octo/example/pull/7#pullrequestreview-100'
+          : 'https://github.com/octo/example/pull/7#issuecomment-100';
+      expect(
+        outcomeCommentBody(
+          run({
+            state: 'finished',
+            result: { ok: true, summary, ref },
+            providerFallback: {
+              principal: 'github:pr-review',
+              allowedPipelines: ['claude'],
+              attemptedPipelines: ['codex', 'claude'],
+              originalRunId: `${TASK.repo}#${TASK.issue}/r1`,
+              fromRunId: `${TASK.repo}#${TASK.issue}/r1`,
+              trigger: {
+                reason: 'provider-limit',
+                failureRunId: `${TASK.repo}#${TASK.issue}/r1`,
+                limitedPipeline: 'codex',
+              },
+            },
+          }),
+        ),
+      ).toBeUndefined();
+    },
+  );
+
+  it.each(['pull-request', 'merged-deliverable'] as const)(
+    'still posts the finished comment when a succeeded %s run links a separate PR',
+    (summary) => {
+      const body = outcomeCommentBody(
+        run({
+          state: 'finished',
+          result: {
+            ok: true,
+            summary,
+            ref: 'https://github.com/octo/example/pull/42',
+          },
+        }),
+      );
+      expect(body).toContain(`✅ Run ${TASK.repo}#${TASK.issue}/r1 finished.`);
+      expect(body).toContain('https://github.com/octo/example/pull/42');
+    },
+  );
+
+  it('still skips the redundant comment during drainOutbox while clearing status:needs-human', async () => {
+    for (const summary of ['review', 'comment', 'no-op'] as const) {
+      const { store, orchestrator } = fixture();
+      const finished = await requested(orchestrator);
+      await orchestrator.report(finished.runId, {
+        ok: true,
+        summary,
+        ref:
+          summary === 'review'
+            ? 'https://github.com/octo/example/pull/7#pullrequestreview-100'
+            : 'https://github.com/octo/example/pull/7#issuecomment-100',
+      });
+      const calls: { url: string; method: string }[] = [];
+      const fetchImpl = vi.fn(
+        async (url: RequestInfo | URL, init?: RequestInit) => {
+          calls.push({ url: String(url), method: init?.method ?? 'GET' });
+          return new Response(null, { status: 200 });
+        },
+      ) as typeof fetch;
+
+      const result = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl,
+        now: () => NOW,
+      });
+
+      expect(result.failed).toEqual([]);
+      expect(result.reported).toEqual([finished.runId]);
+      expect(calls.some((call) => call.url.endsWith('/comments'))).toBe(false);
+      expect(calls).toContainEqual({
+        url: 'https://api.github.com/repos/octo/example/issues/7/labels/status%3Aneeds-human',
+        method: 'DELETE',
+      });
+    }
+  });
 });
 
 describe('delayed failure outcome advice', () => {
