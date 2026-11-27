@@ -48,7 +48,17 @@ describe('CI E2E operational gate', () => {
       "github.event_name == 'workflow_dispatch'",
     );
     expect(browser.on.push.branches).toContain('main');
+    expect(browser.on).toHaveProperty('workflow_call');
+    expect(ci.on.pull_request.types).toEqual([
+      'opened',
+      'synchronize',
+      'reopened',
+    ]);
     expect(browser.on.pull_request.types).toEqual(ci.on.pull_request.types);
+    expect(browser.concurrency['cancel-in-progress']).toBe(
+      "${{ github.event_name == 'pull_request' }}",
+    );
+    expect(JSON.stringify(browser)).not.toContain('pull_request.draft');
     expect(browser.jobs.e2e.name).toBe('E2E');
     expect(browser.concurrency.group).not.toBe(ci.concurrency.group);
     expect(ci.concurrency.group).toContain(

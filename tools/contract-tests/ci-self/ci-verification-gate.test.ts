@@ -24,6 +24,15 @@ interface Job {
   steps?: Step[];
 }
 const workflow = parse(readFileSync('.github/workflows/ci.yml', 'utf8')) as {
+  on: {
+    pull_request: { types?: string[] };
+    push: { branches?: string[] };
+    workflow_dispatch?: unknown;
+  };
+  concurrency: {
+    group?: string;
+    'cancel-in-progress'?: string | boolean;
+  };
   env: Record<string, string>;
   jobs: Record<string, Job>;
 };
@@ -104,8 +113,23 @@ exit ${status}
       expect(verify.needs).toContain(shard);
     }
     expect(workflow.jobs.terraform.if).toBeUndefined();
+    expect(workflow.jobs['runner-image-pnpm-store-seed'].if).toBeUndefined();
     expect(verify.name).toBe('Verify');
     expect(verify.if).toBe('always()');
+  });
+
+  it('does not cancel and restart full CI solely on ready_for_review', () => {
+    expect(workflow.on.pull_request.types).toEqual([
+      'opened',
+      'synchronize',
+      'reopened',
+    ]);
+    expect(workflow.on.push.branches).toContain('main');
+    expect(workflow.on).toHaveProperty('workflow_dispatch');
+    expect(workflow.concurrency['cancel-in-progress']).toBe(
+      "${{ github.event_name == 'pull_request' }}",
+    );
+    expect(JSON.stringify(workflow)).not.toContain('pull_request.draft');
   });
 
   // #2082 split one serial job into two Nx project partitions. Dropping or

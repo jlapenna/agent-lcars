@@ -176,7 +176,7 @@ HEAD` to equal the reviewed SHA and `git diff --exit-code <reviewed-sha> --
    revision and using it respects that checkout's live ownership.
 
 This procedure establishes scoped test evidence, not browser acceptance,
-ready-event CI, protected delivery or deployed functionality. Keep deeper
+full PR CI, protected delivery or deployed functionality. Keep deeper
 tooling attribution uncertain until traced; a successful supported worktree
 does not identify an upstream Vite defect.
 

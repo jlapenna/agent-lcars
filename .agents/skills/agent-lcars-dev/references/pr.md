@@ -198,9 +198,12 @@
    after the infrastructure preemption in
    [Homelab #2369](https://github.com/jlapenna/homelab/issues/2369).
 
-   Draft CI can short-circuit without exercising full verification. After a
-   draft becomes ready, an old green summary is not full-gate evidence: use
-   the ready-event run's actual full-verification result for that exact head.
+   Draft PRs run the full verification and browser gates with no draft
+   short-circuit, and neither `ci.yml` nor `console-browser-ci.yml` retriggers
+   on `ready_for_review`. After a draft becomes ready at an unchanged head,
+   reuse that head's passing full-gate runs rather than expecting a duplicate
+   readiness run; never treat canceled or incomplete verification as full-gate
+   evidence.
 
    Auto-merge armed under the maintainer's login is the opt-in the fleet
    reconciler honours (it updates a `BEHIND` branch when `main` moves, see
