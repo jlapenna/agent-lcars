@@ -24,7 +24,7 @@ expect() {
   local home="$tmp/$name"
   mkdir -p "$home"
   (
-    unset HINDSIGHT_DISABLED HINDSIGHT_API_TOKEN HINDSIGHT_BANK_ID HINDSIGHT_API_URL HINDSIGHT_CONFIG TARGET_REPO
+    unset HINDSIGHT_DISABLED HINDSIGHT_API_TOKEN HINDSIGHT_BANK_ID HINDSIGHT_API_URL HINDSIGHT_CONFIG HINDSIGHT_RETAIN_SESSIONS WORK_FILE TARGET_REPO
     export HOME="$home" HINDSIGHT_TOKEN_FILE="$tmp/missing"
     export "$@"
     # shellcheck source=hindsight-bootstrap.sh
@@ -51,26 +51,53 @@ expect explicit "disabled reason=explicit" true \
 expect no-token "disabled reason=no-token" true TARGET_REPO=octo/example
 expect no-repo "disabled reason=no-repo" true HINDSIGHT_TOKEN_FILE="$tmp/token" TARGET_REPO=
 expect no-repo-slug "disabled reason=no-repo" true HINDSIGHT_TOKEN_FILE="$tmp/token" TARGET_REPO=octo/
-# A config directory that cannot be written into must still report, not fail.
-mkdir -p "$tmp/readonly-cfg"
+
+jq -e '.retainSessions == true and .autoInject == "recall" and .autoSeed == true' \
+  "$tmp/enabled/.hindsight/coding-agent.json" >/dev/null ||
+  fail "enabled: expected default retainSessions=true, autoInject=recall, autoSeed=true"
+
+expect dream-env "enabled bank=agent-lcars::example api=https://memory.lan.jlapenna.net" false \
+  HINDSIGHT_TOKEN_FILE="$tmp/token" TARGET_REPO=octo/example HINDSIGHT_RETAIN_SESSIONS=false
+jq -e '.retainSessions == false and .autoInject == "none" and .autoSeed == false' \
+  "$tmp/dream-env/.hindsight/coding-agent.json" >/dev/null ||
+  fail "dream-env: expected retainSessions=false, autoInject=none, autoSeed=false"
+
+printf '%s\n' '{"id":"work:1","spec":{"title":"hindsight-dream · octo/example","description":"Repository job `hindsight-dream` in `octo/example`"}}' > "$tmp/dream-work.json"
+expect dream-work "enabled bank=agent-lcars::example api=https://memory.lan.jlapenna.net" false \
+  HINDSIGHT_TOKEN_FILE="$tmp/token" TARGET_REPO=octo/example WORK_FILE="$tmp/dream-work.json"
+jq -e '.retainSessions == false and .autoInject == "none" and .autoSeed == false' \
+  "$tmp/dream-work/.hindsight/coding-agent.json" >/dev/null ||
+  fail "dream-work: expected retainSessions=false, autoInject=none, autoSeed=false"
+
+# A config directory (including an unsearchable mode-000 parent) must still
+# return 0 under errexit and report exactly one config-error outcome line.
+mkdir -p "$tmp/readonly-cfg" "$tmp/unsearchable-cfg"
 chmod 500 "$tmp/readonly-cfg"
+chmod 000 "$tmp/unsearchable-cfg"
+trap 'chmod 700 "$tmp/readonly-cfg" "$tmp/unsearchable-cfg" 2>/dev/null || true; rm -rf "$tmp"' EXIT
 if [ "$(id -u)" != 0 ]; then
   expect_config_error() {
-    local home="$tmp/config-error"
+    local case_name="$1" cfg_target="$2"
+    local home="$tmp/$case_name"
     mkdir -p "$home"
     (
+      set -euo pipefail
       unset HINDSIGHT_DISABLED HINDSIGHT_API_TOKEN
       export HOME="$home" HINDSIGHT_TOKEN_FILE="$tmp/token" TARGET_REPO=octo/example
-      export HINDSIGHT_CONFIG="$tmp/readonly-cfg/coding-agent.json"
+      export HINDSIGHT_CONFIG="$cfg_target"
       # shellcheck source=hindsight-bootstrap.sh
       source "$here/hindsight-bootstrap.sh"
       hindsight_bootstrap
-    ) 2> "$home/stderr" || true
+    ) 2> "$home/stderr" || fail "$case_name: bootstrap returned nonzero under errexit"
+    local lines
+    lines="$(grep -c '^hindsight: ' "$home/stderr" || true)"
+    [ "$lines" = 1 ] || fail "$case_name: expected one outcome line, got $lines: $(cat "$home/stderr")"
     grep -qxF "hindsight: disabled reason=config-error" "$home/stderr" ||
-      fail "config-error: expected config-error line, got: $(cat "$home/stderr")"
-    ! grep -qF "$token" "$home/stderr" || fail "config-error: token leaked to stderr"
-    echo "ok: config-error"
+      fail "$case_name: expected config-error line, got: $(cat "$home/stderr")"
+    ! grep -qF "$token" "$home/stderr" || fail "$case_name: token leaked to stderr"
+    echo "ok: $case_name"
   }
-  expect_config_error
+  expect_config_error config-error-readonly "$tmp/readonly-cfg/coding-agent.json"
+  expect_config_error config-error-unsearchable "$tmp/unsearchable-cfg/sub/coding-agent.json"
 fi
 echo "hindsight-bootstrap.test.sh: all cases passed"

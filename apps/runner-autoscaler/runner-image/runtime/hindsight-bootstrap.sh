@@ -65,6 +65,23 @@ hindsight_bootstrap() {
   local hindsight_dir="$HOME/.hindsight"
   local config_file="${HINDSIGHT_CONFIG:-$hindsight_dir/coding-agent.json}"
   local tmp_file="$config_file.$$"
+  local retain_sessions=true
+  local auto_inject="recall"
+  local auto_seed=true
+
+  if [ "${HINDSIGHT_RETAIN_SESSIONS:-}" = "false" ] || [ "${HINDSIGHT_RETAIN_SESSIONS:-}" = "0" ]; then
+    retain_sessions=false
+    auto_inject="none"
+    auto_seed=false
+  elif [ -n "${WORK_FILE:-}" ] && [ -f "$WORK_FILE" ] && [ -r "$WORK_FILE" ] &&
+    jq -e '
+      (.spec.title | type == "string" and startswith("hindsight-dream · ")) or
+      (.spec.description | type == "string" and startswith("Repository job `hindsight-dream` "))
+    ' "$WORK_FILE" >/dev/null 2>&1; then
+    retain_sessions=false
+    auto_inject="none"
+    auto_seed=false
+  fi
 
   if ! mkdir -m 700 -p "$(dirname "$config_file")" 2>/dev/null || ! (
     umask 077
@@ -76,18 +93,21 @@ hindsight_bootstrap() {
       --arg mode "${MODE:-}" \
       --arg runId "${LCARS_RUN_ID:-}" \
       --arg attemptId "${ATTEMPT_ID:-}" \
+      --arg autoInject "$auto_inject" \
+      --argjson autoSeed "$auto_seed" \
+      --argjson retainSessions "$retain_sessions" \
       '{
         serverMode: "self-hosted",
         apiUrl: $apiUrl,
         apiToken: env.HINDSIGHT_BOOTSTRAP_TOKEN,
         bankId: $bankId,
-        autoInject: "recall",
+        autoInject: $autoInject,
         manageBankConfig: true,
         autoUpdate: false,
         codebaseSurvey: false,
-        autoSeed: true,
+        autoSeed: $autoSeed,
         gitIngest: "message",
-        retainSessions: true,
+        retainSessions: $retainSessions,
         retainTags: [
           ("repo:" + $repo),
           "lcars:dispatched",
@@ -103,14 +123,14 @@ hindsight_bootstrap() {
         }
       }' >"$tmp_file"
   ); then
-    rm -f -- "$tmp_file"
+    rm -f -- "$tmp_file" 2>/dev/null || true
     echo "::warning::Hindsight coding-agent config generation failed; continuing with memory disabled" >&2
     write_disabled_hindsight_config
     hindsight_report "disabled reason=config-error"
     return 0
   fi
   if ! mv -f -- "$tmp_file" "$config_file"; then
-    rm -f -- "$tmp_file"
+    rm -f -- "$tmp_file" 2>/dev/null || true
     write_disabled_hindsight_config
     hindsight_report "disabled reason=config-error"
     return 0
