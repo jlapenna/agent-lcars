@@ -39,6 +39,45 @@ export const ISSUE_AGENT_SESSION_RETENTION_DAYS = 365;
  * part of {@link SessionDoc}: readers drop it before parsing. */
 export const SESSION_WRITTEN_AT_FIELD = 'writtenAt';
 
+/**
+ * Put an `activeSince` cutoff into the spelling `lastActivityAt` is stored in —
+ * UTC with millisecond precision, the output of `Date.toISOString()`.
+ *
+ * Firestore's `>=` on the string field is a *lexicographic* comparison, so it is a
+ * time comparison only while both sides are the same canonical spelling. A cutoff
+ * carrying a non-UTC offset (`2026-11-12T20:00:00+02:00` is 18:00Z) or omitting
+ * the milliseconds (`…T18:00:00Z` sorts after `…T18:00:00.000Z`) silently bounds
+ * the window at the wrong instant, dropping sessions the caller asked for.
+ *
+ * @throws RangeError if the value is not a parseable instant, rather than
+ * letting a typo through as an arbitrary string bound.
+ */
+export function canonicalActiveSince(activeSince: string): string {
+  const ms = Date.parse(activeSince);
+  if (Number.isNaN(ms)) {
+    throw new RangeError(
+      `activeSince must be a parseable timestamp, got "${activeSince}"`,
+    );
+  }
+  return new Date(ms).toISOString();
+}
+
+/**
+ * Lexicographic lower bound for a Firestore string range over
+ * `lastActivityAt`. Stored timestamps are UTC ISO strings, but writers have not
+ * all agreed on fractional precision: `…T10:00:00Z` is an earlier instant than
+ * `…T10:00:00.500Z` yet sorts *after* it as text. Truncating the canonical
+ * cutoff to its second and appending `.` makes the range include every
+ * spelling at or after that second (`…00Z`, `…00.000Z`, `…00.500Z`) while
+ * excluding earlier seconds. Callers must still filter the returned docs by
+ * parsed instant to drop same-second timestamps before the cutoff; doing only
+ * the string range would bring those into an indexed total the instant-based
+ * spend backfill left untouched.
+ */
+export function activeSinceRangeLowerBound(activeSince: string): string {
+  return `${canonicalActiveSince(activeSince).slice(0, 19)}.`;
+}
+
 /** `intentId` prefix of a run that belongs to a native work item
  * (`work:<ulid>/r<n>`, the orchestrator's `taskKey` plus run generation). */
 const NATIVE_WORK_INTENT_PREFIX = 'work:';

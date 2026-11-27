@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  activeSinceRangeLowerBound,
   buildSessionDoc,
   buildSessionWrite,
+  canonicalActiveSince,
   CLI_SESSION_RETENTION_DAYS,
   ISSUE_AGENT_SESSION_RETENTION_DAYS,
   parseSessionDoc,
@@ -751,5 +753,50 @@ describe('herdr pane', () => {
       // The stored value is left alone for the next write to clear.
       expect(Object.keys(doc)).toContain('herdrPaneId');
     }
+  });
+});
+
+describe('canonicalActiveSince', () => {
+  it('maps a cutoff in another zone onto the UTC instant it names', () => {
+    expect(canonicalActiveSince('2026-11-12T20:00:00+02:00')).toBe(
+      '2026-11-12T18:00:00.000Z',
+    );
+  });
+
+  it('adds the milliseconds a stored activity time always carries', () => {
+    // '2026-11-12T18:00:00Z' sorts after '2026-11-12T18:00:00.000Z' as text, so
+    // the stored spelling is the one a range comparison has to use.
+    expect(canonicalActiveSince('2026-11-12T18:00:00Z')).toBe(
+      '2026-11-12T18:00:00.000Z',
+    );
+  });
+
+  it('leaves an already canonical cutoff alone', () => {
+    const canonical = '2026-07-11T12:00:00.000Z';
+    expect(canonicalActiveSince(canonical)).toBe(canonical);
+  });
+
+  it('rejects a cutoff that names no instant', () => {
+    expect(() => canonicalActiveSince('last tuesday')).toThrow(RangeError);
+  });
+});
+
+describe('activeSinceRangeLowerBound', () => {
+  it('bounds at the second so mixed-precision spellings are still found', () => {
+    // '…T10:00:00Z' sorts after '…T10:00:00.500Z' as text, so the canonical
+    // cutoff cannot be used directly as a string range bound. The prefix admits
+    // both spellings; the reader's instant filter decides which one qualifies.
+    expect(activeSinceRangeLowerBound('2026-11-20T10:00:00.500Z')).toBe(
+      '2026-11-20T10:00:00.',
+    );
+    expect('2026-11-20T10:00:00Z' >= '2026-11-20T10:00:00.').toBe(true);
+    expect('2026-11-20T10:00:00.500Z' >= '2026-11-20T10:00:00.').toBe(true);
+    expect('2026-11-20T09:59:59.999Z' >= '2026-11-20T10:00:00.').toBe(false);
+  });
+
+  it('normalizes an offset cutoff before truncating it', () => {
+    expect(activeSinceRangeLowerBound('2026-11-12T20:00:00+02:00')).toBe(
+      '2026-11-12T18:00:00.',
+    );
   });
 });

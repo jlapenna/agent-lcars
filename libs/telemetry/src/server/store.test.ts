@@ -135,9 +135,9 @@ describe('listSessionDocs', () => {
     ]);
   });
 
-  it('applies activeSince as a lastActivityAt range filter', async () => {
+  it('applies activeSince as a widened lastActivityAt range filter', async () => {
     // FakeFirestore records but does not evaluate query filters, so this
-    // asserts the query shape; the range semantics are Firestore's own.
+    // asserts the query shape; the instant filter below is applied locally.
     const firestore = streamingFirestore({
       [SESSIONS_COLLECTION]: [
         { id: cliSession.sessionId, ...cliSession },
@@ -152,8 +152,74 @@ describe('listSessionDocs', () => {
     expect(mockWhere).toHaveBeenCalledWith(
       'lastActivityAt',
       '>=',
-      '2026-07-11T12:00:00.000Z',
+      '2026-07-11T12:00:00.',
     );
+  });
+
+  it('bounds the range at the normalized second when activeSince carries an offset', async () => {
+    // The range is a string comparison, so a cutoff in another zone has to be
+    // normalized and widened before Firestore sorts it against UTC-stored
+    // activity times of differing fractional precision.
+    const firestore = streamingFirestore({
+      [SESSIONS_COLLECTION]: [{ id: cliSession.sessionId, ...cliSession }],
+    }) as unknown as Firestore;
+
+    await listSessionDocs(firestore, {
+      activeSince: '2026-07-11T14:00:00+02:00',
+    });
+
+    expect(mockWhere).toHaveBeenCalledWith(
+      'lastActivityAt',
+      '>=',
+      '2026-07-11T12:00:00.',
+    );
+  });
+
+  it('filters a whole-second doc that sorts inside the string range but predates the instant cutoff', async () => {
+    // BackfillSessionSpend excludes this doc by instant; the reader must not
+    // include it in an indexed total whose coverage the dry run certified.
+    const firestore = streamingFirestore({
+      [SESSIONS_COLLECTION]: [
+        {
+          id: 'whole-second-before',
+          ...cliSession,
+          lastActivityAt: '2026-07-12T00:05:00Z',
+        },
+        {
+          id: 'after-cutoff',
+          ...cliSession,
+          lastActivityAt: '2026-07-12T00:05:01.000Z',
+        },
+      ],
+    }) as unknown as Firestore;
+
+    const docs = await listSessionDocs(firestore, {
+      activeSince: '2026-07-12T00:05:00.500Z',
+      exhaustive: true,
+    });
+
+    expect(docs.map((doc) => doc.lastActivityAt)).toEqual([
+      '2026-07-12T00:05:01.000Z',
+    ]);
+  });
+
+  it('includes a whole-second doc exactly on a whole-second cutoff', async () => {
+    const firestore = streamingFirestore({
+      [SESSIONS_COLLECTION]: [
+        {
+          id: 'whole-second-boundary',
+          ...cliSession,
+          lastActivityAt: '2026-07-12T00:05:00Z',
+        },
+      ],
+    }) as unknown as Firestore;
+
+    const docs = await listSessionDocs(firestore, {
+      activeSince: '2026-07-12T00:05:00Z',
+      exhaustive: true,
+    });
+
+    expect(docs).toHaveLength(1);
   });
 
   it('does not filter when no activeSince is given', async () => {
@@ -278,7 +344,7 @@ describe('listSessionDocs', () => {
     expect(mockWhere).toHaveBeenCalledWith(
       'lastActivityAt',
       '>=',
-      '2026-07-11T00:00:00.000Z',
+      '2026-07-11T00:00:00.',
     );
     expect(mockWhere).toHaveBeenCalledWith('source', '==', 'issue-agent');
     expect(mockWhere).toHaveBeenCalledWith('issueNumber', '==', 2541);

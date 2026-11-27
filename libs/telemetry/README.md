@@ -101,6 +101,46 @@ regressions exercise a sanitized version of #2461's delayed transport shape.
 Normal installed-producer adoption and stored real publication evidence are
 separate runtime acceptance gates; source tests do not satisfy them.
 
+## Session spend backfill
+
+Every session write materializes `spend: { tokens, costUsd }` (see
+`src/lib/session-spend.ts`) so the Sessions pages can sum it with an indexed
+aggregation instead of reading sessions. Documents written before that change —
+or by a runner image that predates it — carry none, so `backfillSessionSpend`
+re-derives it from each doc's own pricing inputs through the same function the
+writers use. It walks `sessions` in document-id order (no composite index), is
+resumable and idempotent, and writes nothing unless `--apply`:
+
+```sh
+pnpm exec tsx tools/backfill-session-spend.mts --project <project-id> --database <database-id>
+pnpm exec tsx tools/backfill-session-spend.mts --project <project-id> --database <database-id> --apply
+```
+
+`--active-since <iso>` leaves sessions older than a page's read window untouched;
+it is compared as an instant, so any zone or precision is accepted. The bounded
+reader widens its Firestore string range to the cutoff's second and then filters
+by parsed instant, so it selects exactly the documents the backfill checks — a
+whole-second `…T10:00:00Z` stored before a `.500Z` cutoff is not silently added
+to a total the backfill left untouched.
+
+`--start-after <cursor>` resumes an interrupted pass and reports only its own
+suffix. A resumed dry run is **always** suffix-only, even when both counters are
+zero: the skipped prefix may still be stale or unpriced. The gate below needs a
+run that started without a cursor, or the suffix counts added to the earlier
+ones; the CLI prints `resumed: true` and a suffix-only verdict so a clean suffix
+cannot be mistaken for coverage.
+
+Readiness for the totals cutover is a full dry run of the window the reader will
+query reporting **both `stale: 0` and `unusable: 0`**, taken once every runner
+image carries the writer: a session an older writer is still updating is stale
+again the moment it is written, so one `--apply` is progress, not coverage.
+`unusable` counts in-window docs with no readable `tokens` map — a writer that
+never recorded usage, not a backfill to retry. Those sessions are not wrong in an
+indexed total, they are absent from it, and `stale: 0` says nothing about them
+because they are counted before `stale` is reached. So the gate is zero in both
+counters: either nothing in the window is unpriced, or the operator reconciles
+their contribution against the ledger by hand before switching the reader.
+
 ## Running unit tests
 
 Run `./tools/nx run @agent-lcars/telemetry:test` to execute the unit tests via
