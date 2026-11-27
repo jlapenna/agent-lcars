@@ -58,7 +58,9 @@ function mobilePaneSnapshot(): boolean {
  * Renders through next/link (Mantine's `component` prop) so a desktop
  * selection swaps only the RHS detail pane via a client-side transition
  * instead of a full page reload; a plain `<a>` here previously forced a
- * hard navigation on every row tap.
+ * hard navigation on every row tap. Disables automatic viewport prefetching
+ * (`prefetch={false}`) so visible Bridge rows do not flood the server with
+ * concurrent RSC renders on load or on every live-dashboard revalidation.
  */
 export function BridgePaneLink({
   mobileHref,
@@ -85,6 +87,7 @@ export function BridgePaneLink({
     <Anchor
       component={Link}
       href={desktopPane ? paneHref : mobileHref}
+      prefetch={false}
       target={desktopPane ? undefined : target}
       rel={desktopPane ? undefined : rel}
       {...props}

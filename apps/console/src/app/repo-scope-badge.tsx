@@ -36,6 +36,7 @@ export function RepoScopeBadge({
     <Link
       className="repo-scope-link"
       href={query ? `${pathname}?${query}` : pathname}
+      prefetch={false}
       style={{ flexShrink: 0, cursor: 'pointer', maxWidth: 112 }}
       data-testid="repo-badge"
       data-active={active ? '' : undefined}

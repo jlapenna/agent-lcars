@@ -1,8 +1,27 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import type { ReactNode } from 'react';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ConsoleAppShell } from './console-app-shell';
+
+vi.mock('next/link', () => ({
+  default: ({
+    children,
+    href,
+    prefetch,
+    ...props
+  }: {
+    children: ReactNode;
+    href: string;
+    prefetch?: boolean | 'auto' | null;
+  }) => (
+    <a href={href} data-prefetch={String(prefetch)} {...props}>
+      {children}
+    </a>
+  ),
+  useLinkStatus: () => ({ pending: false }),
+}));
 
 describe('ConsoleAppShell', () => {
   it('keeps the shared header and page content in one structural frame', () => {
@@ -57,6 +76,10 @@ describe('ConsoleAppShell', () => {
     );
 
     expect(screen.getByTestId('rail-home')).toHaveAttribute('href', '/');
+    expect(screen.getByTestId('rail-home')).toHaveAttribute(
+      'data-prefetch',
+      'false',
+    );
     expect(screen.getByTestId('rail-home')).toContainElement(
       screen.getByTestId('rail-environment'),
     );

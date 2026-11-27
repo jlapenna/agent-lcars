@@ -63,6 +63,7 @@ export function DeckInboxSummary({
       <Anchor
         component={Link}
         href={inboxHref}
+        prefetch={false}
         size="sm"
         fw={700}
         className="deck-inbox-summary__action"

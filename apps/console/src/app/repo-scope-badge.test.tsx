@@ -1,8 +1,26 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { RepoScopeBadge } from './repo-scope-badge';
+
+vi.mock('next/link', () => ({
+  default: ({
+    children,
+    href,
+    prefetch,
+    ...props
+  }: {
+    children: ReactNode;
+    href: string;
+    prefetch?: boolean | 'auto' | null;
+  }) => (
+    <a href={href} data-prefetch={String(prefetch)} {...props}>
+      {children}
+    </a>
+  ),
+}));
 
 let mockPathname = '/';
 let mockSearch = '';
@@ -27,6 +45,7 @@ describe('RepoScopeBadge', () => {
 
     const badge = screen.getByTestId('repo-badge');
     expect(badge).toHaveAttribute('href', '/inbox?repo=org-b%2Frepo-b');
+    expect(badge).toHaveAttribute('data-prefetch', 'false');
     expect(badge).not.toHaveAttribute('data-active');
   });
 

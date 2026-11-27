@@ -20,7 +20,12 @@ function ConsoleRail() {
   return (
     <>
       <div className="lcars-rail-head">
-        <Link href="/" className="lcars-rail-home" data-testid="rail-home">
+        <Link
+          href="/"
+          prefetch={false}
+          className="lcars-rail-home"
+          data-testid="rail-home"
+        >
           <span className="lcars-rail-brand">
             Agent
             <br />
