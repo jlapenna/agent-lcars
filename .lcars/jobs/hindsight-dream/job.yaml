@@ -1,0 +1,22 @@
+version: 1
+description: Nightly Hindsight memory dreaming on opencode/spark (update contradicted facts, compact duplicates and completed initiatives, evolve patterns, and refresh pages); report only.
+triggers:
+  manual: true
+  schedule:
+    cron: '45 0 * * *'
+    timezone: America/Los_Angeles
+execution:
+  harness: opencode
+  prompt: ./prompt.md
+  profile: repository
+  timeout: 60m
+  maxAttempts: 2
+  resources:
+    requests: { cpu: 2, memory: 6Gi, storage: 24Gi }
+    limits: { cpu: 2, memory: 6Gi, storage: 24Gi }
+inputs: {}
+concurrency: { maxRuns: 1, overlap: skip }
+state: { previousSuccessfulResult: true }
+result:
+  contract: report-v1
+  requiredArtifacts: [report.md]
