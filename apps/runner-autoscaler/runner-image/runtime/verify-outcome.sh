@@ -35,10 +35,14 @@
 # out only bystanders, and every lane's real artifacts are bot-authored
 # (claude[bot], agent-lcars[bot]).
 #
-# Deliberately `.user.type`, not a specific login: QueueExecutor may create
-# artifacts through either the provider identity or `agent-lcars[bot]`. On an
-# agent:*-on-PR takeover of a HUMAN-authored PR, stamping that PR's body does
-# not count; a bot-authored comment carrying the marker still does.
+# Deliberately `.user.type` for PRs and comments, while `MODE=review` requires
+# `.user.login == $LCARS_REVIEWER_LOGIN`: QueueExecutor may create implementation
+# artifacts through either the provider identity or `agent-lcars[bot]`, whereas
+# review mode binds the publishing actor negotiated at checkout
+# (`agent-lcars-reviewer[bot]` on a compatible Console, `agent-lcars[bot]` on a
+# legacy Console) so an implementation identity cannot satisfy a review run.
+# On an agent:*-on-PR takeover of a HUMAN-authored PR, stamping that PR's body
+# does not count; a bot-authored comment carrying the marker still does.
 #
 # Uses the REST list/view endpoints throughout (not `gh pr list`/`gh issue
 # view --json ... | GraphQL-backed flags) - see docs/bot-identity-formats.md:
@@ -65,16 +69,21 @@ NUM="${NUM:-}"
 # case this script already knows it is.
 : "${MODE:?MODE is required}"
 
-if [ -z "${ATTEMPT_ID:-}" ]; then
-  echo "::error::ATTEMPT_ID is required: this gate is exact-marker-only. The run's deliverable must carry its own <!-- attempt-claim:<attempt-id> --> marker; the legacy time-window/login inference mode (STARTED_AT/EXPECTED_COMMENT_LOGIN) was deleted because every fleet consumer now passes ATTEMPT_ID."
-  exit 1
-fi
-
 # The private completion file is produced after the provider stops. Never
 # accept an agent-written file or parse links from its stdout/final message.
 if [ -n "${VERIFIED_OUTCOME_FILE:-}" ]; then
   rm -f -- "$VERIFIED_OUTCOME_FILE" || exit 1
 fi
+
+if [ "$MODE" = review ] && [ -z "${LCARS_REVIEWER_LOGIN:-}" ]; then
+  echo "::error::LCARS_REVIEWER_LOGIN is required in review mode" >&2
+  exit 1
+fi
+if [ -z "${ATTEMPT_ID:-}" ]; then
+  echo "::error::ATTEMPT_ID is required: this gate is exact-marker-only. The run's deliverable must carry its own <!-- attempt-claim:<attempt-id> --> marker; the legacy time-window/login inference mode (STARTED_AT/EXPECTED_COMMENT_LOGIN) was deleted because every fleet consumer now passes ATTEMPT_ID."
+  exit 1
+fi
+
 found=""
 errors=()
 claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
@@ -91,9 +100,10 @@ lookup_hits() {
     errors+=("$kind lookup (gh api $endpoint) failed: $pages")
     return 1
   fi
-  if ! hits=$(jq -ce --arg marker "$claim_marker" --arg kind "$kind" '
+  if ! hits=$(jq -ce --arg marker "$claim_marker" --arg kind "$kind" --arg reviewer "${LCARS_REVIEWER_LOGIN:-}" '
     [ .[][]
       | select(.user.type == "Bot")
+      | select($kind != "review" or .user.login == $reviewer)
       | select((if $kind == "PR" then ((.title // "") + "\n" + (.body // "")) else (.body // "") end) | contains($marker))
     ]' <<< "$pages" 2>&1); then
     errors+=("$kind lookup returned invalid REST data: $hits")
