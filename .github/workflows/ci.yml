@@ -2,7 +2,11 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # Draft PRs already run full verification with no draft short-circuit
+    # (#2343). Omit `ready_for_review` so marking a verified draft ready at an
+    # unchanged head reuses the existing head run instead of canceling and
+    # restarting it (#3668).
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
   workflow_dispatch:
