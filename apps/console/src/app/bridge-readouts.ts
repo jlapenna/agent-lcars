@@ -1,6 +1,6 @@
 import type { TaskListCursor } from '@agent-lcars/orchestrator';
 import { workRepository } from '@agent-lcars/work';
-import type { WorkSummary } from '@agent-lcars/work/derive';
+import type { ItemView, WorkSummary } from '@agent-lcars/work/derive';
 
 import type { AgentActivity } from '../lib/agent-activity';
 import type { AutoscalerStatusResult } from '../lib/autoscaler-status';
@@ -13,7 +13,6 @@ import type { AgentsViewFilters } from './agents/agents-view-filters';
 import type { ConsoleReadout } from './console-readouts';
 import { formatCost, formatDuration } from './format';
 import { parseStoppedWorkCursor } from './stopped-work-query';
-import { isEventWork } from './work/event-work';
 import { matchesWorkView, parseWorkViewFilters } from './work/work-list-query';
 
 export interface BridgeReadoutInput {
@@ -288,18 +287,16 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
 export interface BridgeWorkSummaryInput {
   authorized: boolean;
   error?: string;
-  /** Preloaded uncursored first page of stopped work already scoped to the
-   *  Bridge's active repository filter, independent of the panel cursor. Only
-   *  native Work anchors (`'workId' in item.anchor`) are counted so the card
-   *  matches what `/work` displays. */
-  stoppedItems: readonly Pick<
-    WorkSummary,
-    'id' | 'anchor' | 'updatedAt' | 'spec' | 'origin' | 'runs'
+  /** Preloaded admitted (`running`) native Work items already scoped to the
+   *  Bridge's active repository filter and principal access rules, matching
+   *  `/work`'s Admitted queue. */
+  admittedItems: readonly Pick<
+    ItemView,
+    'id' | 'state' | 'updatedAt' | 'spec' | 'origin' | 'runs'
   >[];
-  /** Whether older stopped work exists past that uncursored first page. */
-  hasMoreStopped: boolean;
-  eventCount: number;
-  eventWindowed: boolean;
+  /** Whether older native tasks may hold additional admitted items past the
+   *  bounded first page. */
+  hasMoreAdmitted: boolean;
   /** The same Bridge toolbar filters forwarded onto the Work destination link. */
   view: AgentsViewFilters;
   now?: number;
@@ -307,7 +304,6 @@ export interface BridgeWorkSummaryInput {
 
 export const STOPPED_WORK_PANEL_ERROR =
   'Could not load stopped work. Retry or reset the stopped-work page.';
-export const EVENT_WORK_PANEL_ERROR = 'Could not load event-driven work.';
 export const WORK_SUMMARY_UNAVAILABLE_ERROR = 'Work summary unavailable';
 
 export interface StoppedWorkPage {
@@ -315,181 +311,105 @@ export interface StoppedWorkPage {
   nextCursor?: TaskListCursor;
 }
 
+export interface AdmittedWorkPage {
+  items: ItemView[];
+  hasMore: boolean;
+}
+
 /**
- * Loads the Bridge's Stopped work panel page and the Work destination card's
- * uncursored native stopped summary with isolated failure boundaries:
- *
- * - On page 1 (no `rawCursor`), a single uncursored `readPage(undefined)` feeds
- *   both the panel and the Work card; GitHub projection enrichment
- *   (`excludeClosed`) runs only for the panel so a GitHub projection failure
- *   cannot discard the native Work summary.
- * - When `rawCursor` is present, cursor parsing (`parseStoppedWorkCursor`), the
- *   selected cursor page read, and its `excludeClosed` enrichment all live
- *   inside the panel's own failure path, while the uncursored native summary
- *   runs in parallel in its own failure path — so an invalid cursor or panel
- *   failure cannot degrade the Work card, and a summary-only failure cannot
- *   degrade the panel.
+ * Loads the Bridge's Stopped work panel page in its own failure boundary so
+ * cursor parsing (`parseStoppedWorkCursor`), cursor page reads, and GitHub
+ * projection enrichment (`excludeClosed`) degrade only `ParkedWorkPanel`.
  */
-export async function loadBridgeStoppedPages(input: {
+export async function loadBridgeStoppedPage(input: {
   rawCursor?: string;
   repo?: string;
   readPage: (cursor?: TaskListCursor) => Promise<StoppedWorkPage>;
   excludeClosed: (items: WorkSummary[]) => Promise<WorkSummary[]>;
   onPanelError?: (error: unknown) => void;
-  onSummaryError?: (error: unknown) => void;
 }): Promise<{
   items: WorkSummary[];
   hasMoreTasks: boolean;
   nextCursor?: TaskListCursor;
   panelError?: string;
-  summaryStoppedItems: WorkSummary[];
-  summaryHasMoreStopped: boolean;
-  summaryError?: string;
 }> {
-  const filterForRepo = (raw: WorkSummary[]) =>
-    raw.filter(
+  try {
+    const cursor = parseStoppedWorkCursor(input.rawCursor);
+    const page = await input.readPage(cursor);
+    const candidates = page.items.filter(
       (item) =>
         (item.state === 'parked' || item.state === 'failed') &&
         (!input.repo || workRepository(item.spec) === input.repo),
     );
-  const nativeOnly = (items: WorkSummary[]) =>
-    items.filter((item) => 'workId' in item.anchor);
-
-  type PageResult =
-    { ok: true; page: StoppedWorkPage } | { ok: false; error: unknown };
-
-  const firstPage: Promise<PageResult> = Promise.resolve()
-    .then(() => input.readPage(undefined))
-    .then(
-      (page): PageResult => ({ ok: true, page }),
-      (error): PageResult => ({ ok: false, error }),
-    );
-
-  const loadPanel = async (): Promise<{
-    items: WorkSummary[];
-    hasMoreTasks: boolean;
-    nextCursor?: TaskListCursor;
-    panelError?: string;
-  }> => {
-    try {
-      let page: StoppedWorkPage;
-      if (!input.rawCursor) {
-        const result = await firstPage;
-        if (!result.ok) throw result.error;
-        page = result.page;
-      } else {
-        const cursor = parseStoppedWorkCursor(input.rawCursor);
-        page = await input.readPage(cursor);
-      }
-      const items = await input.excludeClosed(filterForRepo(page.items));
-      return {
-        items,
-        hasMoreTasks: page.nextCursor !== undefined,
-        nextCursor: page.nextCursor,
-      };
-    } catch (error) {
-      input.onPanelError?.(error);
-      return {
-        items: [],
-        hasMoreTasks: false,
-        panelError: STOPPED_WORK_PANEL_ERROR,
-      };
-    }
-  };
-
-  const loadSummary = async (): Promise<{
-    summaryStoppedItems: WorkSummary[];
-    summaryHasMoreStopped: boolean;
-    summaryError?: string;
-  }> => {
-    const result = await firstPage;
-    if (!result.ok) {
-      input.onSummaryError?.(result.error);
-      return {
-        summaryStoppedItems: [],
-        summaryHasMoreStopped: false,
-        summaryError: WORK_SUMMARY_UNAVAILABLE_ERROR,
-      };
-    }
+    const items = await input.excludeClosed(candidates);
     return {
-      summaryStoppedItems: nativeOnly(filterForRepo(result.page.items)),
-      summaryHasMoreStopped: result.page.nextCursor !== undefined,
-    };
-  };
-
-  const [panel, summary] = await Promise.all([loadPanel(), loadSummary()]);
-  return {
-    ...panel,
-    ...summary,
-  };
-}
-
-/**
- * Loads the Bridge's native event-driven work read in its own failure boundary
- * so Stopped work panel failures (cursor parsing or GitHub projections) cannot
- * discard event activity or the Work destination card's event count.
- */
-export async function loadBridgeEventWork(input: {
-  repo?: string;
-  view?: AgentsViewFilters;
-  now?: number;
-  readEvents: () => Promise<StoppedWorkPage>;
-  onEventError?: (error: unknown) => void;
-}): Promise<{
-  eventItems: WorkSummary[];
-  eventWindow?: { size: number; windowed: boolean };
-  eventError?: string;
-}> {
-  try {
-    const recent = await input.readEvents();
-    const workView = parseWorkViewFilters(input.view ?? {});
-    const now = input.now ?? Date.now();
-    const eventItems = recent.items
-      .filter(
-        (item) =>
-          'workId' in item.anchor &&
-          isEventWork(item) &&
-          (!input.repo || workRepository(item.spec) === input.repo) &&
-          matchesWorkView(item, workView, now),
-      )
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    return {
-      eventItems,
-      eventWindow: {
-        size: recent.items.length,
-        windowed: recent.nextCursor !== undefined,
-      },
+      items,
+      hasMoreTasks: page.nextCursor !== undefined,
+      nextCursor: page.nextCursor,
     };
   } catch (error) {
-    input.onEventError?.(error);
+    input.onPanelError?.(error);
     return {
-      eventItems: [],
-      eventError: EVENT_WORK_PANEL_ERROR,
+      items: [],
+      hasMoreTasks: false,
+      panelError: STOPPED_WORK_PANEL_ERROR,
     };
   }
 }
 
 /**
- * Derives the Work destination readout's stopped count from the preloaded
- * uncursored stopped rows using only native Work anchors and the exact Work
- * destination view filter (`agent`, `window`, `q`), matching what clicking the
- * Work card opens.
+ * Loads the Bridge's Work destination card summary (`Admitted queue`, native
+ * items in `running` state) in its own failure boundary, independent of the
+ * Stopped work panel's cursor, store read, and GitHub projection enrichment.
+ */
+export async function loadBridgeAdmittedWork(input: {
+  repo?: string;
+  readAdmitted: () => Promise<AdmittedWorkPage>;
+  onError?: (error: unknown) => void;
+}): Promise<{
+  admittedItems: ItemView[];
+  hasMoreAdmitted: boolean;
+  error?: string;
+}> {
+  try {
+    const page = await input.readAdmitted();
+    const admittedItems = page.items.filter(
+      (item) =>
+        item.state === 'running' &&
+        (!input.repo || workRepository(item.spec) === input.repo),
+    );
+    return {
+      admittedItems,
+      hasMoreAdmitted: page.hasMore,
+    };
+  } catch (error) {
+    input.onError?.(error);
+    return {
+      admittedItems: [],
+      hasMoreAdmitted: false,
+      error: WORK_SUMMARY_UNAVAILABLE_ERROR,
+    };
+  }
+}
+
+/**
+ * Derives the Work destination readout's admitted-queue count from the preloaded
+ * native running items using the exact Work destination view filter (`agent`,
+ * `window`, `q`), matching what `/work`'s Admitted queue displays.
  */
 export function bridgeWorkSummary(
   input: BridgeWorkSummaryInput,
 ): BridgeDestinationReadoutsInput['work'] {
   const workView = parseWorkViewFilters(input.view);
   const now = input.now ?? Date.now();
-  const stoppedCount = input.stoppedItems.filter(
-    (item) => 'workId' in item.anchor && matchesWorkView(item, workView, now),
+  const admittedCount = input.admittedItems.filter(
+    (item) => item.state === 'running' && matchesWorkView(item, workView, now),
   ).length;
   return {
     authorized: input.authorized,
     error: input.error,
-    stoppedCount,
-    hasMoreStopped: input.hasMoreStopped,
-    eventCount: input.eventCount,
-    eventWindowed: input.eventWindowed,
+    admittedCount,
+    hasMoreAdmitted: input.hasMoreAdmitted,
   };
 }
 
@@ -511,10 +431,8 @@ export interface BridgeDestinationReadoutsInput {
   work: {
     authorized: boolean;
     error?: string;
-    stoppedCount: number;
-    hasMoreStopped: boolean;
-    eventCount: number;
-    eventWindowed: boolean;
+    admittedCount: number;
+    hasMoreAdmitted: boolean;
   };
 }
 
@@ -563,15 +481,15 @@ export function bridgeDestinationReadouts(
       label: 'Work',
       href: input.workHref,
       value: workAvailable
-        ? input.work.hasMoreStopped
-          ? `${input.work.stoppedCount}+`
-          : input.work.stoppedCount
+        ? input.work.hasMoreAdmitted
+          ? `${input.work.admittedCount}+`
+          : input.work.admittedCount
         : UNAVAILABLE,
       detail: input.work.error
         ? 'Work summary unavailable'
         : !input.work.authorized
           ? 'Work grant required'
-          : `Stopped work · ${input.work.eventCount}${input.work.eventWindowed ? '+' : ''} event-driven`,
+          : 'Admitted queue · native work',
     },
     {
       id: 'jobs',

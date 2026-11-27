@@ -1,16 +1,22 @@
 import 'server-only';
 
 import {
+  isWorkAnchor,
   type OrchestratorStore,
+  type Run,
   taskKey,
   type TaskListCursor,
   type TaskSortKey,
 } from '@agent-lcars/orchestrator';
 import {
   type ItemState,
+  type ItemView,
+  toItemView,
   toWorkSummary,
   type WorkSummary,
 } from '@agent-lcars/work/derive';
+
+import { mayAccessStoredWork } from './work-authorization';
 
 /** A bounded raw page from the authoritative all-anchor task feed. */
 export interface WorkSummaryPage {
@@ -112,4 +118,51 @@ export async function excludeClosedGithubAnchors(
     }),
   );
   return items.filter((_, index) => keep[index]);
+}
+
+/** A bounded page of admitted (`running`) native Work items, matching `/work`'s
+ *  Admitted queue query and access rules without joining session telemetry. */
+export interface AdmittedNativeWorkPage {
+  items: ItemView[];
+  hasMore: boolean;
+}
+
+export async function listAdmittedNativeWork(
+  store: OrchestratorStore,
+  input: {
+    principal: { sourceRepository?: string };
+    limit: number;
+  },
+): Promise<AdmittedNativeWorkPage> {
+  const tasks = await store.listNativeTasks(
+    input.limit,
+    undefined,
+    // Keep page boundaries independent of inaccessible task states, matching
+    // `workRouter.list`.
+    input.principal.sourceRepository === undefined ? 'running' : undefined,
+  );
+  const native = tasks.flatMap(({ task, derived }) =>
+    isWorkAnchor(task.task) &&
+    mayAccessStoredWork(input.principal, task.work) &&
+    (derived === undefined || derived.state === 'running')
+      ? [{ workId: task.task.workId, task }]
+      : [],
+  );
+  const runsByTask =
+    native.length === 0
+      ? new Map<string, Run[]>()
+      : await store.listRunsForTasks(native.map(({ workId }) => ({ workId })));
+  const items = native
+    .map(({ workId, task }) =>
+      toItemView({
+        workId,
+        task,
+        runs: runsByTask.get(taskKey({ workId })) ?? [],
+      }),
+    )
+    .filter((item) => item.state === 'running');
+  return {
+    items,
+    hasMore: tasks.length === input.limit,
+  };
 }
