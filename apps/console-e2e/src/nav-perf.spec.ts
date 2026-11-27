@@ -343,3 +343,104 @@ test('@navperf the phone menu trigger signals a slow navigation', async ({
     page.getByRole('button', { name: 'More console options' }).first(),
   ).not.toHaveAttribute('data-loading', 'true');
 });
+
+test.describe('Bridge summary pending cue with motion allowed', () => {
+  test.use({ contextOptions: { reducedMotion: 'no-preference' } });
+
+  test('@navperf tapping a Bridge summary holds a steady heading highlight without flickering or viewport prefetch storms', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setExtraHTTPHeaders(E2E_ADMIN_HEADERS);
+    const prefetches: string[] = [];
+    page.on('request', (request) => {
+      if (request.headers()['next-router-prefetch']) {
+        prefetches.push(new URL(request.url()).pathname);
+      }
+    });
+    const release = await holdRsc(page, '/agents');
+    await page.goto('/');
+    const summaries = page.getByRole('region', {
+      name: 'Destination summaries',
+    });
+    const agents = summaries.getByRole('link', { name: /^Agents/ });
+    await expect(agents).toBeVisible();
+    // Give IntersectionObserver two paint frames to settle: no Bridge link
+    // should prefetch destinations or row details merely by entering view.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    expect(prefetches).toEqual([]);
+
+    const label = agents.locator('.lcars-readout__label');
+    const styleOf = () =>
+      label.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          animationName: style.animationName,
+          backgroundColor: style.backgroundColor,
+          color: style.color,
+        };
+      });
+    const resting = await styleOf();
+
+    await agents.click();
+    await expect(agents.locator('.lcars-nav-pending')).toHaveCount(1);
+    await expect
+      .poll(async () => (await styleOf()).backgroundColor)
+      .not.toBe(resting.backgroundColor);
+
+    // Let the one-shot transition finish, then sample every animation frame
+    // across a window longer than the old 720 ms flash period to prove the
+    // heading colours stay constant rather than flickering.
+    const observed = await label.evaluate(async (element) => {
+      await Promise.all(
+        element
+          .getAnimations()
+          .filter((animation) => animation instanceof CSSTransition)
+          .map((animation) => animation.finished.catch(() => undefined)),
+      );
+      const states = new Set<string>();
+      const start = performance.now();
+      await new Promise<void>((resolve) => {
+        const sample = () => {
+          const style = getComputedStyle(element);
+          states.add(
+            JSON.stringify({
+              animationName: style.animationName,
+              backgroundColor: style.backgroundColor,
+              color: style.color,
+            }),
+          );
+          if (performance.now() - start >= 850) {
+            resolve();
+            return;
+          }
+          requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      });
+      return [...states].map(
+        (entry) =>
+          JSON.parse(entry) as {
+            animationName: string;
+            backgroundColor: string;
+            color: string;
+          },
+      );
+    });
+    expect(observed).toHaveLength(1);
+    expect(observed[0]?.animationName).toBe('none');
+    expect(observed[0]?.backgroundColor).not.toBe(resting.backgroundColor);
+
+    release();
+    await page.waitForURL('/agents');
+    await expect(
+      page.getByRole('heading', { name: 'Agents', level: 1 }),
+    ).toBeVisible();
+    await expect(page.locator('.lcars-nav-pending')).toHaveCount(0);
+  });
+});

@@ -1,8 +1,26 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen, waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { BridgePaneLink } from './bridge-pane-link';
+
+vi.mock('next/link', () => ({
+  default: ({
+    children,
+    href,
+    prefetch,
+    ...props
+  }: {
+    children: ReactNode;
+    href: string;
+    prefetch?: boolean | 'auto' | null;
+  }) => (
+    <a href={href} data-prefetch={String(prefetch)} {...props}>
+      {children}
+    </a>
+  ),
+}));
 
 function setDesktop(matches: boolean) {
   vi.stubGlobal(
@@ -52,5 +70,14 @@ describe('BridgePaneLink', () => {
     vi.unstubAllGlobals();
     const link = renderLink();
     expect(link).toHaveAttribute('href', '/task/agent/lcars/42');
+    expect(link).toHaveAttribute('data-prefetch', 'false');
+  });
+
+  it('disables viewport prefetching on desktop pane selections too', async () => {
+    setDesktop(true);
+    const link = renderLink();
+
+    await waitFor(() => expect(link).toHaveAttribute('href', '/?sel=run%3A42'));
+    expect(link).toHaveAttribute('data-prefetch', 'false');
   });
 });

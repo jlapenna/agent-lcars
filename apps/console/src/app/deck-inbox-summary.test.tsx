@@ -1,8 +1,26 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import type { ReactNode } from 'react';
+import { describe, expect, it, vi } from 'vitest';
 
 import { DeckInboxSummary } from './deck-inbox-summary';
+
+vi.mock('next/link', () => ({
+  default: ({
+    children,
+    href,
+    prefetch,
+    ...props
+  }: {
+    children: ReactNode;
+    href: string;
+    prefetch?: boolean | 'auto' | null;
+  }) => (
+    <a href={href} data-prefetch={String(prefetch)} {...props}>
+      {children}
+    </a>
+  ),
+}));
 
 function renderSummary(count: number, inboxHref = '/inbox') {
   return render(
@@ -19,9 +37,9 @@ describe('DeckInboxSummary', () => {
     const tile = screen.getByTestId('deck-inbox-summary');
     expect(tile.textContent).toContain('3');
     expect(tile.textContent).toContain('Decisions waiting');
-    expect(
-      screen.getByRole('link', { name: 'Review 3 decisions' }),
-    ).toHaveAttribute('href', '/inbox?repo=agent%2Flcars');
+    const action = screen.getByRole('link', { name: 'Review 3 decisions' });
+    expect(action).toHaveAttribute('href', '/inbox?repo=agent%2Flcars');
+    expect(action).toHaveAttribute('data-prefetch', 'false');
     expect(tile).not.toHaveAttribute('data-empty');
   });
 

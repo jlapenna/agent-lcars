@@ -423,5 +423,28 @@ describe('LCARS design system contract', () => {
       expect(firstChildRule).not.toBeNull();
       expect(firstChildRule?.[1]).not.toMatch(/padding-left:/);
     });
+
+    it('holds a steady pending highlight on linked readout headings instead of flashing them', () => {
+      // Linked readout labels are plain eyebrow headings, not filled rail
+      // blocks. Sharing the rail pill's infinite stepped flash animation made
+      // tapping a Bridge summary strobe its heading colours back and forth.
+      const pendingAnimationRule = RULES.match(
+        /([^{}]+)\{[^}]*animation:\s*lcars-nav-pending\b[^}]*\}/,
+      );
+      expect(pendingAnimationRule).not.toBeNull();
+      expect(pendingAnimationRule?.[1]).not.toContain('lcars-readout__label');
+
+      const readoutPendingRule = RULES.match(
+        /a\.lcars-readout:has\(>\s*\.lcars-nav-pending\)\s*>\s*\.lcars-readout__label\s*\{([^}]*)\}/,
+      );
+      expect(readoutPendingRule).not.toBeNull();
+      expect(readoutPendingRule?.[1]).toContain(
+        'color: var(--lcars-ink-on-accent)',
+      );
+      expect(readoutPendingRule?.[1]).toContain(
+        'background: var(--lcars-accent)',
+      );
+      expect(readoutPendingRule?.[1]).not.toContain('animation:');
+    });
   });
 });

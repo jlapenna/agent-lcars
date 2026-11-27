@@ -444,8 +444,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   display: none;
 }
 
-.lcars-nav-pill:has(> .lcars-nav-pending),
-a.lcars-readout:has(> .lcars-nav-pending) > .lcars-readout__label {
+.lcars-nav-pill:has(> .lcars-nav-pending) {
   animation: lcars-nav-pending 720ms steps(1, end) 120ms infinite;
 }
 
@@ -465,8 +464,7 @@ a.lcars-readout:has(> .lcars-nav-pending) > .lcars-readout__label {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lcars-nav-pill:has(> .lcars-nav-pending),
-  a.lcars-readout:has(> .lcars-nav-pending) > .lcars-readout__label {
+  .lcars-nav-pill:has(> .lcars-nav-pending) {
     animation: none;
     color: var(--lcars-ink-on-accent);
     background: var(--lcars-accent);
@@ -955,6 +953,23 @@ a.lcars-readout:is(:hover, :focus-visible) .lcars-readout__label {
 
 a.lcars-readout:active .lcars-readout__label {
   color: var(--lcars-ink);
+}
+
+/* A linked readout heading is plain text, not a filled rail block: hold a
+   steady full-signal highlight instead of cycling its colours back and forth.
+   Normal motion delays the transition by 120 ms so fast navigations show
+   nothing. */
+a.lcars-readout:has(> .lcars-nav-pending) > .lcars-readout__label {
+  color: var(--lcars-ink-on-accent);
+  background: var(--lcars-accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a.lcars-readout:has(> .lcars-nav-pending) > .lcars-readout__label {
+    transition:
+      background-color 140ms ease 120ms,
+      color 140ms ease 120ms;
+  }
 }
 
 .lcars-readout__value {
