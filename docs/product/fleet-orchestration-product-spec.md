@@ -848,10 +848,13 @@ consumed by every dispatched run in every member repository.
 ## 8. Completion, review, and merge
 
 - **FL-CM-1 [Shipped]** On `reportResult`, a `report-outcome` outbox entry
-  posts an outcome comment on the anchor: ✅ finished, ❌ failed, ⏹️ canceled,
-  or the lost/retry text, with the ref and the park message. For Linear-backed
-  work it updates the Linear issue state and posts an outcome comment; for
-  native work with a registered origin, the entry delivers a webhook to
+  posts an outcome comment on the anchor: ✅ finished (omitted for succeeded
+  `review`, `comment`, and `no-op` runs whose verified deliverable is already
+  posted directly on that GitHub anchor, while still settling the outbox entry
+  and clearing `status:needs-human`), ❌ failed, ⏹️ canceled, or the
+  lost/retry text, with the ref and the park message. For Linear-backed work it
+  updates the Linear issue state and posts an outcome comment; for native work
+  with a registered origin, the entry delivers a webhook to
   `AGENT_LCARS_OUTCOME_WEBHOOKS` instead.
 - **FL-CM-2 [Shipped]** Auto-merge comes from the reusable workflow
   `agent-automerge-reusable.yml`:
