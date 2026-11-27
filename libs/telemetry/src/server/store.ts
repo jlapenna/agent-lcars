@@ -19,6 +19,7 @@ import {
 } from 'firebase-admin/firestore';
 
 import {
+  activeSinceRangeLowerBound,
   canonicalActiveSince,
   parseSessionDoc,
   SESSION_WRITTEN_AT_FIELD,
@@ -548,16 +549,23 @@ export async function listSessionDocs(
   options: ListSessionDocsOptions = {},
 ): Promise<SessionDoc[]> {
   const collection = firestore.collection(SESSIONS_COLLECTION);
-  // ISO 8601 UTC timestamps compare correctly as strings, so the
-  // activeSince range filter works without a Timestamp field. source/
-  // issueNumber/intentId are plain equality filters; composing any of them
-  // with the range filter needs the composite indexes documented above.
+  // The range bound is deliberately wider than the cutoff: stored UTC ISO
+  // spellings do not all carry the same fractional precision, so a canonical
+  // `…ss.500Z` bound would miss an `…ssZ` doc that sorts after it as text even
+  // though its instant is earlier. Widen to the second's prefix and decide
+  // membership by parsed instant below, the same way backfillSessionSpend does,
+  // so the coverage dry run and the reader see exactly the same sessions.
+  // source/issueNumber/intentId remain plain equality filters; composing any of
+  // them with the range filter needs the composite indexes documented above.
+  const activeSinceMs = options.activeSince
+    ? Date.parse(canonicalActiveSince(options.activeSince))
+    : undefined;
   let query: Query = collection;
   if (options.activeSince) {
     query = query.where(
       'lastActivityAt',
       '>=',
-      canonicalActiveSince(options.activeSince),
+      activeSinceRangeLowerBound(options.activeSince),
     );
   }
   if (options.source) {
@@ -587,6 +595,12 @@ export async function listSessionDocs(
     query.stream() as unknown as AsyncIterable<QueryDocumentSnapshot>;
   for await (const snapshot of snapshots) {
     const doc = readSessionSnapshot(snapshot);
+    if (activeSinceMs !== undefined) {
+      const activityMs = Date.parse(doc.lastActivityAt);
+      if (!Number.isFinite(activityMs) || activityMs < activeSinceMs) {
+        continue;
+      }
+    }
     if (options.exhaustive) {
       docs.push(doc);
       continue;

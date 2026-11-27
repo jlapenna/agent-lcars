@@ -62,6 +62,22 @@ export function canonicalActiveSince(activeSince: string): string {
   return new Date(ms).toISOString();
 }
 
+/**
+ * Lexicographic lower bound for a Firestore string range over
+ * `lastActivityAt`. Stored timestamps are UTC ISO strings, but writers have not
+ * all agreed on fractional precision: `…T10:00:00Z` is an earlier instant than
+ * `…T10:00:00.500Z` yet sorts *after* it as text. Truncating the canonical
+ * cutoff to its second and appending `.` makes the range include every
+ * spelling at or after that second (`…00Z`, `…00.000Z`, `…00.500Z`) while
+ * excluding earlier seconds. Callers must still filter the returned docs by
+ * parsed instant to drop same-second timestamps before the cutoff; doing only
+ * the string range would bring those into an indexed total the instant-based
+ * spend backfill left untouched.
+ */
+export function activeSinceRangeLowerBound(activeSince: string): string {
+  return `${canonicalActiveSince(activeSince).slice(0, 19)}.`;
+}
+
 /** `intentId` prefix of a run that belongs to a native work item
  * (`work:<ulid>/r<n>`, the orchestrator's `taskKey` plus run generation). */
 const NATIVE_WORK_INTENT_PREFIX = 'work:';

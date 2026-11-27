@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  activeSinceRangeLowerBound,
   buildSessionDoc,
   buildSessionWrite,
   canonicalActiveSince,
@@ -777,5 +778,25 @@ describe('canonicalActiveSince', () => {
 
   it('rejects a cutoff that names no instant', () => {
     expect(() => canonicalActiveSince('last tuesday')).toThrow(RangeError);
+  });
+});
+
+describe('activeSinceRangeLowerBound', () => {
+  it('bounds at the second so mixed-precision spellings are still found', () => {
+    // '…T10:00:00Z' sorts after '…T10:00:00.500Z' as text, so the canonical
+    // cutoff cannot be used directly as a string range bound. The prefix admits
+    // both spellings; the reader's instant filter decides which one qualifies.
+    expect(activeSinceRangeLowerBound('2026-11-20T10:00:00.500Z')).toBe(
+      '2026-11-20T10:00:00.',
+    );
+    expect('2026-11-20T10:00:00Z' >= '2026-11-20T10:00:00.').toBe(true);
+    expect('2026-11-20T10:00:00.500Z' >= '2026-11-20T10:00:00.').toBe(true);
+    expect('2026-11-20T09:59:59.999Z' >= '2026-11-20T10:00:00.').toBe(false);
+  });
+
+  it('normalizes an offset cutoff before truncating it', () => {
+    expect(activeSinceRangeLowerBound('2026-11-12T20:00:00+02:00')).toBe(
+      '2026-11-12T18:00:00.',
+    );
   });
 });

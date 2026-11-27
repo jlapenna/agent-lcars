@@ -1,5 +1,7 @@
 import { parseArgs } from 'node:util';
 
+import { spendBackfillCoverageVerdict } from '@agent-lcars/telemetry';
+
 const { values } = parseArgs({
   options: {
     apply: { type: 'boolean', default: false },
@@ -35,6 +37,7 @@ process.env['PROJECT_ID'] = values.project;
 process.env['AGENT_TELEMETRY_DATABASE_ID'] = values.database;
 const { backfillSessionSpend } = await import('@agent-lcars/telemetry/server');
 
+const resumed = values['start-after'] !== undefined;
 let cursor = values['start-after'];
 let scanned = 0;
 let stale = 0;
@@ -57,6 +60,7 @@ for (;;) {
   console.log(
     JSON.stringify({
       mode: values.apply ? 'apply' : 'dry-run',
+      resumed,
       scanned,
       stale,
       written,
@@ -76,10 +80,7 @@ if (!values.apply) {
   // progress, not coverage.
   console.log(
     `Dry run over ${scanned} docs: ${stale} stale, ${unusable} without readable usage, ` +
-      `${outsideWindow} outside the active window. ${
-        stale === 0 && unusable === 0
-          ? 'Indexed totals are covered for this window.'
-          : 'Totals cutover is not covered: stale and unusable must both be 0 (or reconciled against the ledger).'
-      }`,
+      `${outsideWindow} outside the active window. ` +
+      spendBackfillCoverageVerdict({ resumed, stale, unusable }),
   );
 }

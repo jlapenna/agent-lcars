@@ -117,10 +117,18 @@ pnpm exec tsx tools/backfill-session-spend.mts --project <project-id> --database
 ```
 
 `--active-since <iso>` leaves sessions older than a page's read window untouched;
-it is compared as an instant, so any zone or precision is accepted.
-`--start-after <cursor>` resumes an interrupted pass — and reports only its own
-suffix, so the gate below is read from a run that covered the whole window
-(starting without a cursor, or adding the suffix counts to the earlier ones).
+it is compared as an instant, so any zone or precision is accepted. The bounded
+reader widens its Firestore string range to the cutoff's second and then filters
+by parsed instant, so it selects exactly the documents the backfill checks — a
+whole-second `…T10:00:00Z` stored before a `.500Z` cutoff is not silently added
+to a total the backfill left untouched.
+
+`--start-after <cursor>` resumes an interrupted pass and reports only its own
+suffix. A resumed dry run is **always** suffix-only, even when both counters are
+zero: the skipped prefix may still be stale or unpriced. The gate below needs a
+run that started without a cursor, or the suffix counts added to the earlier
+ones; the CLI prints `resumed: true` and a suffix-only verdict so a clean suffix
+cannot be mistaken for coverage.
 
 Readiness for the totals cutover is a full dry run of the window the reader will
 query reporting **both `stale: 0` and `unusable: 0`**, taken once every runner
