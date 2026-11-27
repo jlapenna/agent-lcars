@@ -105,12 +105,12 @@
       "permissions": {
         "actions": "read",
         "checks": "read",
-        "contents": "read",
+        "contents": "write",
         "issues": "read",
         "metadata": "read",
         "pull_requests": "write"
       },
-      "_note": "Dedicated review identity for every review run and automatic dependency approval; implementation authors are unchanged. Private key is in the existing Secret Manager AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY slot, exposed to Console as AGENT_LCARS_REVIEWER_APP_PRIVATE_KEY."
+      "_note": "Dedicated review identity for every review run and automatic dependency approval; implementation authors are unchanged. The App manifest carries contents: write so GitHub counts its approvals toward required_approving_review_count (authorCanPushToRepository: true), while REVIEWER_PERMISSIONS in apps/console/src/lib/github-app-tokens.ts downscopes minted review installation tokens to contents: read. Private key is in the existing Secret Manager AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY slot, exposed to Console as AGENT_LCARS_REVIEWER_APP_PRIVATE_KEY."
     }
   ],
   "_fleetCoverageNote": "Every entry in fleetRepositories must be covered by some App installation. supersprinklesracing/www was found uncovered this way (#1380).",
