@@ -48,7 +48,8 @@ Three GitHub Apps serve separate roles:
   (`authorCanPushToRepository: true`), while Console's `REVIEWER_PERMISSIONS`
   downscopes every minted review installation token to `contents: read` (no
   code pushes or CI reruns).
-  Owner: `agent-lcars` (the App user account; verified live 2026-11-27). All-repository installations: `185984458` (jlapenna),
+  Owner: `agent-lcars` (user account, same as the Fleet App). All-repository
+  installations: `185984458` (jlapenna),
   `185984517` (supersprinklesracing), `185984591` (jlaorg). The private key
   remains in Secret Manager `AGENT_LCARS_AUTHOR_APP_PRIVATE_KEY`, provisioned
   before this role decision; App Hosting exposes it as
