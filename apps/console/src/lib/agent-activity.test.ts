@@ -7,6 +7,7 @@ import {
   fleetFromAutoscalerStatuses,
   getAgentActivity,
   getRecentOutcomesPage,
+  isRecoverableRun,
   queueFromLiveRuns,
 } from './agent-activity';
 import { getAutoscalerStatuses } from './autoscaler-status';
@@ -105,7 +106,11 @@ function run(overrides: Partial<Run> = {}): Run {
     state: 'running',
     pipeline: 'claude',
     requestId: 'request-1',
-    leaseExpiresAt: '2026-08-28T14:00:00.000Z',
+    // The console drops a live run once its recovery deadline passes (see
+    // `isRecoverableRun`), so a live fixture's lease is relative to the clock
+    // the console actually reads: a fixed date here would age out and quietly
+    // stop being an active dispatch.
+    leaseExpiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
     events: [{ at: T0, to: 'pending', by: 'request' }],
     createdAt: T0,
     updatedAt: T0,
@@ -269,6 +274,51 @@ describe('agentRunFromOrchestrator stored Work specs', () => {
   });
 });
 
+describe('isRecoverableRun', () => {
+  it("agrees with the store's own expiry cut, deadline exactly included", () => {
+    expect(
+      isRecoverableRun(
+        run({ leaseExpiresAt: '2026-08-28T12:00:00.000Z' }),
+        NOW,
+      ),
+    ).toBe(false);
+    expect(
+      isRecoverableRun(
+        run({ leaseExpiresAt: '2026-08-28T12:00:01.000Z' }),
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it('never expires an unclaimed queue wait', () => {
+    expect(
+      isRecoverableRun(
+        run({
+          state: 'pending',
+          leaseExpiresAt: T0,
+          queue: { state: 'queued' },
+        }),
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it('uses the earlier bootstrap start deadline of a claim that never heartbeated', () => {
+    const claim = run({
+      state: 'pending',
+      leaseExpiresAt: '2026-08-28T13:00:00.000Z',
+      queue: { state: 'claimed', claimedAt: T0, startDeadlineAt: T0 },
+    });
+    expect(isRecoverableRun(claim, NOW)).toBe(false);
+    expect(
+      isRecoverableRun(
+        { ...claim, queue: { state: 'claimed', firstHeartbeatAt: T0 } },
+        NOW,
+      ),
+    ).toBe(true);
+  });
+});
+
 describe('getAgentActivity', () => {
   it('uses authoritative live and terminal Run records for every anchor while reading capacity once from autoscaler telemetry', async () => {
     const github = githubTask();
@@ -327,6 +377,46 @@ describe('getAgentActivity', () => {
     expect(store.listLiveRuns).toHaveBeenCalledTimes(1);
     expect(store.listRecentRuns).toHaveBeenCalledWith(24, undefined);
     expect(store.readTask).toHaveBeenCalledTimes(2);
+  });
+
+  it('excludes a live run the reconciler has not swept but can no longer recover, and says so', async () => {
+    const github = githubTask();
+    const lost = run({
+      runId: 'octo/example#42/r1',
+      leaseExpiresAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const live = run({ runId: 'octo/example#42/r2' });
+    store.listLiveRuns.mockResolvedValue([lost, live]);
+    store.readTask.mockResolvedValue({ task: github, revision: 1 });
+
+    const activity = await getAgentActivity();
+
+    // The Bridge's "Active dispatches" count and the Agents page both read
+    // this list, so an unrecoverable run stops being advertised as in-flight.
+    expect(activity.liveRuns.map((entry) => entry.id)).toEqual([live.runId]);
+    // It still holds its admission slot until the sweep releases it, which is
+    // what the store's own admission read and the queue view report.
+    expect(activity.queue).toEqual({ queued: 0, claimed: 0, running: 2 });
+    expect(activity.warnings).toEqual([
+      'A live run is past its recovery deadline, so it is not counted as an active dispatch.',
+    ]);
+  });
+
+  it('counts a capacity-waiting run as an active dispatch, however long it waits', async () => {
+    const github = githubTask();
+    const waiting = run({
+      runId: 'octo/example#42/r1',
+      state: 'pending',
+      leaseExpiresAt: new Date(Date.now() - 60_000).toISOString(),
+      queue: { state: 'queued' },
+    });
+    store.listLiveRuns.mockResolvedValue([waiting]);
+    store.readTask.mockResolvedValue({ task: github, revision: 1 });
+
+    const activity = await getAgentActivity();
+
+    expect(activity.liveRuns.map((entry) => entry.id)).toEqual([waiting.runId]);
+    expect(activity.warnings).toEqual([]);
   });
 
   it('keeps one genuine authoritative-data warning when the store read fails', async () => {

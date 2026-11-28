@@ -3,6 +3,7 @@ import {
   type OrchestratorStore,
   type Run as OrchestratorRun,
   type RunListCursor,
+  runRecoveryDeadline,
   type Task,
   taskKey,
 } from '@agent-lcars/orchestrator';
@@ -149,7 +150,10 @@ export interface AgentActivity {
    * racing the same repo/issue/pipeline both appear here; `logical-work.ts`'s
    * `deriveLogicalWork` is what groups them
    * into one `LogicalWork` card with a visible "N attempts" disclosure -
-   * this field itself is the raw, ungrouped truth. */
+   * this field itself is the raw, ungrouped truth. A run the orchestrator no
+   * longer treats as recoverable (see {@link isRecoverableRun}) is excluded
+   * here: the reconciler settles it as lost, so counting it as an active
+   * dispatch would be a promise the console cannot keep. */
   liveRuns: AgentRun[];
   recentRuns: AgentRun[];
   /** Where the outcome history continues after `recentRuns`: the last run
@@ -158,7 +162,9 @@ export interface AgentActivity {
   /** Missing subfields indicate unavailable capacity, never a real zero. */
   fleet?: FleetSummary;
   /** Lifecycle counts from authoritative Run records, never scale-set
-   * telemetry. `claimed` remains pending until its executor starts it. */
+   * telemetry. `claimed` remains pending until its executor starts it. Unlike
+   * `liveRuns` this is the full store-side live set: past its deadline a run
+   * still holds its admission slot until the sweep releases it. */
   queue?: QueueRunSummary;
   /** Every run live at any point in the last RUN_HISTORY_MINUTES, for the
    * Queue depth and Agents running sparklines. Absent when a read failed,
@@ -497,6 +503,22 @@ function historyTimelines(
   return timelines;
 }
 
+/** The store's own liveness test, read at the console: a run whose recovery
+ * deadline has passed is a loss the reconciler's `sweepExpired` settles as
+ * `lost`, not work in flight. `listLiveRuns` keeps reporting such a run live
+ * until that sweep reaches it, so drawing the console's live set straight from
+ * it lists runs that provably stopped being recoverable — as the Bridge's
+ * "Active dispatches" count and the fleet readout, which are the same number.
+ * An unclaimed queue wait has no deadline (see `runRecoveryDeadline`) and so
+ * stays, correctly, as work waiting for a runner rather than work lost. */
+export function isRecoverableRun(
+  run: OrchestratorRun,
+  now: number = Date.now(),
+): boolean {
+  const deadline = runRecoveryDeadline(run);
+  return deadline === undefined || Date.parse(deadline) > now;
+}
+
 export async function getAgentActivity(): Promise<AgentActivity> {
   const { store } = createOrchestratorRuntime();
 
@@ -539,6 +561,24 @@ export async function getAgentActivity(): Promise<AgentActivity> {
 
   const authoritativeLiveRuns =
     liveRead.status === 'fulfilled' ? liveRead.value : [];
+  // The live set the console draws, minus runs the orchestrator itself no
+  // longer treats as recoverable (see `isRecoverableRun`). Queue occupancy
+  // still reads the full authoritative set: past its deadline a run holds its
+  // admission slot until the sweep frees it, which is what the queue view and
+  // the store's own admission read report.
+  const liveRunsRead = authoritativeLiveRuns.filter((run) =>
+    isRecoverableRun(run),
+  );
+  const unrecoverable = authoritativeLiveRuns.length - liveRunsRead.length;
+  if (unrecoverable > 0) {
+    // Keep the discrepancy visible rather than silently quieter: a run that
+    // outlived its own deadline is one the reconciler has not swept yet.
+    warnings.push(
+      unrecoverable === 1
+        ? 'A live run is past its recovery deadline, so it is not counted as an active dispatch.'
+        : `${unrecoverable} live runs are past their recovery deadline, so they are not counted as active dispatches.`,
+    );
+  }
   const recentWindow =
     recentRead.status === 'fulfilled' ? recentRead.value.runs : [];
   const terminalRecentRuns = recentWindow
@@ -575,13 +615,11 @@ export async function getAgentActivity(): Promise<AgentActivity> {
   // Only the live list and outcome feed report invalid task metadata; a
   // history-only run with an unreadable task just withholds the history.
   const feedTaskKeys = new Set(
-    [...authoritativeLiveRuns, ...terminalRecentRuns].map((run) =>
-      taskKey(run.task),
-    ),
+    [...liveRunsRead, ...terminalRecentRuns].map((run) => taskKey(run.task)),
   );
   const runsByTask = new Map<string, OrchestratorRun[]>();
   for (const run of [
-    ...authoritativeLiveRuns,
+    ...liveRunsRead,
     ...terminalRecentRuns,
     ...historyRuns.filter((run) => isWorkAnchor(run.task)),
   ]) {
@@ -619,7 +657,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     historyReached && readsAgree
       ? historyTimelines(historyRuns, taskByKey)
       : undefined;
-  const liveRuns = projectRuns(authoritativeLiveRuns);
+  const liveRuns = projectRuns(liveRunsRead);
   const recentRuns = projectRuns(terminalRecentRuns).slice(0, RECENT_RUN_LIMIT);
   // Resume the history after the last outcome shown, or after the whole
   // outcome window when it held fewer terminal runs than the feed shows.
